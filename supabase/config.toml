@@ -1,0 +1,5 @@
+project_id = "personal-todo-list"
+
+[functions.task-status]
+verify_jwt = false
+

@@ -1,95 +1,80 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-<meta name="theme-color" content="#ffffff" />
-<title>今日任务｜GPT</title>
-<style>
-:root{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Helvetica Neue",Arial,sans-serif;color:#111;background:#f5f5f7}*{box-sizing:border-box}body{margin:0;background:#f5f5f7}.wrap{max-width:720px;margin:0 auto;padding:20px 16px 48px}.top{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin:8px 0 18px}.eyebrow{font-size:13px;color:#6e6e73;margin-bottom:6px}.title{font-size:30px;font-weight:750;letter-spacing:-.6px}.date{font-size:14px;color:#6e6e73;margin-top:4px}.card{background:#fff;border-radius:18px;padding:16px;box-shadow:0 1px 2px rgba(0,0,0,.04);margin-bottom:14px}.summary{display:grid;grid-template-columns:1fr auto;align-items:center;gap:14px}.rate{font-size:34px;font-weight:760}.muted{color:#6e6e73;font-size:13px}.progress{height:8px;background:#ececf0;border-radius:99px;overflow:hidden;margin-top:10px}.bar{height:100%;background:#111;border-radius:99px;width:0}.section-title{font-size:15px;font-weight:700;margin:22px 4px 10px}.task{display:flex;gap:12px;align-items:flex-start;padding:14px 0;border-bottom:1px solid #eee}.task:last-child{border-bottom:0}.check{width:24px;height:24px;border-radius:50%;border:2px solid #aaa;flex:0 0 auto;margin-top:1px;display:grid;place-items:center;background:#fff}.task.done .check{background:#111;border-color:#111;color:#fff}.task.done .name{text-decoration:line-through;color:#8e8e93}.name{font-size:17px;line-height:1.35;font-weight:600}.meta{font-size:12px;color:#8e8e93;margin-top:5px}.carry{display:inline-block;padding:2px 7px;border-radius:999px;background:#f2f2f7;color:#6e6e73;margin-right:6px}.task-main{flex:1;min-width:0}.more{border:0;background:transparent;color:#8e8e93;font-size:20px;padding:0 4px}.empty{text-align:center;color:#8e8e93;padding:20px 8px}.addbox{display:flex;gap:8px}.addbox input{flex:1;border:1px solid #d2d2d7;border-radius:12px;padding:12px 13px;font-size:16px;background:#fff}.addbox button,.primary{border:0;background:#111;color:#fff;border-radius:12px;padding:12px 16px;font-size:15px;font-weight:700}.history{font-size:13px;color:#6e6e73}.hint{font-size:12px;color:#8e8e93;line-height:1.55;margin-top:8px}.pill{font-size:12px;border-radius:999px;background:#f2f2f7;padding:5px 9px;color:#6e6e73;white-space:nowrap}
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#f5f5f7">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://*.supabase.co; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+  <title>今日任务｜GPT</title>
+  <link rel="stylesheet" href="today.css">
 </head>
 <body>
-<div class="wrap">
-  <div class="top">
-    <div><div class="eyebrow">GPT 个人任务系统</div><div class="title">今日任务</div><div id="date" class="date"></div></div>
-    <div id="countPill" class="pill">0 / 0</div>
-  </div>
+  <main class="wrap">
+    <header class="top">
+      <div><div class="eyebrow">GPT 个人任务系统</div><h1>今日任务</h1><div id="date" class="date"></div></div>
+      <div id="countPill" class="pill">0 / 0</div>
+    </header>
 
-  <div class="card summary">
-    <div>
-      <div id="rate" class="rate">0%</div>
-      <div id="summaryText" class="muted">今天还没有任务</div>
-      <div class="progress"><div id="bar" class="bar"></div></div>
+    <section class="notice setup" id="setupPanel" hidden>
+      <strong>云同步尚未配置</strong>
+      <p>请先按仓库 `DEPLOYMENT.md` 填写 Supabase 公开客户端配置。</p>
+    </section>
+
+    <section class="card auth" id="authPanel" hidden>
+      <div class="eyebrow">SECURE CLOUD SYNC</div>
+      <h2>登录后开始同步</h2>
+      <p class="muted">输入邮箱获取一次性登录链接，手机和电脑会看到同一份真实状态。</p>
+      <form id="loginForm">
+        <input id="loginEmail" type="email" autocomplete="email" required placeholder="name@example.com">
+        <button type="submit">发送登录链接</button>
+      </form>
+      <div id="loginMessage" class="hint" role="status"></div>
+    </section>
+
+    <div id="cloudContent" hidden>
+      <div class="sync-row" id="syncRow">
+        <span><i></i><span id="syncStatus" role="status">正在连接…</span></span>
+        <span><button id="refreshButton">刷新</button><button id="signOutButton">退出</button></span>
+      </div>
+
+      <section class="notice migration" id="migrationPanel" hidden>
+        <div><strong>发现 <span id="migrationCount">0</span> 条旧任务</strong><p>示例任务已自动排除，可幂等导入云端。</p></div>
+        <button id="migrateButton">导入</button>
+      </section>
+
+      <section class="card summary">
+        <div>
+          <div id="rate" class="rate">0%</div>
+          <div id="summaryText" class="muted">今天还没有任务</div>
+          <div class="progress"><div id="bar" class="bar"></div></div>
+        </div>
+      </section>
+
+      <h2 class="section-title">今天</h2>
+      <section id="todayList" class="card task-card"></section>
+
+      <section id="carryWrap" hidden>
+        <h2 class="section-title">↪ 昨日延续</h2>
+        <div id="carryList" class="card task-card"></div>
+      </section>
+
+      <h2 class="section-title">添加任务</h2>
+      <section class="card">
+        <form id="addForm" class="addbox">
+          <input id="newTask" maxlength="200" required placeholder="输入今天要做的事" autocomplete="off">
+          <button type="submit">添加</button>
+        </form>
+        <div class="hint">完成后直接打勾。保存失败会恢复原状态，不会产生“假完成”。</div>
+      </section>
+
+      <h2 class="section-title">最近完成</h2>
+      <section id="history" class="card history"></section>
     </div>
-  </div>
+  </main>
 
-  <div class="section-title">今天</div>
-  <div id="todayList" class="card"></div>
-
-  <div id="carryWrap">
-    <div class="section-title">↪ 昨日延续</div>
-    <div id="carryList" class="card"></div>
-  </div>
-
-  <div class="section-title">添加任务</div>
-  <div class="card">
-    <form id="addForm" class="addbox">
-      <input id="newTask" placeholder="输入今天要做的事" autocomplete="off" />
-      <button type="submit">添加</button>
-    </form>
-    <div class="hint">完成后直接打勾。今天未完成的任务，跨到下一天时会自动转成“昨日延续”。</div>
-  </div>
-
-  <div class="section-title">已完成记录</div>
-  <div id="history" class="card history"></div>
-</div>
-<script>
-const KEY='gpt-personal-tasks-v1';
-const pad=n=>String(n).padStart(2,'0');
-const iso=d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
-const today=()=>iso(new Date());
-const nowISO=()=>new Date().toISOString();
-const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-
-function seed(){
- const t=today();
- return [
-  {id:crypto.randomUUID(),title:'推进企业微信接入督办',due:t,done:false,completedAt:null,source:'GPT',carryCount:0,rolledFrom:null},
-  {id:crypto.randomUUID(),title:'搭建团队督办系统',due:t,done:false,completedAt:null,source:'GPT',carryCount:0,rolledFrom:null},
-  {id:crypto.randomUUID(),title:'完善 MacBook / Codex 无人值守模式',due:t,done:false,completedAt:null,source:'GPT',carryCount:0,rolledFrom:null},
-  {id:crypto.randomUUID(),title:'重建 Obsidian 长期知识镜像',due:t,done:false,completedAt:null,source:'GPT',carryCount:0,rolledFrom:null}
- ];
-}
-function load(){try{return JSON.parse(localStorage.getItem(KEY))||seed()}catch{return seed()}}
-let tasks=load();
-function save(){localStorage.setItem(KEY,JSON.stringify(tasks))}
-function rollover(){
- const t=today(); let changed=false;
- tasks.forEach(x=>{if(!x.done && x.due<t){x.rolledFrom=x.due;x.due=t;x.carryCount=(x.carryCount||0)+1;changed=true}});
- if(changed) save();
-}
-function toggle(id){const x=tasks.find(t=>t.id===id);if(!x)return;x.done=!x.done;x.completedAt=x.done?nowISO():null;save();render()}
-function removeTask(id){tasks=tasks.filter(t=>t.id!==id);save();render()}
-function addTask(title){tasks.push({id:crypto.randomUUID(),title,due:today(),done:false,completedAt:null,source:'GPT',carryCount:0,rolledFrom:null});save();render()}
-function taskHtml(x){return `<div class="task ${x.done?'done':''}" data-id="${x.id}"><button class="check" aria-label="${x.done?'取消完成':'标记完成'}">${x.done?'✓':''}</button><div class="task-main"><div class="name">${esc(x.title)}</div><div class="meta">${x.carryCount?`<span class="carry">延续 ${x.carryCount} 天</span>`:''}${esc(x.source||'GPT')}</div></div><button class="more" title="删除">×</button></div>`}
-function render(){
- rollover(); const t=today();
- const todayTasks=tasks.filter(x=>x.due===t && !x.carryCount); const carry=tasks.filter(x=>x.due===t && x.carryCount>0); const active=[...todayTasks,...carry];
- const done=active.filter(x=>x.done).length; const total=active.length; const rate=total?Math.round(done/total*100):0;
- document.getElementById('date').textContent=new Date().toLocaleDateString('zh-CN',{year:'numeric',month:'long',day:'numeric',weekday:'long'});
- document.getElementById('rate').textContent=`${rate}%`; document.getElementById('bar').style.width=`${rate}%`; document.getElementById('countPill').textContent=`${done} / ${total}`;
- document.getElementById('summaryText').textContent=total?`今天 ${total} 项，已完成 ${done} 项，剩余 ${total-done} 项`:'今天还没有任务';
- document.getElementById('todayList').innerHTML=todayTasks.length?todayTasks.map(taskHtml).join(''):'<div class="empty">今天还没有新任务</div>';
- document.getElementById('carryList').innerHTML=carry.length?carry.map(taskHtml).join(''):'<div class="empty">没有昨日延续任务</div>';
- document.getElementById('carryWrap').style.display=carry.length?'block':'none';
- const hist=tasks.filter(x=>x.done).sort((a,b)=>(b.completedAt||'').localeCompare(a.completedAt||'')).slice(0,12);
- document.getElementById('history').innerHTML=hist.length?hist.map(x=>`<div style="padding:7px 0">✓ ${esc(x.title)} <span style="float:right">${(x.completedAt||'').slice(0,10)}</span></div>`).join(''):'<div class="empty">还没有完成记录</div>';
- document.querySelectorAll('.task .check').forEach(b=>b.onclick=()=>toggle(b.closest('.task').dataset.id));
- document.querySelectorAll('.task .more').forEach(b=>b.onclick=()=>{if(confirm('删除这条任务？'))removeTask(b.closest('.task').dataset.id)});
-}
-document.getElementById('addForm').addEventListener('submit',e=>{e.preventDefault();const i=document.getElementById('newTask');const v=i.value.trim();if(!v)return;addTask(v);i.value=''});
-render();
-</script>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="runtime-config.js"></script>
+  <script type="module" src="today.js"></script>
 </body>
 </html>

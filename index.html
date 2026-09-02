@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#f6f4ee">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://*.supabase.co; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
   <title>日程 · 个人任务跟进</title>
   <link rel="stylesheet" href="styles.css">
 </head>
@@ -45,7 +47,7 @@
 
       <div class="sidebar-footer">
         <span class="status-dot"></span>
-        数据已保存在本机
+        <span id="sidebarSyncText">等待连接云端</span>
       </div>
     </aside>
 
@@ -55,12 +57,40 @@
           <p class="date-label" id="dateLabel"></p>
           <h1 id="pageTitle">早上好，今天准备做什么？</h1>
         </div>
-        <button class="primary-button" id="addTaskButton">
+        <button class="primary-button" id="addTaskButton" hidden>
           <span>＋</span> 添加任务
         </button>
       </header>
 
-      <section class="view active" id="todayView">
+      <section class="system-panel" id="setupPanel" hidden>
+        <strong>还差一步即可启用云同步</strong>
+        <p>当前仓库尚未填写 Supabase 公开客户端配置。完成部署文档中的配置后，这里会自动进入登录。</p>
+      </section>
+
+      <section class="system-panel auth-panel" id="authPanel" hidden>
+        <div>
+          <span class="eyebrow">SECURE CLOUD SYNC</span>
+          <h2>登录后，手机与电脑共享同一份任务</h2>
+          <p>输入邮箱，我们会发送一次性登录链接。无需设置或记住密码。</p>
+        </div>
+        <form id="loginForm" class="login-form">
+          <label for="loginEmail">邮箱</label>
+          <div><input type="email" id="loginEmail" autocomplete="email" required placeholder="name@example.com"><button class="primary-button" type="submit">发送登录链接</button></div>
+          <small id="loginMessage" role="status"></small>
+        </form>
+      </section>
+
+      <section class="system-panel migration-panel" id="migrationPanel" hidden>
+        <div><strong>发现 <span id="migrationCount">0</span> 条本机旧任务</strong><p>可一次性安全导入云端；已知示例任务会自动排除，重复点击不会重复创建。</p></div>
+        <button class="secondary-button" id="migrateButton">导入旧任务</button>
+      </section>
+
+      <div class="sync-toolbar" id="syncToolbar" hidden>
+        <span><i class="sync-dot"></i><span id="syncStatus" role="status">正在连接…</span></span>
+        <span class="sync-actions"><span id="userEmail"></span><button id="refreshButton">刷新</button><button id="signOutButton">退出</button></span>
+      </div>
+
+      <section class="view active" id="todayView" hidden>
         <div class="summary-grid">
           <article class="summary-card hero-card">
             <div>
@@ -129,7 +159,7 @@
         </div>
       </section>
 
-      <section class="view" id="tasksView">
+      <section class="view" id="tasksView" hidden>
         <section class="panel all-tasks-panel">
           <div class="panel-header">
             <div><span class="eyebrow">ALL TASKS</span><h2>全部任务</h2></div>
@@ -140,7 +170,7 @@
         </section>
       </section>
 
-      <section class="view" id="statsView">
+      <section class="view" id="statsView" hidden>
         <div class="stats-grid">
           <article class="panel stat-highlight">
             <span class="eyebrow">本周完成率</span>
@@ -171,10 +201,10 @@
   </div>
 
   <dialog id="taskDialog">
-    <form method="dialog" id="taskForm">
+    <form id="taskForm">
       <div class="dialog-header">
         <div><span class="eyebrow">NEW TASK</span><h2 id="dialogTitle">添加一件要做的事</h2></div>
-        <button class="icon-button" value="cancel" aria-label="关闭">×</button>
+        <button class="icon-button" id="closeTaskDialog" type="button" aria-label="关闭">×</button>
       </div>
       <input type="hidden" id="taskId">
       <label>任务名称<input id="taskTitle" required maxlength="80" placeholder="例如：完成项目方案"></label>
@@ -197,13 +227,14 @@
       <label>预计用时（分钟）<input type="number" id="taskDuration" min="5" step="5" value="30"></label>
       <label>备注<textarea id="taskNotes" rows="3" placeholder="补充一点细节（可选）"></textarea></label>
       <div class="dialog-actions">
-        <button class="secondary-button" value="cancel">取消</button>
-        <button class="primary-button" id="saveTaskButton" value="default">保存任务</button>
+        <button class="secondary-button" id="cancelTaskDialog" type="button">取消</button>
+        <button class="primary-button" id="saveTaskButton" type="submit">保存任务</button>
       </div>
     </form>
   </dialog>
 
-  <div class="toast" id="toast"></div>
-  <script src="app.js"></script>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="runtime-config.js"></script>
+  <script type="module" src="app.js"></script>
 </body>
 </html>
