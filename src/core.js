@@ -38,21 +38,32 @@ function createUuid() {
 }
 
 export function fromDatabaseTask(row) {
+  const completed = row.status === "completed" || row.status === "done" || row.done === true;
+  const dueDate = row.dueDate || row.date || "";
   return {
     id: row.id,
-    title: row.title,
-    date: row.date,
-    time: row.time ? String(row.time).slice(0, 5) : "",
-    category: row.category,
-    priority: row.priority,
-    duration: Number(row.duration || 0),
+    externalId: row.externalId || row.id,
+    provider: row.provider || "google_tasks",
+    taskListId: row.taskListId || "",
+    title: row.title || "",
     notes: row.notes || "",
-    status: row.status,
-    done: row.status === "done" || row.done === true,
-    completedAt: row.completed_at || null,
-    createdAt: row.created_at || null,
-    updatedAt: row.updated_at || null,
-    source: row.source || "manual",
+    status: row.status === "cancelled" ? "cancelled" : completed ? "completed" : "open",
+    dueDate: dueDate || null,
+    createdAt: row.createdAt || row.created_at || null,
+    updatedAt: row.updatedAt || row.updated_at || null,
+    completedAt: row.completedAt || row.completed_at || null,
+    source: row.source || "google_tasks",
+    sourceConversationId: row.sourceConversationId || null,
+    projectId: row.projectId || null,
+    customerId: row.customerId || null,
+    originalIntent: row.originalIntent || "",
+    priority: row.priority || "medium",
+    metadata: row.metadata || {},
+    date: dueDate,
+    time: row.time ? String(row.time).slice(0, 5) : "",
+    category: row.category || "Google Tasks",
+    duration: Number(row.duration || 0),
+    done: completed,
     carriedFromDate: row.carried_from_date || null,
   };
 }
@@ -125,8 +136,21 @@ export function groupTasksForToday(tasks, date = localDateISO()) {
   return {
     todayNew: active.filter((task) => !task.carriedFromDate),
     carryover: active.filter((task) => Boolean(task.carriedFromDate)),
-    open: active.filter((task) => task.status === "open"),
-    done: active.filter((task) => task.status === "done"),
+    open: active.filter((task) => !task.done && task.status !== "done" && task.status !== "completed"),
+    done: active.filter((task) => task.done || task.status === "done" || task.status === "completed"),
+  };
+}
+
+export function groupTasksByDue(tasks, date = localDateISO()) {
+  const open = tasks.filter((task) => task.status === "open");
+  const byDueDate = (left, right) => String(left.dueDate || "9999-12-31").localeCompare(String(right.dueDate || "9999-12-31"));
+  return {
+    today: open.filter((task) => task.dueDate === date).sort(byDueDate),
+    overdue: open.filter((task) => task.dueDate && task.dueDate < date).sort(byDueDate),
+    upcoming: open.filter((task) => !task.dueDate || task.dueDate > date).sort(byDueDate),
+    completed: tasks
+      .filter((task) => task.status === "completed")
+      .sort((left, right) => String(right.completedAt || right.updatedAt || "").localeCompare(String(left.completedAt || left.updatedAt || ""))),
   };
 }
 
@@ -139,4 +163,3 @@ export function escapeHtml(value) {
   const entities = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
   return String(value ?? "").replace(/[&<>"']/g, (character) => entities[character]);
 }
-

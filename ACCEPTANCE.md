@@ -1,29 +1,39 @@
-# PRD V1.0 验收记录
+# Personal OS × Google Tasks 验收记录
 
-日期：2026-09-03
+日期：2026-09-04
 
-状态说明：`PASS (local)` 表示代码、自动化测试或本地浏览器已验证；`PENDING (cloud)` 表示必须在用户 Supabase 项目部署后做真实外部验证，当前不虚报为通过。
+`PASS (cloud)` 表示已在目标 Google / Supabase 账号真实调用验证；`PASS (local)` 表示自动测试或本地实现验证。
 
-| # | 验收项 | 当前结果 | 证据 / 部署后动作 |
+| # | 验收项 | 结果 | 说明 |
 |---|---|---|---|
-| 1 | iPhone 打开 today 页面看到真实今日任务 | PASS (local) / PENDING (cloud) | 390×844 浏览器无溢出、无控制台错误；部署后登录读取真实库。 |
-| 2 | 勾选 A，刷新仍完成 | PASS (code) / PENDING (cloud) | checkbox 等待 PATCH 成功后才更新真值；需在真实项目刷新复验。 |
-| 3 | 换设备登录仍看到 A 完成 | PASS (architecture) / PENDING (cloud) | Auth + RLS + 同一 Postgres 数据源；需两台设备实测。 |
-| 4 | 自动化接口返回 A=done | PASS (code) / PENDING (cloud) | Edge Function GET 输出 `today_done`；需部署 Token 后 curl。 |
-| 5 | 未完成 B 次日只延续一次 | PASS (automated) / PENDING (cloud) | RPC 原地更新同一 UUID，不 insert；重复调用更新 0 行。 |
-| 6 | 完成 B 后下一天不进入 open | PASS (code) / PENDING (cloud) | rollover 条件严格为 `status='open'`。 |
-| 7 | 取消任务后不再延续 | PASS (automated) / PENDING (cloud) | UI 写 `status=cancelled`；rollover 排除 cancelled。 |
-| 8 | 网络写入失败可见、无假完成 | PASS (automated) | 客户端抛错且不修改任务数组；两页均恢复 UI 并显示错误。 |
-| 9 | repo 不存在 Secret | PASS (automated) | `scripts/verify.mjs` 全仓扫描；运行配置当前为空。 |
-| 10 | 旧 localStorage 可一次性迁移 | PASS (automated) / PENDING (cloud) | 双 key、样例过滤、UUID upsert、成功后 flag；失败不写 flag。 |
+| 1 | 创建“收拾东北旅行行李”进入 Google Tasks | PASS (cloud) | 已由统一 Task API 写入 Google Tasks。 |
+| 2 | Due 为 2026-09-06 | PASS (cloud) | 回读结果日期正确，Notes 与 originalIntent 均保留。 |
+| 3 | Personal OS 页面显示任务 | PASS (cloud + visual) | Mac 页面真实显示三条 Google Tasks 与正确日期。 |
+| 4 | Personal OS 打勾后 Google Tasks Completed | PASS (cloud + visual) | 在页面真实点击 checkbox 后，Google 回读为 `completed` 并带完成时间。 |
+| 5 | Google Tasks / Calendar 打勾后刷新同步 | PASS (cloud data) | 外部恢复为 `needsAction` 后统一状态接口回读为 `open`；iPhone App 目视交叉检查留给用户最终验收。 |
+| 6 | “2026年9月8日上午11点飞哈尔滨”进入 Calendar 分类 | PASS (cloud) | 线上 Router 输出 `calendar_event`、11:00，并且未创建 Task。 |
+| 7 | 再说“周日记得收拾东北旅行的行李”不重复创建 | PASS (cloud) | 线上 Router 命中原任务，`deduplicated=true`；同标题任务仅 1 条。 |
+| 8 | “下周末提醒我查看域名审核结果”进入 Tasks | PASS (cloud) | 已创建 Task，Due 为 2026-09-13。 |
 
-## 已运行的验证
+## 本地验证
 
-- `npm run verify`：语法、结构、安全扫描通过。
-- Node 内置测试：16 tests，16 pass，0 fail。
-- 本地浏览器桌面 1440×900：配置缺失引导正常，无横向溢出，无 console error/warn。
-- 本地浏览器 iPhone 390×844：配置缺失引导正常，`scrollWidth=innerWidth=390`，无 console error/warn。
+- `npm run verify`：通过；34 tests pass，0 fail。
+- `npx --yes deno check ...`：三个 Edge Functions 全部通过类型检查。
+- 本地桌面页与 iPhone 页面加载成功，浏览器控制台 0 error / 0 warning。
+- Router、统一 Task Model、Task Lists、筛选、CRUD、去重、晨夕会状态均有自动测试。
+- 仓库 Secret 扫描覆盖 JS、TS、SQL、HTML、CSS、JSON、TOML 和 Markdown。
+- Mac 页面已显示 3 条真实任务；页面 checkbox 到 Google Completed 的真实同步已通过。
 
-## 云端最终验收入口
+## 云端真实任务池
 
-完成 [`OPEN_QUESTIONS.md`](OPEN_QUESTIONS.md) 的一次性配置后，严格按 [`DEPLOYMENT.md`](DEPLOYMENT.md) 第 5 节执行；结果再回填本表为 `PASS (cloud)`。
+OAuth 已完成。2026-09-04 又对 Gmail 中的晨会、夕会、每日简报、提案关键词和待办关键词做了集中清点；安全提醒、测试邮件、新闻、行情和已有监控没有转成 Task。
+
+- Google Tasks 当前未完成任务：30 条。
+- 明确日期任务：15 条；未定期项目动作：15 条。
+- 今日任务：5 条；未来七天：6 条。
+- 重复标题：0；所有任务状态均已从 Google Tasks 回读为 `open`。
+- `收拾东北旅行行李` 仍为原 Task，Due `2026-09-06`，清单已补入“呼吸机”，未新建重复任务。
+- `东北旅行行李最终检查` Due `2026-09-07`。
+- `查看域名审核结果` Due `2026-09-13`；`完成 Google OAuth 正式发布` 同日作为后续可勾选动作。
+- Calendar 中的飞机、高铁、会面、接送时段与固定行程原样保留，没有被批量删除或复制。
+- 袁老师渠道关系、企业名单和联系人资料仍属于项目数据；只把“确认联系人”“资源池入库”等可完成动作写入 Tasks。

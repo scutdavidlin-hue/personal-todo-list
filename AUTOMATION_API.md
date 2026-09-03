@@ -1,50 +1,61 @@
-# GPT / 晨晚会自动化 API
+# GPT / 晨会 / 夕会 API
 
-Edge Function：
+所有接口都返回 JSON，并使用独立的自动化 Token。Token 只能放请求头或 Secret，不能放进网页、邮件正文或日志。
 
-`https://YOUR_PROJECT_REF.supabase.co/functions/v1/task-status`
+## 自然语言分流
 
-所有响应均为 JSON，`Cache-Control: no-store`。Token 只放请求头，不放 URL、邮件正文或前端代码。
+```bash
+curl --fail-with-body \
+  -X POST \
+  -H "Authorization: Bearer YOUR_AUTOMATION_WRITE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"input":"周日提醒我收拾东北旅行的行李"}' \
+  "https://YOUR_PROJECT_REF.supabase.co/functions/v1/action-router"
+```
 
-## 读取任务状态
+统一输出：
+
+```json
+{
+  "type": "task",
+  "confidence": 0.97,
+  "payload": {
+    "title": "收拾东北旅行的行李",
+    "dueDate": "2026-09-06",
+    "originalIntent": "周日提醒我收拾东北旅行的行李"
+  },
+  "dispatched": true,
+  "result": {
+    "task": {},
+    "deduplicated": false
+  }
+}
+```
+
+Task 会直接写入 Google Tasks。`calendar_event`、`project_data` 和 `note` 只返回分类结果，交给现有对应服务处理；不会误建 Google Task。
+
+## 读取晨夕会状态
 
 ```bash
 curl --fail-with-body \
   -H "Authorization: Bearer YOUR_AUTOMATION_READ_TOKEN" \
-  "https://YOUR_PROJECT_REF.supabase.co/functions/v1/task-status?date=2026-09-03"
+  "https://YOUR_PROJECT_REF.supabase.co/functions/v1/task-status?date=2026-09-04"
 ```
 
-不传 `date` 时，服务端按 `Asia/Shanghai` 当天计算。读取前会先执行幂等延续。
+响应 `schema_version` 为 `2.0`，主要字段：
 
-返回字段：
+- `today_open`：今日未完成。
+- `overdue_open`：逾期未完成。
+- `priority_open`：高优先级未完成。
+- `personally_required`：OAuth、验证码、登录、付款、最终审批等需本人处理事项。
+- `today_completed`：今天真正勾选完成。
+- `yesterday_completed`：昨天完成。
+- `upcoming`：未来七天。
+- `unscheduled`：未设置 Due Date。
 
-```json
-{
-  "schema_version": "1.0",
-  "generated_at": "2026-09-03T00:00:00.000Z",
-  "timezone": "Asia/Shanghai",
-  "date": "2026-09-03",
-  "counts": {
-    "today_open": 2,
-    "today_done": 1,
-    "carryover_open": 1,
-    "yesterday_completed": 3,
-    "upcoming": 2
-  },
-  "today_open": [],
-  "today_done": [],
-  "carryover_open": [],
-  "yesterday_completed": [],
-  "recent_completed": [],
-  "upcoming": []
-}
-```
+任务对象使用统一模型：`id`、`externalId`、`provider`、`taskListId`、`title`、`notes`、`status`、`dueDate`、`completedAt`、`originalIntent`、`priority` 和 `metadata`。状态只使用 `open / completed / cancelled`。
 
-任务对象包含：`id`、`title`、`date`、`time`、`category`、`priority`、`duration`、`notes`、`status`、`done`、`completed_at`、`created_at`、`updated_at`、`source`、`carried_from_date`。不会返回 `owner_id`。
-
-## GPT/自动化新增任务
-
-POST 必须使用独立的写 Token；读 Token 无权新增。
+## 直接创建任务
 
 ```bash
 curl --fail-with-body \
@@ -52,34 +63,18 @@ curl --fail-with-body \
   -H "Authorization: Bearer YOUR_AUTOMATION_WRITE_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "title": "跟进客户报价",
-    "date": "2026-09-03",
-    "time": "10:30",
-    "category": "工作",
-    "priority": "high",
-    "duration": 30,
-    "notes": "来自 GPT 晨会"
+    "title":"查看域名审核结果",
+    "dueDate":"2026-09-13",
+    "notes":"域名审核预计需要 3～5 个工作日，届时确认审核状态。",
+    "originalIntent":"域名可能下周末完成审核，到时候提醒我查看。"
   }' \
   "https://YOUR_PROJECT_REF.supabase.co/functions/v1/task-status"
 ```
 
-服务端会强制 `owner_id=OWNER_USER_ID`、`source=gpt`、`status=open`，不会接受客户端覆盖这些安全字段。
+创建前会检查未完成任务。标题语义、日期与状态确认是同一事项时，更新原 Task 并返回 `deduplicated: true`。
 
-## 晨会与晚会编排
+## 编排规则
 
-- 05:00 晨会：GET 状态 → 使用 `carryover_open`、`today_open`、`yesterday_completed`、`upcoming` 生成邮件 → 邮件按钮指向正式 `today.html`。
-- 21:00 晚会：GET 状态 → 使用 `today_done`、`today_open` 与 `recent_completed` 收口。
-- GPT 对话识别出明确行动项：用户确认后使用写 Token POST；不要把 Token 暴露给模型输出、日志或网页。
-
-推荐让 Gmail/定时器所在的自动化平台把 Token 作为 Secret 注入 HTTP 请求。读写 Token 可独立轮换，不影响用户网页登录。
-
-## 状态码
-
-- `200`：读取成功。
-- `201`：任务创建成功。
-- `400`：日期或任务输入无效。
-- `401`：Token 缺失或错误。
-- `405`：方法不允许。
-- `429`：基础速率限制触发。
-- `503`：服务端配置不完整或数据库暂时不可用。
-
+- 晨会读取 `today_open`、`overdue_open`、`priority_open`、`personally_required` 和 `upcoming`。
+- 夕会读取 `today_completed`、`today_open` 与 `overdue_open`；未完成任务保留原 ID，不重复创建。
+- 每日简报只展示数量和摘要，点击后进入同一 Tasks 页面。

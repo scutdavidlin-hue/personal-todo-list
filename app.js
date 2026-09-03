@@ -1,6 +1,7 @@
 import {
   escapeHtml,
   fromDatabaseTask,
+  groupTasksByDue,
   groupTasksForToday,
   localDateISO,
   offsetDate,
@@ -20,6 +21,7 @@ let reviewSaveTimer = null;
 const firedReminders = new Set();
 
 function formatDate(dateString) {
+  if (!dateString) return "无截止日期";
   const date = new Date(`${dateString}T00:00:00`);
   return date.toLocaleDateString("zh-CN", { month: "long", day: "numeric", weekday: "short" });
 }
@@ -72,9 +74,7 @@ function renderTaskItem(task) {
         <strong>${escapeHtml(task.title)}</strong>
         <small>
           ${task.carriedFromDate ? `<span class="carry-chip">↪ ${escapeHtml(task.carriedFromDate)} 延续</span>` : ""}
-          <span><i class="priority-mark priority-${task.priority}"></i>${priorityLabel(task.priority)}</span>
-          ${task.time ? `<span>◷ ${task.time}</span>` : ""}
-          <span>${escapeHtml(task.category)} · ${task.duration} 分钟</span>
+          <span>Google Tasks</span>
         </small>
       </div>
       <div class="task-menu">
@@ -82,7 +82,7 @@ function renderTaskItem(task) {
         <div class="task-actions">
           <button data-action="edit">编辑</button>
           <button data-action="tomorrow">移到明天</button>
-          <button class="danger" data-action="delete">取消任务</button>
+          <button class="danger" data-action="delete">删除任务</button>
         </div>
       </div>
     </div>`;
@@ -102,15 +102,15 @@ function renderToday() {
   const percent = allToday.length ? Math.round(completed / allToday.length * 100) : 0;
   $("#progressPercent").textContent = `${percent}%`;
   $("#completedCount").textContent = completed;
-  $("#importantCount").textContent = allToday.filter((task) => task.priority === "high" && !task.done).length;
-  $("#remainingMinutes").textContent = allToday.filter((task) => !task.done).reduce((sum, task) => sum + Number(task.duration || 0), 0);
+  $("#importantCount").textContent = allToday.filter((task) => !task.done).length;
+  $("#remainingMinutes").textContent = allToday.length;
   $("#ringText").textContent = `${completed}/${allToday.length}`;
   $("#progressRing").style.setProperty("--progress", `${percent * 3.6}deg`);
 
-  const focus = allToday.find((task) => task.priority === "high" && !task.done) || allToday.find((task) => !task.done);
+  const focus = allToday.find((task) => !task.done);
   $("#focusTitle").textContent = focus?.title || "今天的任务已完成";
   $("#focusMeta").textContent = focus
-    ? `${focus.carriedFromDate ? "昨日延续 · " : ""}${focus.time || "待安排时间"} · 预计 ${focus.duration} 分钟${focus.notes ? ` · ${focus.notes}` : ""}`
+    ? `${formatDate(focus.date)}${focus.notes ? ` · ${focus.notes}` : ""}`
     : "做得很好。可以休息一下，或者提前安排明天。";
   $("#completeFocusButton").dataset.id = focus?.id || "";
   $("#completeFocusButton").textContent = focus ? "标记完成" : "全部完成";
@@ -121,18 +121,31 @@ function renderAllTasks() {
   const query = ($("#taskSearch")?.value || "").trim().toLowerCase();
   const list = tasks
     .filter((task) => task.status !== "cancelled")
-    .filter((task) => task.title.toLowerCase().includes(query) || task.category.toLowerCase().includes(query))
-    .sort((a, b) => a.date.localeCompare(b.date) || (a.time || "").localeCompare(b.time || ""));
-  $("#allTaskList").innerHTML = list.length ? list.map((task) => `
+    .filter((task) => task.title.toLowerCase().includes(query) || task.notes.toLowerCase().includes(query));
+  const groups = groupTasksByDue(list, localDateISO());
+  const taskRow = (task) => `
     <div class="task-row ${pendingIds.has(task.id) ? "syncing" : ""}" data-id="${task.id}">
       <div class="task-row-main">
         <input class="task-check" type="checkbox" ${task.done ? "checked" : ""} ${pendingIds.has(task.id) ? "disabled" : ""} aria-label="完成 ${escapeHtml(task.title)}">
         <span>${escapeHtml(task.title)}</span>
       </div>
-      <span>${formatDate(task.date)}${task.time ? ` ${task.time}` : ""}</span>
+      <span>${formatDate(task.dueDate)}</span>
       <span class="category-chip">${escapeHtml(task.category)}</span>
       <span class="status-chip ${task.done ? "done" : "open"}">${task.done ? "已完成" : "进行中"}</span>
-    </div>`).join("") : emptyState("没有找到相关任务");
+    </div>`;
+  const sections = [
+    ["overdue", "Overdue", "已逾期"],
+    ["today", "Today", "今天"],
+    ["upcoming", "Upcoming", "未来 / 待安排"],
+    ["completed", "Completed", "已完成"],
+  ];
+  $("#allTaskList").innerHTML = list.length
+    ? sections.map(([key, eyebrow, title]) => `
+      <section class="task-group">
+        <div class="task-group-title"><span><small>${eyebrow}</small><strong>${title}</strong></span><b>${groups[key].length}</b></div>
+        <div>${groups[key].length ? (key === "completed" ? groups[key].slice(0, 50) : groups[key]).map(taskRow).join("") : '<div class="group-empty">暂无</div>'}</div>
+      </section>`).join("")
+    : emptyState("没有找到相关任务");
 }
 
 function renderStats() {
@@ -226,7 +239,7 @@ async function mutateTask(id, changes, successMessage) {
 
 function toggleTask(id, done) {
   return mutateTask(id, {
-    status: done ? "done" : "open",
+    status: done ? "completed" : "open",
     completed_at: done ? new Date().toISOString() : null,
   }, done ? "已保存：完成一件，做得好。" : "已保存：任务恢复为未完成");
 }
@@ -236,18 +249,18 @@ function moveToTomorrow(id) {
 }
 
 async function cancelTask(id) {
-  if (!window.confirm("取消后任务将不再延续。确定取消吗？")) return;
+  if (!window.confirm("这会从 Google Tasks 永久删除任务。确定删除吗？")) return;
   if (pendingIds.has(id)) return;
   pendingIds.add(id);
-  setConnection("syncing", "正在取消任务…");
+  setConnection("syncing", "正在从 Google Tasks 删除…");
   try {
     await client.cancelTask(id);
     tasks = tasks.filter((task) => task.id !== id);
     updateCachedTasks();
     setConnection("", "已同步到云端");
-    showToast("任务已取消，不会再延续");
+    showToast("任务已从 Google Tasks 删除");
   } catch (error) {
-    setConnection("error", "取消失败，任务仍然保留");
+    setConnection("error", "删除失败，任务仍然保留");
     showToast(error.message, "error");
   } finally {
     pendingIds.delete(id);
@@ -260,10 +273,6 @@ function openTaskDialog(task = null) {
   $("#taskId").value = task?.id || "";
   $("#taskTitle").value = task?.title || "";
   $("#taskDate").value = task?.date || localDateISO();
-  $("#taskTime").value = task?.time || "";
-  $("#taskCategory").value = task?.category || "工作";
-  $("#taskPriority").value = task?.priority || "medium";
-  $("#taskDuration").value = task?.duration || 30;
   $("#taskNotes").value = task?.notes || "";
   $("#taskDialog").showModal();
   setTimeout(() => $("#taskTitle").focus(), 50);
@@ -278,26 +287,25 @@ async function saveTask(event) {
   const id = $("#taskId").value;
   const formData = {
     title: $("#taskTitle").value.trim(),
-    date: $("#taskDate").value,
-    time: $("#taskTime").value || null,
-    category: $("#taskCategory").value,
-    priority: $("#taskPriority").value,
-    duration: Number($("#taskDuration").value) || 30,
+    dueDate: $("#taskDate").value || null,
     notes: $("#taskNotes").value.trim(),
   };
+  let deduplicated = false;
   try {
     if (id) {
       const updated = await client.updateTask(id, formData);
       tasks = replaceTask(tasks, updated);
     } else {
-      const created = await client.createTask({ ...formData, status: "open", source: "manual" });
-      tasks.push(fromDatabaseTask(created));
+      const created = await client.createTask({ ...formData, status: "open", source: "manual", originalIntent: formData.title });
+      deduplicated = created.metadata?.deduplicated === true;
+      if (deduplicated) tasks = replaceTask(tasks, created);
+      else tasks.push(fromDatabaseTask(created));
     }
     updateCachedTasks();
     $("#taskDialog").close();
     render();
     setConnection("", "已同步到云端");
-    showToast(id ? "任务修改已保存" : "新任务已保存到云端");
+    showToast(id ? "任务修改已保存" : deduplicated ? "已识别为现有任务并更新" : "新任务已保存到 Google Tasks");
   } catch (error) {
     setConnection("error", "保存失败");
     showToast(error.message, "error");
@@ -341,7 +349,7 @@ async function refreshTasks({ quiet = false } = {}) {
   setConnection("syncing", "正在读取云端任务…");
   $("#refreshButton").disabled = true;
   try {
-    tasks = await client.getTasks(localDateISO());
+    tasks = await client.getTasks();
     updateCachedTasks();
     setConnection("", `已同步 · ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`);
     render();
@@ -387,19 +395,21 @@ async function migrateLegacy() {
 
 async function requestLogin(event) {
   event.preventDefault();
-  const email = $("#loginEmail").value.trim();
   const button = $("#loginForm button");
   button.disabled = true;
-  $("#loginMessage").textContent = "正在发送…";
+  $("#loginMessage").textContent = "正在前往 Google 授权…";
   try {
     const redirectTo = `${location.origin}${location.pathname}`;
-    await client.requestMagicLink(email, redirectTo);
-    $("#loginMessage").textContent = "登录链接已发送，请在同一台设备打开邮件中的链接。";
+    client.requestGoogleLogin(redirectTo);
   } catch (error) {
     $("#loginMessage").textContent = error.message;
   } finally {
     button.disabled = false;
   }
+}
+
+function connectGoogleTasks() {
+  client.requestGoogleLogin(`${location.origin}${location.pathname}`);
 }
 
 async function signOut() {
@@ -456,6 +466,7 @@ function bindStaticEvents() {
   $("#completeFocusButton").addEventListener("click", (event) => event.currentTarget.dataset.id && toggleTask(event.currentTarget.dataset.id, true));
   $("#notificationButton").addEventListener("click", enableNotifications);
   $("#loginForm").addEventListener("submit", requestLogin);
+  $("#connectGoogleButton").addEventListener("click", connectGoogleTasks);
   $("#refreshButton").addEventListener("click", () => refreshTasks());
   $("#signOutButton").addEventListener("click", signOut);
   $("#migrateButton").addEventListener("click", migrateLegacy);
@@ -495,6 +506,14 @@ async function boot() {
   if (!currentUser) {
     $("#authPanel").hidden = false;
     return;
+  }
+
+  try {
+    const connection = await client.finalizeGoogleTasksConnection();
+    if (connection.connected) showToast(`已连接：${connection.taskListTitle}`);
+  } catch (error) {
+    $("#loginMessage").textContent = error.message;
+    showToast(error.message, "error");
   }
 
   $("#authPanel").hidden = true;

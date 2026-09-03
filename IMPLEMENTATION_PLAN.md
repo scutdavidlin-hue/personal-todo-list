@@ -1,5 +1,7 @@
 # GPT 晨会 × 今日任务云同步实施计划
 
+> 历史方案说明：本文记录最初的 Supabase 任务表方案。2026-09-04 起，Google Tasks 已替代 Postgres `tasks` 表成为唯一任务状态真源；当前实现与验收以 `README.md`、`AUTOMATION_API.md` 和 `ACCEPTANCE.md` 为准。
+
 基准需求：`PRD_TASK_SYNC_V1.md`（V1.0，2026-09-03）。
 
 ## 审计结论

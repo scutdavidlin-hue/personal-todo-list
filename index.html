@@ -70,12 +70,11 @@
       <section class="system-panel auth-panel" id="authPanel" hidden>
         <div>
           <span class="eyebrow">SECURE CLOUD SYNC</span>
-          <h2>登录后，手机与电脑共享同一份任务</h2>
-          <p>输入邮箱，我们会发送一次性登录链接。无需设置或记住密码。</p>
+          <h2>使用 Google 登录并授权 Tasks</h2>
+          <p>同一次 Google OAuth 同时完成账号登录和 Tasks 授权，不需要重复登录。</p>
         </div>
         <form id="loginForm" class="login-form">
-          <label for="loginEmail">邮箱</label>
-          <div><input type="email" id="loginEmail" autocomplete="email" required placeholder="name@example.com"><button class="primary-button" type="submit">发送登录链接</button></div>
+          <div><button class="primary-button" type="submit">使用 Google 继续</button></div>
           <small id="loginMessage" role="status"></small>
         </form>
       </section>
@@ -87,7 +86,7 @@
 
       <div class="sync-toolbar" id="syncToolbar" hidden>
         <span><i class="sync-dot"></i><span id="syncStatus" role="status">正在连接…</span></span>
-        <span class="sync-actions"><span id="userEmail"></span><button id="refreshButton">刷新</button><button id="signOutButton">退出</button></span>
+        <span class="sync-actions"><span id="userEmail"></span><button id="connectGoogleButton">连接 Tasks</button><button id="refreshButton">刷新</button><button id="signOutButton">退出</button></span>
       </div>
 
       <section class="view active" id="todayView" hidden>
@@ -101,7 +100,7 @@
           </article>
           <article class="summary-card">
             <span class="card-icon amber">!</span>
-            <div><strong id="importantCount">0</strong><span>件重要事项</span></div>
+            <div><strong id="importantCount">0</strong><span>件未完成</span></div>
           </article>
           <article class="summary-card">
             <span class="card-icon green">✓</span>
@@ -109,7 +108,7 @@
           </article>
           <article class="summary-card">
             <span class="card-icon blue">○</span>
-            <div><strong id="remainingMinutes">0</strong><span>分钟待投入</span></div>
+            <div><strong id="remainingMinutes">0</strong><span>件来自 Google Tasks</span></div>
           </article>
         </div>
 
@@ -165,7 +164,6 @@
             <div><span class="eyebrow">ALL TASKS</span><h2>全部任务</h2></div>
             <div class="search-wrap"><span>⌕</span><input id="taskSearch" placeholder="搜索任务"></div>
           </div>
-          <div class="task-table-header"><span>任务</span><span>日期</span><span>分类</span><span>状态</span></div>
           <div id="allTaskList"></div>
         </section>
       </section>
@@ -208,24 +206,9 @@
       </div>
       <input type="hidden" id="taskId">
       <label>任务名称<input id="taskTitle" required maxlength="80" placeholder="例如：完成项目方案"></label>
-      <div class="form-row">
-        <label>日期<input type="date" id="taskDate" required></label>
-        <label>提醒时间<input type="time" id="taskTime"></label>
-      </div>
-      <div class="form-row">
-        <label>分类
-          <select id="taskCategory">
-            <option>工作</option><option>学习</option><option>生活</option><option>健康</option>
-          </select>
-        </label>
-        <label>优先级
-          <select id="taskPriority">
-            <option value="high">高</option><option value="medium" selected>中</option><option value="low">低</option>
-          </select>
-        </label>
-      </div>
-      <label>预计用时（分钟）<input type="number" id="taskDuration" min="5" step="5" value="30"></label>
-      <label>备注<textarea id="taskNotes" rows="3" placeholder="补充一点细节（可选）"></textarea></label>
+      <label>截止日期<input type="date" id="taskDate"></label>
+      <label>说明<textarea id="taskNotes" rows="3" maxlength="8192" placeholder="补充一点细节（可选）"></textarea></label>
+      <small class="muted">任务只保存日期，不保存具体时刻。会议、行程、预约和固定时间块请创建 Google Calendar Event。</small>
       <div class="dialog-actions">
         <button class="secondary-button" id="cancelTaskDialog" type="button">取消</button>
         <button class="primary-button" id="saveTaskButton" type="submit">保存任务</button>

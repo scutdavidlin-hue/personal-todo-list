@@ -99,3 +99,17 @@ test("today grouping separates new, carryover, open and done without duplication
   assert.deepEqual(groups.done.map((task) => task.id), ["3"]);
 });
 
+test("due grouping keeps overdue tasks instead of duplicating or rolling them forward", async () => {
+  const { groupTasksByDue } = await import("../src/core.js");
+  const tasks = [
+    { id: "late", dueDate: "2026-09-02", status: "open" },
+    { id: "today", dueDate: "2026-09-03", status: "open" },
+    { id: "future", dueDate: "2026-09-04", status: "open" },
+    { id: "done", dueDate: "2026-09-03", status: "completed", completedAt: "2026-09-03T08:00:00Z" },
+  ];
+  const groups = groupTasksByDue(tasks, "2026-09-03");
+  assert.equal(groups.overdue[0].id, "late");
+  assert.equal(groups.today[0].id, "today");
+  assert.equal(groups.upcoming[0].id, "future");
+  assert.equal(groups.completed[0].id, "done");
+});

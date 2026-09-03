@@ -1,5 +1,42 @@
 project_id = "personal-todo-list"
 
+[auth]
+enabled = true
+site_url = "http://127.0.0.1:4173"
+additional_redirect_urls = [
+  "http://127.0.0.1:4173",
+  "http://127.0.0.1:4173/**",
+  "http://localhost:4173",
+  "http://localhost:4173/**",
+  "https://scutdavidlin-hue.github.io/personal-todo-list/",
+  "https://scutdavidlin-hue.github.io/personal-todo-list/**"
+]
+
+[auth.external.google]
+enabled = true
+client_id = "31580920730-n5k06rgrg3k90ifr6092a7pgpbelvs99.apps.googleusercontent.com"
+secret = "env(GOOGLE_OAUTH_CLIENT_SECRET)"
+skip_nonce_check = false
+email_optional = false
+
+[auth.email]
+enable_signup = true
+double_confirm_changes = true
+enable_confirmations = true
+secure_password_change = false
+max_frequency = "1m"
+otp_length = 8
+otp_expiry = 3600
+
+[auth.mfa.totp]
+enroll_enabled = true
+verify_enabled = true
+
 [functions.task-status]
 verify_jwt = false
 
+[functions.google-tasks]
+verify_jwt = false
+
+[functions.action-router]
+verify_jwt = false

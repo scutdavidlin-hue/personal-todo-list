@@ -1,43 +1,34 @@
 # 开发进度
 
-最后更新：2026-09-03
+最后更新：2026-09-04
 
-## 当前状态
+## 已完成
 
-- [x] Phase 0：仓库、PRD、现有桌面页/手机页完整审计
-- [x] Phase 0：技术方案确定（GitHub Pages + Supabase Auth/Postgres/RLS/Edge Function）
-- [x] Phase 0：实施计划、进度与问题文档建立
-- [x] Phase 1：云端 schema、最小 grants、RLS、RPC
-- [x] Phase 1：自动化 Edge Function（代码完成，待用户项目部署）
-- [x] Phase 2：共享前端 Auth/REST 数据客户端
-- [x] Phase 2：桌面页云同步
-- [x] Phase 2：手机页云同步与真 checkbox
-- [x] Phase 2：旧 localStorage 一次性幂等迁移
-- [x] Phase 3：幂等延续与结构化状态接口
-- [x] Phase 4：部署/晨晚会集成文档
-- [x] Phase 5：本地自动测试、安全检查与响应式浏览器验收
-- [ ] Phase 5：真实 Supabase 跨设备/自动化端到端验收（外部账号阻塞）
+- [x] 从正式 `personal-todo-list` Git 仓库建立当前工作区，并合并已有 Google Tasks 草稿。
+- [x] Google OAuth 复用 Supabase Auth；支持保留现有 Calendar scope 并追加 Tasks scope。
+- [x] Google Tasks API：Task Lists、创建、筛选未完成、完成、恢复、修改、删除。
+- [x] 优先复用 `Personal OS` 清单；不存在时创建。
+- [x] 统一 Task Model 与 `originalIntent` 持久化。
+- [x] 服务端语义去重；命中后更新原 Task，不复制。
+- [x] Action Router：Task / Calendar Event / Project Data / Note。
+- [x] 桌面及手机页面：Today / Overdue / Upcoming / Completed。
+- [x] 晨会、夕会、每日简报状态接口改读 Google Tasks。
+- [x] 超时、授权失效、scope 缺失、API 未启用、限流、外部删除和同步失败处理。
+- [x] 域名审核提醒已纳入 Router 与真实验收清单。
+- [x] 清点 Gmail 晨会、夕会、每日简报与提案/待办关键词，按 Task / Calendar / Project Data / Note 分类。
+- [x] 将 27 条有效行动写入现有 `Personal OS` Google Tasks；连同首批任务共 30 条未完成事项，重复标题为 0。
+- [x] 原行李 Task 追加“呼吸机”，没有为同一旅行准备事项创建第二条任务。
 
-## 已确认的现状
+## 待完成
 
-- 工作目录最初为空；已从 `scutdavidlin-hue/personal-todo-list` 拉取 `main`。
-- 当前 commit：`1fe059d docs: add task sync PRD v1`。
-- GitHub CLI 本机登录 Token 已失效，但公开仓库可以拉取；后续 push/Pages 配置可能需要重新登录。
-- Supabase CLI 2.116.0 可通过 `npx` 运行，但本机未登录（`Access token not provided`）。
-- 当前 GitHub Pages 线上 `today.html` 仍是旧 localStorage 版本，显示 4 条硬编码示例任务；新版本尚未 push/deploy。
-- 新增 Node 内置测试与全仓静态/Secret 校验，无第三方运行时依赖。
+- [x] 最终自动回归（34 tests；0 fail）。
+- [x] 现有 Google Cloud / Supabase 一次性配置、数据库迁移、Functions 部署与 OAuth consent。
+- [x] 创建并核验 30 条真实未完成任务；完成日期、说明、originalIntent、去重、分流、完成与恢复的云端验收。
+- [x] Mac 页面真实显示、checkbox 完成同步与恢复验收。
+- [ ] iPhone 在正式部署地址可用后做最终触控验收。
 
-## 当前测试结果
+## 已确认限制
 
-- `npm run verify`：通过。
-- Node tests：16 pass / 0 fail。
-- `git diff --check`：通过。
-- 本地桌面 1440×900：无横向溢出、无 console error/warn。
-- 本地 iPhone 390×844：`scrollWidth = innerWidth = 390`，无 console error/warn。
-- Supabase 官方文档复核：Magic Link `redirect_to` 查询参数、RLS grants/policies、Edge Function 默认 Secret 与 `verify_jwt=false` 用法已对齐。
-
-## 变更日志
-
-- 2026-09-03：完成 Phase 0 审计与架构决策。
-- 2026-09-03：完成云端 schema/RLS、前端同步、迁移、延续、自动化 API、部署文档与本地验收。
-- 2026-09-03：确认剩余阻塞仅为 Supabase/GitHub 账号授权与真实部署。
+- 当前仓库没有原有 Google Calendar 写入实现；本阶段 Router 会正确分类并阻止误建 Task，但不会在本仓库重复建设 Calendar 服务。
+- `runtime-config.js` 只含公开的 Supabase URL 与 anon key；OAuth Client Secret、刷新令牌、加密密钥、service role key 和自动化 Token 均不在前端或 Git 中。
+- Postgres 不再保存第二套任务池；Google Tasks 是唯一任务状态真源，Supabase 只保存每日小结和加密后的 OAuth 凭证。

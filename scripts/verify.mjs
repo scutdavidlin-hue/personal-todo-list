@@ -13,6 +13,11 @@ const requiredFiles = [
   "src/core.js",
   "src/cloud-client.js",
   "supabase/migrations/202609030001_task_sync_v1.sql",
+  "supabase/migrations/202609030002_google_tasks.sql",
+  "supabase/functions/google-tasks/index.ts",
+  "supabase/functions/_shared/google-tasks-core.js",
+  "supabase/functions/_shared/action-router.js",
+  "supabase/functions/action-router/index.ts",
   "supabase/functions/task-status/index.ts",
   "supabase/functions/task-status/status-core.js",
 ];
@@ -23,22 +28,36 @@ for (const file of requiredFiles) contents.set(file, await readFile(new URL(file
 assert.match(contents.get("index.html"), /type="module" src="app\.js"/);
 assert.match(contents.get("index.html"), /id="cancelTaskDialog" type="button"/);
 assert.match(contents.get("index.html"), /Content-Security-Policy/);
-assert.match(contents.get("today.html"), /type="module" src="today\.js"/);
+assert.match(contents.get("today.html"), /type="module" src="today\.js(?:\?[^\"]+)?"/);
 assert.match(contents.get("today.html"), /Content-Security-Policy/);
 assert.match(contents.get("today.js"), /type="checkbox" data-action="toggle"/);
 assert.doesNotMatch(contents.get("app.js"), /richeng-tasks-v1|sampleTasks/);
 assert.doesNotMatch(contents.get("today.js"), /gpt-personal-tasks-v1|function seed/);
-assert.match(contents.get("src/cloud-client.js"), /rollover_open_tasks/);
-assert.match(contents.get("src/cloud-client.js"), /status: "cancelled"/);
+assert.match(contents.get("src/cloud-client.js"), /https:\/\/www\.googleapis\.com\/auth\/tasks/);
+assert.match(contents.get("src/cloud-client.js"), /async createTask\(/);
+assert.match(contents.get("src/cloud-client.js"), /async listTasks\(/);
+assert.match(contents.get("src/cloud-client.js"), /async listTaskLists\(/);
+assert.match(contents.get("src/cloud-client.js"), /async listOpenTasks\(/);
+assert.match(contents.get("src/cloud-client.js"), /async completeTask\(/);
+assert.match(contents.get("src/cloud-client.js"), /async reopenTask\(/);
+assert.match(contents.get("src/cloud-client.js"), /async updateTask\(/);
+assert.match(contents.get("src/cloud-client.js"), /async deleteTask\(/);
 assert.match(contents.get("supabase/migrations/202609030001_task_sync_v1.sql"), /enable row level security/i);
-assert.match(contents.get("supabase/migrations/202609030001_task_sync_v1.sql"), /revoke all on table public\.tasks from anon, authenticated/i);
-assert.match(contents.get("supabase/migrations/202609030001_task_sync_v1.sql"), /rollover_open_tasks/);
+assert.match(contents.get("supabase/migrations/202609030001_task_sync_v1.sql"), /revoke all on table public\.daily_reviews from anon, authenticated/i);
+assert.match(contents.get("supabase/migrations/202609030002_google_tasks.sql"), /pgp_sym_encrypt/i);
+assert.match(contents.get("supabase/migrations/202609030002_google_tasks.sql"), /revoke all on table public\.google_tasks_credentials from public, anon, authenticated/i);
+assert.match(contents.get("supabase/functions/google-tasks/index.ts"), /tasks\.googleapis\.com\/tasks\/v1/);
+assert.match(contents.get("supabase/functions/google-tasks/index.ts"), /oauth2\.googleapis\.com\/token/);
+assert.match(contents.get("supabase/functions/google-tasks/index.ts"), /DEFAULT_TASK_LIST_TITLE/);
+assert.match(contents.get("supabase/functions/action-router/index.ts"), /classifyAction/);
 assert.match(contents.get("supabase/functions/task-status/index.ts"), /AUTOMATION_READ_TOKEN/);
 assert.match(contents.get("supabase/functions/task-status/index.ts"), /AUTOMATION_WRITE_TOKEN/);
+assert.match(contents.get("supabase/functions/task-status/index.ts"), /tasks\.googleapis\.com\/tasks\/v1/);
 
 const config = contents.get("runtime-config.js");
-assert.match(config, /supabaseUrl: ""/);
-assert.match(config, /supabaseAnonKey: ""/);
+assert.match(config, /supabaseUrl:\s*"https:\/\/[a-z0-9-]+\.supabase\.co"/i);
+assert.match(config, /supabaseAnonKey:\s*"[A-Za-z0-9._-]{20,}"/);
+assert.doesNotMatch(config, /YOUR_|PLACEHOLDER/i);
 
 const ignoredDirectories = new Set([".git", "node_modules"]);
 async function sourceFiles(directory, relative = "") {
@@ -61,6 +80,7 @@ const secretPatterns = [
   /(?:service_role|AUTOMATION_(?:READ|WRITE)_TOKEN)\s*[=:]\s*["'](?!YOUR_|generate-)[A-Za-z0-9_-]{20,}["']/,
   /ghp_[A-Za-z0-9]{30,}/,
   /github_pat_[A-Za-z0-9_]{30,}/,
+  /GOOGLE_(?:OAUTH_CLIENT_SECRET|TOKEN_ENCRYPTION_KEY)\s*[=:]\s*["'](?!YOUR_|generate-)[A-Za-z0-9_-]{20,}["']/,
 ];
 for (const file of files) {
   if (!/\.(?:js|mjs|ts|html|css|md|json|toml|sql)$/.test(file)) continue;

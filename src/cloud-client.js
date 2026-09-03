@@ -3,11 +3,13 @@ import {
   MIGRATION_FLAG_KEY,
   collectLegacyTasks,
   fromDatabaseTask,
-  toDatabaseTask,
 } from "./core.js";
 
+export const GOOGLE_TASKS_SCOPE = "https://www.googleapis.com/auth/tasks";
+
 const SESSION_KEY = "task-sync-auth-session-v1";
-const TASK_SELECT = "id,title,date,time,category,priority,duration,notes,status,done,completed_at,created_at,updated_at,source,carried_from_date";
+const GOOGLE_OAUTH_TRANSIENT_KEY = "task-sync-google-oauth-transient-v1";
+const REQUEST_TIMEOUT_MS = 45_000;
 
 export class CloudError extends Error {
   constructor(message, { status = 0, code = "", cause } = {}) {
@@ -24,7 +26,12 @@ export class TaskCloudClient {
     this.anonKey = String(config.supabaseAnonKey || "");
     this.fetch = options.fetch || globalThis.fetch?.bind(globalThis);
     this.storage = options.storage || globalThis.localStorage;
+    this.transientStorage = options.transientStorage || globalThis.sessionStorage;
     this.location = options.location || globalThis.location;
+    this.googleOAuthScopes = [...new Set([
+      ...String(config.googleOAuthScopes || "").split(/[\s,]+/).filter(Boolean),
+      GOOGLE_TASKS_SCOPE,
+    ])].join(" ");
   }
 
   isConfigured() {
@@ -34,16 +41,21 @@ export class TaskCloudClient {
   }
 
   session() {
-    try {
-      return JSON.parse(this.storage?.getItem(SESSION_KEY) || "null");
-    } catch {
-      return null;
-    }
+    try { return JSON.parse(this.storage?.getItem(SESSION_KEY) || "null"); } catch { return null; }
   }
 
   saveSession(session) {
     if (!session) this.storage?.removeItem(SESSION_KEY);
     else this.storage?.setItem(SESSION_KEY, JSON.stringify(session));
+  }
+
+  saveTransientGoogleCredentials(credentials) {
+    if (!credentials?.provider_refresh_token && !credentials?.provider_token) return;
+    this.transientStorage?.setItem(GOOGLE_OAUTH_TRANSIENT_KEY, JSON.stringify(credentials));
+  }
+
+  transientGoogleCredentials() {
+    try { return JSON.parse(this.transientStorage?.getItem(GOOGLE_OAUTH_TRANSIENT_KEY) || "null"); } catch { return null; }
   }
 
   consumeAuthRedirect() {
@@ -60,37 +72,57 @@ export class TaskCloudClient {
       expires_at: Math.floor(Date.now() / 1000) + expiresIn,
       token_type: params.get("token_type") || "bearer",
     });
+    this.saveTransientGoogleCredentials({
+      provider_token: params.get("provider_token") || "",
+      provider_refresh_token: params.get("provider_refresh_token") || "",
+    });
     if (globalThis.history?.replaceState && this.location) {
       globalThis.history.replaceState(null, "", `${this.location.pathname}${this.location.search || ""}`);
     }
     return true;
   }
 
+  googleOAuthUrl(redirectTo) {
+    const params = new URLSearchParams({
+      provider: "google",
+      redirect_to: redirectTo,
+      scopes: this.googleOAuthScopes,
+      access_type: "offline",
+      prompt: "consent",
+      include_granted_scopes: "true",
+    });
+    return `${this.url}/auth/v1/authorize?${params}`;
+  }
+
+  requestGoogleLogin(redirectTo) {
+    const url = this.googleOAuthUrl(redirectTo);
+    if (typeof this.location?.assign === "function") this.location.assign(url);
+    else if (this.location) this.location.href = url;
+    return url;
+  }
+
   async rawRequest(url, init = {}) {
     if (!this.fetch) throw new CloudError("当前环境无法访问网络", { code: "NO_FETCH" });
     let response;
     try {
-      response = await this.fetch(url, init);
+      response = await this.fetch(url, {
+        ...init,
+        signal: init.signal || globalThis.AbortSignal?.timeout?.(REQUEST_TIMEOUT_MS),
+      });
     } catch (cause) {
+      if (cause?.name === "TimeoutError" || cause?.name === "AbortError") {
+        throw new CloudError("云端请求超时，请稍后重试", { code: "API_TIMEOUT", cause });
+      }
       throw new CloudError("无法连接云端，请检查网络后重试", { code: "NETWORK_ERROR", cause });
     }
     const text = await response.text();
     let payload = null;
     try { payload = text ? JSON.parse(text) : null; } catch { payload = text; }
     if (!response.ok) {
-      const message = payload?.msg || payload?.message || payload?.error_description || payload?.error || `云端请求失败（${response.status}）`;
+      const message = payload?.message || payload?.error_description || payload?.error || `云端请求失败（${response.status}）`;
       throw new CloudError(message, { status: response.status, code: payload?.code || "HTTP_ERROR" });
     }
     return payload;
-  }
-
-  async requestMagicLink(email, redirectTo) {
-    const redirect = encodeURIComponent(redirectTo);
-    return this.rawRequest(`${this.url}/auth/v1/otp?redirect_to=${redirect}`, {
-      method: "POST",
-      headers: { apikey: this.anonKey, "Content-Type": "application/json" },
-      body: JSON.stringify({ email, create_user: true }),
-    });
   }
 
   async refreshSession() {
@@ -107,7 +139,7 @@ export class TaskCloudClient {
         refresh_token: refreshed.refresh_token || current.refresh_token,
         expires_at: Math.floor(Date.now() / 1000) + Number(refreshed.expires_in || 3600),
         token_type: refreshed.token_type || "bearer",
-        user: refreshed.user,
+        user: refreshed.user || current.user,
       };
       this.saveSession(session);
       return session;
@@ -128,7 +160,7 @@ export class TaskCloudClient {
 
   async authenticatedRequest(path, init = {}, { retry = true } = {}) {
     const token = await this.accessToken();
-    if (!token) throw new CloudError("请先登录", { status: 401, code: "AUTH_REQUIRED" });
+    if (!token) throw new CloudError("请先使用 Google 登录", { status: 401, code: "AUTH_REQUIRED" });
     try {
       return await this.rawRequest(`${this.url}${path}`, {
         ...init,
@@ -140,7 +172,7 @@ export class TaskCloudClient {
         },
       });
     } catch (error) {
-      if (retry && error.status === 401) {
+      if (retry && error.status === 401 && error.code !== "GOOGLE_REAUTH_REQUIRED") {
         await this.refreshSession();
         return this.authenticatedRequest(path, init, { retry: false });
       }
@@ -153,13 +185,23 @@ export class TaskCloudClient {
     if (!token) return null;
     try {
       const user = await this.authenticatedRequest("/auth/v1/user", { method: "GET" });
-      const current = this.session();
-      this.saveSession({ ...current, user });
+      this.saveSession({ ...this.session(), user });
       return user;
     } catch (error) {
       if (error.status === 401) return null;
       throw error;
     }
+  }
+
+  async finalizeGoogleTasksConnection() {
+    const credentials = this.transientGoogleCredentials();
+    if (!credentials) return { connected: false, skipped: true };
+    const result = await this.authenticatedRequest("/functions/v1/google-tasks", {
+      method: "POST",
+      body: JSON.stringify({ action: "connect", ...credentials }),
+    });
+    this.transientStorage?.removeItem(GOOGLE_OAUTH_TRANSIENT_KEY);
+    return result;
   }
 
   async signOut() {
@@ -169,47 +211,67 @@ export class TaskCloudClient {
       // A local logout must still succeed when the network is unavailable.
     } finally {
       this.saveSession(null);
+      this.transientStorage?.removeItem(GOOGLE_OAUTH_TRANSIENT_KEY);
     }
   }
 
-  async rollover(date) {
-    return this.authenticatedRequest("/rest/v1/rpc/rollover_open_tasks", {
-      method: "POST",
-      body: JSON.stringify({ target_date: date }),
+  async tasksRequest(method, body = null, query = "") {
+    return this.authenticatedRequest(`/functions/v1/google-tasks${query}`, {
+      method,
+      body: body === null ? undefined : JSON.stringify(body),
     });
-  }
-
-  async getTasks(date) {
-    await this.rollover(date);
-    const rows = await this.authenticatedRequest(`/rest/v1/tasks?select=${TASK_SELECT}&status=neq.cancelled&order=date.asc,time.asc.nullslast,created_at.asc`, { method: "GET" });
-    return rows.map(fromDatabaseTask);
   }
 
   async createTask(task) {
-    const payload = toDatabaseTask(task, { includeId: false });
-    const rows = await this.authenticatedRequest(`/rest/v1/tasks?select=${TASK_SELECT}`, {
-      method: "POST",
-      headers: { Prefer: "return=representation" },
-      body: JSON.stringify(payload),
-    });
-    return rows[0];
+    const result = await this.tasksRequest("POST", { action: "create", task });
+    return result.task;
+  }
+
+  async listTaskLists() {
+    const result = await this.tasksRequest("GET", null, "?resource=tasklists");
+    return result;
+  }
+
+  async listTasks({ showCompleted = false, filter = "", date = "" } = {}) {
+    const params = new URLSearchParams({ showCompleted: showCompleted ? "true" : "false" });
+    if (filter) params.set("filter", filter);
+    if (date) params.set("date", date);
+    const result = await this.tasksRequest("GET", null, `?${params}`);
+    return result.tasks.map(fromDatabaseTask);
+  }
+
+  async listOpenTasks({ filter = "open", date = "" } = {}) {
+    return this.listTasks({ showCompleted: false, filter, date });
+  }
+
+  async getTasks() {
+    return this.listTasks({ showCompleted: true, filter: "all" });
+  }
+
+  async completeTask(id, completed = true) {
+    const result = await this.tasksRequest("PATCH", { action: "complete", id, completed });
+    return result.task;
+  }
+
+  async reopenTask(id) {
+    const result = await this.tasksRequest("PATCH", { action: "reopen", id });
+    return result.task;
   }
 
   async updateTask(id, changes) {
-    const payload = {};
-    const keys = ["title", "date", "time", "category", "priority", "duration", "notes", "status", "completed_at", "source", "carried_from_date"];
-    for (const key of keys) if (Object.hasOwn(changes, key)) payload[key] = changes[key];
-    const rows = await this.authenticatedRequest(`/rest/v1/tasks?id=eq.${encodeURIComponent(id)}&select=${TASK_SELECT}`, {
-      method: "PATCH",
-      headers: { Prefer: "return=representation" },
-      body: JSON.stringify(payload),
-    });
-    if (!rows[0]) throw new CloudError("任务不存在或无权修改", { status: 404, code: "TASK_NOT_FOUND" });
-    return rows[0];
+    if (Object.hasOwn(changes, "status") && Object.keys(changes).every((key) => ["status", "completed_at"].includes(key))) {
+      return changes.status === "open" ? this.reopenTask(id) : this.completeTask(id, true);
+    }
+    const result = await this.tasksRequest("PATCH", { action: "update", id, changes });
+    return result.task;
+  }
+
+  async deleteTask(id) {
+    return this.tasksRequest("DELETE", { id });
   }
 
   async cancelTask(id) {
-    return this.updateTask(id, { status: "cancelled", completed_at: null });
+    return this.deleteTask(id);
   }
 
   async getReview(date) {
@@ -238,13 +300,22 @@ export class TaskCloudClient {
   async migrateLegacyTasks() {
     const plan = this.legacyMigrationPlan();
     if (plan.completed || !plan.tasks.length) return { imported: 0, ...plan };
-    const rows = await this.authenticatedRequest(`/rest/v1/tasks?on_conflict=id&select=${TASK_SELECT}`, {
-      method: "POST",
-      headers: { Prefer: "resolution=merge-duplicates,return=representation" },
-      body: JSON.stringify(plan.tasks),
-    });
-    this.storage?.setItem(MIGRATION_FLAG_KEY, JSON.stringify({ completedAt: new Date().toISOString(), imported: rows.length }));
-    return { imported: rows.length, tasks: rows.map(fromDatabaseTask), malformedSources: plan.malformedSources };
+    const created = [];
+    const existing = await this.listTasks({ showCompleted: true, filter: "all" });
+    for (const task of plan.tasks.filter((item) => item.status !== "cancelled")) {
+      const result = await this.createTask({
+        title: task.title,
+        dueDate: task.date,
+        notes: task.notes,
+        status: task.status === "done" ? "completed" : "open",
+        originalIntent: task.title,
+      });
+      if (result.metadata?.deduplicated) continue;
+      created.push(result);
+      existing.push(fromDatabaseTask(result));
+    }
+    this.storage?.setItem(MIGRATION_FLAG_KEY, JSON.stringify({ completedAt: new Date().toISOString(), imported: created.length }));
+    return { imported: created.length, tasks: created.map(fromDatabaseTask), malformedSources: plan.malformedSources };
   }
 
   cacheTasks(userId, tasks) {
