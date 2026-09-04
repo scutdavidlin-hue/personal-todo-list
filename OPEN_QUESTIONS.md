@@ -1,9 +1,7 @@
 # 剩余人工验收
 
-V1 MCP 已注册并完成真实写入。V1.1 migration、Edge Functions、Calendar API、OAuth scope、Mac 端 `Task → Calendar → Complete → ✓`、ChatGPT App tools 刷新、Web ChatGPT `schema → Task → Calendar`，以及原 05:00 晨会的 Scheduler 接入均已完成真实验收。
+无。V1 MCP 已注册并完成真实写入。V1.1 migration、Edge Functions、Calendar API、OAuth scope、Mac 端 `Task → Calendar → Complete → ✓`、ChatGPT App tools 刷新、Web ChatGPT `schema → Task → Calendar`、原 05:00 晨会的 Scheduler 接入，以及 iPhone Google Tasks / Google Calendar 跨设备结果均已完成真实验收。
 
-需要用户完成：
-
-1. 在 iPhone Google Tasks 与 Google Calendar 核对同一 Task/Event；自定义 MCP 官方目前不支持 iPhone ChatGPT，移动验收不包含直接 MCP 调用。
+自定义 MCP App 官方目前仅支持网页端；本次 iPhone 验收按既定范围只核对 Google Tasks / Google Calendar 跨端结果，不包含在 iPhone ChatGPT 内直接调用自定义 MCP。
 
 `project_data`、`knowledge` 与 `gpt_job` Adapter 仍为非目标；Gateway 会明确失败，不会误建 Task。

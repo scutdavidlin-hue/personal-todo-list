@@ -2,7 +2,7 @@
 
 日期：2026-09-04
 
-`PASS (cloud)` 表示已在目标 Google / Supabase 账号真实调用验证；`PASS (local)` 表示自动测试或本地实现验证。
+`PASS (cloud)` 表示已在目标 Google / Supabase 账号真实调用验证；`PASS (local)` 表示自动测试或本地实现验证；`PASS (device)` 表示用户已在 iPhone 真机确认。
 
 | # | 验收项 | 结果 | 说明 |
 |---|---|---|---|
@@ -10,7 +10,7 @@
 | 2 | Due 为 2026-09-06 | PASS (cloud) | 回读结果日期正确，Notes 与 originalIntent 均保留。 |
 | 3 | Personal OS 页面显示任务 | PASS (cloud + visual) | Mac 页面真实显示三条 Google Tasks 与正确日期。 |
 | 4 | Personal OS 打勾后 Google Tasks Completed | PASS (cloud + visual) | 在页面真实点击 checkbox 后，Google 回读为 `completed` 并带完成时间。 |
-| 5 | Personal OS 打勾后 Task / Calendar 同步 | PASS (cloud + visual) | Personal OS 写入 `open/completed` 后，Google Task 与同一 Calendar 投影真实执行 `✓ → ☐ → ✓`；iPhone 目视交叉检查留给用户。 |
+| 5 | Personal OS 打勾后 Task / Calendar 同步 | PASS (cloud + visual + device) | Personal OS 写入 `open/completed` 后，Google Task 与同一 Calendar 投影真实执行 `✓ → ☐ → ✓`；iPhone 目视交叉检查已通过。 |
 | 6 | “2026年9月8日上午11点飞哈尔滨”进入 Calendar 分类 | PASS (cloud) | 线上 Router 输出 `calendar_event`、11:00，并且未创建 Task。 |
 | 7 | 再说“周日记得收拾东北旅行的行李”不重复创建 | PASS (cloud) | 线上 Router 命中原任务，`deduplicated=true`；同标题任务仅 1 条。 |
 | 8 | “下周末提醒我查看域名审核结果”进入 Tasks | PASS (cloud) | 已创建 Task，Due 为 2026-09-13。 |
@@ -40,7 +40,7 @@
 | Web ChatGPT → Task → Calendar | PASS (cloud + visual) | Web ChatGPT 真实创建 `验收 V1.1 ChatGPT 排程`（Task `OXJReEgwS25DRnVxS3p5dw`）；2026-09-05 16:00–17:00 只有一个 `☐` Event `pos8e2f3519d8021f1e3607ac0d9984fab1a9c4586c`，Schedule 无同步错误。 |
 | 无人值守 Task → Complete → Calendar `✓` | PASS (cloud + visual) | 在现有已认证 Personal OS 页面完成 Task `NWczWTZfS1JJdEJXNWNpWg`；Completed 区只保留一条，同一 2026-09-04 23:00–23:30 Event `pos75397454c9c6f82a1c18d7415663180b0d2ff1f1` 原位显示 `✓`。 |
 | 05:00 晨会 Scheduler 接入 | PASS (visual) | 原 Scheduled Task `5点GPT晨会邮件`（`6a950e48fcb081919192fc5b2357097f`）仍为每天 05:00；提示词已包含 `task-scheduler → task-status`、一次失败重试、Tasks 真源与禁止复制规则，未增加自动化数量。 |
-| iPhone Tasks + Calendar | PENDING | 仅验收跨端结果；自定义 MCP App 官方当前仅网页端。 |
+| iPhone Tasks + Calendar | PASS (device + visual) | 用户已在 iPhone 真机确认：未完成 Task 及其 `☐` Calendar 投影、已完成 Task 及其 `✓` Calendar 投影均与云端结果一致；移动端范围不包含直接调用网页端自定义 MCP App。 |
 
 即时 `☐/✓` 同步已验证的是 Personal OS / 服务端写入路径。Google Tasks API 没有为本实现提供完成状态 webhook；若直接在 Google Tasks 原生界面修改，现有 Morning Scheduler 会在下一次 reconciliation 读取真源并修正 Calendar 投影。
 
@@ -52,6 +52,7 @@ OAuth 已完成。2026-09-04 又对 Gmail 中的晨会、夕会、每日简报�
 - 两条带时刻的 V1.1 验收链路均为一 Task 一 Calendar Event；没有为重试或完成动作创建重复对象。
 - `验收 V1.1 ChatGPT 排程` 由 Web ChatGPT 真实创建，Due `2026-09-05`，并在 16:00–17:00 形成唯一 Calendar 投影。
 - `验收 Personal OS 无人值守环境 V1` 已从 Today 移入 Completed；原 23:00–23:30 Calendar Event 保留并显示 `✓`。
+- 2026-09-04，用户确认 iPhone Google Tasks 与 Google Calendar 的两组跨设备验收结果正确，Phase 7 与 V1.1 最终验收完成。
 - `收拾东北旅行行李` 仍为原 Task，Due `2026-09-06`，清单已补入“呼吸机”，未新建重复任务。
 - `东北旅行行李最终检查` Due `2026-09-07`。
 - `查看域名审核结果` Due `2026-09-13`；`完成 Google OAuth 正式发布` 同日作为后续可勾选动作。

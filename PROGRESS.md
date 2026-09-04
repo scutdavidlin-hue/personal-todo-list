@@ -22,7 +22,7 @@
 - [x] 新增数据库级 idempotency key、请求哈希冲突检测、响应重放与持久 Audit Log。
 - [x] 新增基于 Supabase Auth OAuth 2.1 的远程 MCP `create_task` 工具与授权同意页。
 
-## 待完成
+## 最终验收
 
 - [x] 最终自动回归（51 tests；0 fail）。
 - [x] 现有 Google Cloud / Supabase 一次性配置、数据库迁移、Functions 部署与 OAuth consent。
@@ -30,7 +30,7 @@
 - [x] Mac 页面真实显示、checkbox 完成同步与恢复验收。
 - [x] 在 ChatGPT Developer mode 注册并连接 MCP；App ID `asdk_app_6a9ab767459c8191934b1ec76be1378e`，`create_task` 工具发现成功。
 - [x] ChatGPT 网页端真实调用 `create_task`，Google Tasks 回读到“完成 Personal OS V1 MCP 真实调用验收”（Due 2026-09-05）。
-- [ ] iPhone 在正式部署地址做 Google Tasks / Google Calendar 最终触控验收。
+- [x] iPhone 真机确认 Google Tasks / Google Calendar 跨设备结果正确。
 
 ## V1.1｜智能排程 × Calendar 投影
 
@@ -42,7 +42,7 @@
 - [x] Phase 4：日期/时间/deadline/duration/priority/fixed_time Intake Parser 与 MCP schema。
 - [x] Phase 5：Morning Scheduler 核心已实现并部署，避开 busy Event、限制 09:00–21:00、无日期留 Backlog。
 - [x] Phase 6：`task-status` schema 3.0 提供 Today/Tomorrow/Next 3 Days/Backlog/Waiting 与夕会统计。
-- [ ] Phase 7：migration/functions 部署、Calendar OAuth、Mac 端 `☐→✓`、ChatGPT App tools 刷新及 Web ChatGPT → Task → Calendar 真实验收已完成；仅剩 iPhone 结果验收。
+- [x] Phase 7：migration/functions 部署、Calendar OAuth、Mac 端 `☐→✓`、ChatGPT App tools 刷新、Web ChatGPT → Task → Calendar 与 iPhone 跨设备结果验收全部通过。
 
 ## V1.1 验证
 
@@ -56,6 +56,7 @@
 - [x] Web ChatGPT 真实创建 `验收 V1.1 ChatGPT 排程`（Task `OXJReEgwS25DRnVxS3p5dw`），排到 2026-09-05 16:00–17:00；Calendar 仅有 Event `pos8e2f3519d8021f1e3607ac0d9984fab1a9c4586c`，`sync_required=false`、`last_sync_error=null`。
 - [x] 通过现有已认证 Personal OS 页面完成无人值守验收 Task `NWczWTZfS1JJdEJXNWNpWg`；Google Tasks 进入 Completed，同一 2026-09-04 23:00–23:30 Calendar Event `pos75397454c9c6f82a1c18d7415663180b0d2ff1f1` 原位显示 `✓`，未新建 Task/Event。
 - [x] 原 ChatGPT Scheduled Task `5点GPT晨会邮件`（ID `6a950e48fcb081919192fc5b2357097f`）已核对：每天 05:00，现有提示词已严格先运行 `task-scheduler`、失败重试一次，再读取 `task-status`；没有新建或改动其他自动化。
+- [x] 用户已在 iPhone Google Tasks 与 Google Calendar 真机确认未完成及已完成两组 Task/Event 的跨设备显示正确；V1.1 最终验收通过。
 
 ## 已确认限制
 

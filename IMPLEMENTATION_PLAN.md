@@ -20,7 +20,7 @@
 - [x] Phase 4：扩展 Intake / MCP schema 与 parser，支持明确时刻、deadline、duration、priority。
 - [x] Phase 5：实现保守 Morning Scheduler，避开已有 Event，限制每日容量，固定事项不可移动。
 - [x] Phase 6：扩展状态接口的 Today / Tomorrow / Next 3 Days / Backlog / Waiting 与夕会统计。
-- [ ] Phase 7：migration/functions、Calendar scope/API、Mac 端 `☐→✓`、ChatGPT App tools 刷新与 Web ChatGPT 排程链路已完成；仅剩 iPhone Google Tasks / Calendar 结果验收。
+- [x] Phase 7：migration/functions、Calendar scope/API、Mac 端 `☐→✓`、ChatGPT App tools 刷新、Web ChatGPT 排程链路与 iPhone Google Tasks / Calendar 跨设备结果验收全部通过。
 
 每个 Phase 都必须通过单元测试、静态检查与 Secret 扫描；外部部署只有在本地验证通过后执行。
 
