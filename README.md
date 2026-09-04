@@ -10,6 +10,9 @@
 - 清晰客户端 API：`listTaskLists`、`createTask`、`listOpenTasks`、`completeTask`、`reopenTask`、`updateTask`、`deleteTask`。
 - 统一 Task Model：保留 `externalId`、`taskListId`、`dueDate`、`completedAt`、`originalIntent`、项目关联与 metadata 扩展位。
 - Action Router：自然语言统一分类为 `task / calendar_event / project_data / note`；Task 自动写入 Google Tasks。
+- Personal OS Intake Gateway：统一接收 `task / calendar_event / project_data / knowledge / gpt_job`，Task 成功写入 Google 后才返回 `success:true`。
+- 数据库级 idempotency key 与持久 Audit Log；重试复用原响应，不会重复创建 Task。
+- 远程 MCP：通过 `personal-os-mcp/mcp` 暴露聚焦的 `create_task` 工具，使用 Supabase Auth OAuth 2.1 验证 ChatGPT 用户。
 - 创建前语义去重：相同未完成事项更新原 Task，不重复创建。
 - Google provider 刷新令牌仅在回调页短暂停留，随后由 Edge Function 使用 AES-256 加密保存；不进入 localStorage 或 Git。
 - checkbox 真正写入云端；失败时恢复原状态并提示，杜绝“假完成”。
@@ -46,6 +49,7 @@ python3 -m http.server 4173 --bind 127.0.0.1
 - [验收记录](ACCEPTANCE.md)
 - [开发进度](PROGRESS.md)
 - [需用户介入事项](OPEN_QUESTIONS.md)
+- [ChatGPT MCP 接入](MCP_INTEGRATION.md)
 
 ## 安全说明
 

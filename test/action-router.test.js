@@ -31,3 +31,19 @@ test("the domain review follow-up is a Task due next weekend", () => {
   assert.equal(route.payload.title, "查看域名审核结果");
   assert.equal(route.payload.dueDate, "2026-09-13");
 });
+
+test("a conversational domain check still routes to Tasks", () => {
+  const route = classifyAction("下周末帮我再查一次 nou.aliyun.com 域名状态", { baseDate });
+  assert.equal(route.type, "task");
+  assert.equal(route.payload.dueDate, "2026-09-13");
+});
+
+test("a recurring research request routes to a GPT job", () => {
+  const route = classifyAction("每天晚上帮我搜索比亚迪和招商南油最新情况并分析", { baseDate });
+  assert.equal(route.type, "gpt_job");
+});
+
+test("a durable fact routes to knowledge", () => {
+  const route = classifyAction("记住：普通待办只进入 Google Tasks", { baseDate });
+  assert.equal(route.type, "knowledge");
+});

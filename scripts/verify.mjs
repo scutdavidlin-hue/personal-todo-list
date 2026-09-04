@@ -10,16 +10,22 @@ const requiredFiles = [
   "app.js",
   "today.js",
   "runtime-config.js",
+  "oauth/consent/index.html",
+  "oauth/consent/app.js",
   "src/core.js",
   "src/cloud-client.js",
   "supabase/migrations/202609030001_task_sync_v1.sql",
   "supabase/migrations/202609030002_google_tasks.sql",
+  "supabase/migrations/202609040001_personal_os_intake.sql",
   "supabase/functions/google-tasks/index.ts",
   "supabase/functions/_shared/google-tasks-core.js",
   "supabase/functions/_shared/action-router.js",
+  "supabase/functions/_shared/personal-os-intake.js",
   "supabase/functions/action-router/index.ts",
   "supabase/functions/task-status/index.ts",
   "supabase/functions/task-status/status-core.js",
+  "supabase/functions/personal-os-intake/index.ts",
+  "supabase/functions/personal-os-mcp/index.ts",
 ];
 
 const contents = new Map();
@@ -50,6 +56,14 @@ assert.match(contents.get("supabase/functions/google-tasks/index.ts"), /tasks\.g
 assert.match(contents.get("supabase/functions/google-tasks/index.ts"), /oauth2\.googleapis\.com\/token/);
 assert.match(contents.get("supabase/functions/google-tasks/index.ts"), /DEFAULT_TASK_LIST_TITLE/);
 assert.match(contents.get("supabase/functions/action-router/index.ts"), /classifyAction/);
+assert.match(contents.get("supabase/functions/_shared/action-router.js"), /gpt_job/);
+assert.match(contents.get("supabase/functions/_shared/action-router.js"), /knowledge/);
+assert.match(contents.get("supabase/functions/personal-os-intake/index.ts"), /idempotency-key/i);
+assert.match(contents.get("supabase/functions/personal-os-intake/index.ts"), /personal_os_intake_audit/);
+assert.match(contents.get("supabase/functions/personal-os-mcp/index.ts"), /StreamableHttpTransport/);
+assert.match(contents.get("supabase/functions/personal-os-mcp/index.ts"), /create_task/);
+assert.match(contents.get("supabase/migrations/202609040001_personal_os_intake.sql"), /unique \(owner_id, idempotency_key\)/i);
+assert.match(contents.get("oauth/consent/app.js"), /approveAuthorization/);
 assert.match(contents.get("supabase/functions/task-status/index.ts"), /AUTOMATION_READ_TOKEN/);
 assert.match(contents.get("supabase/functions/task-status/index.ts"), /AUTOMATION_WRITE_TOKEN/);
 assert.match(contents.get("supabase/functions/task-status/index.ts"), /tasks\.googleapis\.com\/tasks\/v1/);

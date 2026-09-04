@@ -1,6 +1,8 @@
-const TASK_VERBS = /(?:完成|处理|联系|购买|买|整理|检查|登录|修改|跟进|报销|收拾|准备|验收|提交|确认|回复|发送|预约|提醒)/;
+const TASK_VERBS = /(?:完成|处理|联系|购买|买|整理|检查|查看|复查|查询|查|登录|修改|跟进|报销|收拾|准备|验收|提交|确认|回复|发送|预约|提醒)/;
 const CALENDAR_NOUNS = /(?:飞机|航班|高铁|火车|会议|开会|面谈|看电影|医院预约|行程|出发|抵达|纪念日|婚礼|课程)/;
 const PROJECT_DATA_PATTERNS = /(?:可以对接|客户资源|客户线索|项目资料|合作方|供应商|联系人|商机)/;
+const GPT_JOB_PATTERNS = /(?:(?:每天|每日|每晚|每周|每月|定期|持续).*(?:搜索|查询|监控|分析|汇总|研究|跟踪)|(?:搜索|查询|监控|分析|汇总|研究|跟踪).*(?:每天|每日|每晚|每周|每月|定期|持续))/;
+const KNOWLEDGE_PATTERNS = /(?:记住|长期保存|沉淀为知识|知识库|经验总结|以后遵循|原则是)/;
 const WEEKDAYS = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 日: 0, 天: 0 };
 
 function localDate(date) {
@@ -86,6 +88,10 @@ function taskPayload(text, dueDate) {
   };
 }
 
+function contentPayload(text) {
+  return { content: text.trim(), originalIntent: text.trim() };
+}
+
 export function classifyAction(input, options = {}) {
   const text = String(input || "").trim();
   if (!text) throw new Error("input is required");
@@ -93,8 +99,14 @@ export function classifyAction(input, options = {}) {
   const dueDate = parseIntentDate(text, baseDate);
   const time = parseIntentTime(text);
 
+  if (GPT_JOB_PATTERNS.test(text)) {
+    return { type: "gpt_job", confidence: 0.98, payload: contentPayload(text) };
+  }
   if (PROJECT_DATA_PATTERNS.test(text) && !time) {
-    return { type: "project_data", confidence: 0.92, payload: { content: text, originalIntent: text } };
+    return { type: "project_data", confidence: 0.92, payload: contentPayload(text) };
+  }
+  if (KNOWLEDGE_PATTERNS.test(text)) {
+    return { type: "knowledge", confidence: 0.9, payload: contentPayload(text) };
   }
   if (CALENDAR_NOUNS.test(text) && (time || dueDate)) {
     return { type: "calendar_event", confidence: time ? 0.99 : 0.9, payload: calendarPayload(text, dueDate, time) };
@@ -105,5 +117,5 @@ export function classifyAction(input, options = {}) {
   if (TASK_VERBS.test(text)) {
     return { type: "task", confidence: dueDate ? 0.97 : 0.9, payload: taskPayload(text, dueDate) };
   }
-  return { type: "note", confidence: 0.62, payload: { content: text, originalIntent: text } };
+  return { type: "knowledge", confidence: 0.62, payload: contentPayload(text) };
 }

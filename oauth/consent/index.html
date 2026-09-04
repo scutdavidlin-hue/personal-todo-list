@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#f6f4ee">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://*.supabase.co https://esm.sh; img-src 'self' data: https:; style-src 'self'; script-src 'self' https://esm.sh; object-src 'none'; base-uri 'none'; form-action 'self'">
+  <title>授权 Personal OS</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="consent-shell">
+    <section class="consent-card" aria-live="polite">
+      <div class="brand-mark">日</div>
+      <p class="eyebrow">PERSONAL OS</p>
+      <h1 id="title">正在准备授权…</h1>
+      <p id="message">请稍候，我们正在核对请求方与权限。</p>
+
+      <div class="details" id="details" hidden>
+        <div><span>请求方</span><strong id="clientName"></strong></div>
+        <div><span>权限</span><strong id="scopes"></strong></div>
+        <div><span>账号</span><strong id="account"></strong></div>
+      </div>
+
+      <div class="actions" id="actions" hidden>
+        <button class="secondary" id="denyButton" type="button">拒绝</button>
+        <button class="primary" id="approveButton" type="button">允许写入任务</button>
+      </div>
+      <button class="primary wide" id="loginButton" type="button" hidden>使用 Google 登录并继续</button>
+      <p class="error" id="error" hidden></p>
+      <p class="privacy">仅授权当前 Personal OS 连接。Google refresh token 与自动化密钥不会发送给 ChatGPT。</p>
+    </section>
+  </main>
+  <script src="../../runtime-config.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

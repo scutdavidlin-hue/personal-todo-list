@@ -2,6 +2,30 @@
 
 所有接口都返回 JSON，并使用独立的自动化 Token。Token 只能放请求头或 Secret，不能放进网页、邮件正文或日志。
 
+## Personal OS 统一写入入口
+
+```bash
+curl --fail-with-body \
+  -X POST \
+  -H "Authorization: Bearer YOUR_AUTOMATION_WRITE_TOKEN" \
+  -H "Idempotency-Key: chatgpt-CONVERSATION-TURN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source":"chatgpt",
+    "raw_text":"明天提醒我安排小青蛙寄养。",
+    "type":"task",
+    "title":"安排小青蛙寄养",
+    "notes":"联系乔治安排寄养。",
+    "due":"2026-09-05",
+    "timezone":"Asia/Shanghai"
+  }' \
+  "https://YOUR_PROJECT_REF.supabase.co/functions/v1/personal-os-intake"
+```
+
+只有 Google Tasks 返回真实对象后才会得到 `success:true`。相同 idempotency key 与相同请求会重放首次响应；同一个 key 用于不同请求会返回 `409`。每次请求都写入仅 service role 可访问的 `personal_os_intake_audit`。
+
+本次 P0 只接通 `task → Google Tasks`。其他四类会正确分类并明确返回 `success:false`、`ADAPTER_NOT_CONFIGURED`，不会伪造已写入。
+
 ## 自然语言分流
 
 ```bash
@@ -32,7 +56,7 @@ curl --fail-with-body \
 }
 ```
 
-Task 会直接写入 Google Tasks。`calendar_event`、`project_data` 和 `note` 只返回分类结果，交给现有对应服务处理；不会误建 Google Task。
+Task 会直接写入 Google Tasks。`calendar_event`、`project_data`、`knowledge` 和 `gpt_job` 只返回分类结果，交给现有对应服务处理；不会误建 Google Task。
 
 ## 读取晨夕会状态
 

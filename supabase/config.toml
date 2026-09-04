@@ -2,7 +2,7 @@ project_id = "personal-todo-list"
 
 [auth]
 enabled = true
-site_url = "http://127.0.0.1:4173"
+site_url = "https://scutdavidlin-hue.github.io/personal-todo-list"
 additional_redirect_urls = [
   "http://127.0.0.1:4173",
   "http://127.0.0.1:4173/**",
@@ -32,6 +32,11 @@ otp_expiry = 3600
 enroll_enabled = true
 verify_enabled = true
 
+[auth.oauth_server]
+enabled = true
+authorization_url_path = "/oauth/consent"
+allow_dynamic_registration = true
+
 [functions.task-status]
 verify_jwt = false
 
@@ -39,4 +44,10 @@ verify_jwt = false
 verify_jwt = false
 
 [functions.action-router]
+verify_jwt = false
+
+[functions.personal-os-intake]
+verify_jwt = false
+
+[functions.personal-os-mcp]
 verify_jwt = false

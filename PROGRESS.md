@@ -10,22 +10,25 @@
 - [x] 优先复用 `Personal OS` 清单；不存在时创建。
 - [x] 统一 Task Model 与 `originalIntent` 持久化。
 - [x] 服务端语义去重；命中后更新原 Task，不复制。
-- [x] Action Router：Task / Calendar Event / Project Data / Note。
+- [x] Action Router：Task / Calendar Event / Project Data / Knowledge / GPT Job。
 - [x] 桌面及手机页面：Today / Overdue / Upcoming / Completed。
 - [x] 晨会、夕会、每日简报状态接口改读 Google Tasks。
 - [x] 超时、授权失效、scope 缺失、API 未启用、限流、外部删除和同步失败处理。
 - [x] 域名审核提醒已纳入 Router 与真实验收清单。
 - [x] 清点 Gmail 晨会、夕会、每日简报与提案/待办关键词，按 Task / Calendar / Project Data / Note 分类。
-- [x] 将 27 条有效行动写入现有 `Personal OS` Google Tasks；连同首批任务共 30 条未完成事项，重复标题为 0。
+- [x] 将 27 条有效行动写入现有 `Personal OS` Google Tasks；连同首批任务与 Issue #1 验收项共 31 条未完成事项，重复标题为 0。
 - [x] 原行李 Task 追加“呼吸机”，没有为同一旅行准备事项创建第二条任务。
+- [x] 新增统一 Personal OS Intake Gateway，覆盖五类输入并只对 Task 执行 Google Tasks 写入。
+- [x] 新增数据库级 idempotency key、请求哈希冲突检测、响应重放与持久 Audit Log。
+- [x] 新增基于 Supabase Auth OAuth 2.1 的远程 MCP `create_task` 工具与授权同意页。
 
 ## 待完成
 
-- [x] 最终自动回归（34 tests；0 fail）。
+- [x] 最终自动回归（41 tests；0 fail）。
 - [x] 现有 Google Cloud / Supabase 一次性配置、数据库迁移、Functions 部署与 OAuth consent。
-- [x] 创建并核验 30 条真实未完成任务；完成日期、说明、originalIntent、去重、分流、完成与恢复的云端验收。
+- [x] 创建并核验 31 条真实未完成任务；完成日期、说明、originalIntent、去重、分流、完成与恢复的云端验收。
 - [x] Mac 页面真实显示、checkbox 完成同步与恢复验收。
-- [ ] iPhone 在正式部署地址可用后做最终触控验收。
+- [ ] 在 ChatGPT Developer mode 注册 MCP、取得技术 ID、打包安装插件并做 iPhone 最终验收。
 
 ## 已确认限制
 
