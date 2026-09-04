@@ -58,3 +58,21 @@ OAuth 已完成。2026-09-04 又对 Gmail 中的晨会、夕会、每日简报�
 - `查看域名审核结果` Due `2026-09-13`；`完成 Google OAuth 正式发布` 同日作为后续可勾选动作。
 - Calendar 中的飞机、高铁、会面、接送时段与固定行程原样保留，没有被批量删除或复制。
 - 袁老师渠道关系、企业名单和联系人资料仍属于项目数据；只把“确认联系人”“资源池入库”等可完成动作写入 Tasks。
+
+## Goal & Plan 对话桥接 V1.0｜2026-09-05
+
+| 验收项 | 结果 | 说明 |
+|---|---|---|
+| Existing Capability Map | PASS (local) | 已先完成全仓审计；复用现有 `goals_plans`、PostgREST、Goals 页面、Intake、MCP、Google Tasks 与 `task_context_links`，没有第二套 Goal/Task 系统。 |
+| Test 1 — Create | PASS (cloud) | 创建唯一 Medium Term Goal `财务岗位经营化转型`，ID `b139675c-6c89-4f00-9f9c-72b57b20adfe`，状态 `Planning`；未自动生成 Deadline。 |
+| Test 2 — Update First | PASS (cloud) | “财务以后自己开发的新项目也要有提成”命中同一 Goal ID，`operation=updated`、`matched_existing=true`、匹配分数 `0.6709`，没有第二条 Goal。 |
+| Test 3 — Task Separation | PASS (cloud) | “下周把财务销售提成方案整理出来”创建 Google Task `dUlKTHQwODZldjF1M1ZFOQ`，并通过 `task_context_links` 关联该 Goal；没有把 Task 内容复制进 Goal，也没有为“下周”虚构具体 Date/Deadline。 |
+| Test 4 — Read | PASS (cloud + visual) | 在已连接的 Web ChatGPT 中真实调用 `get_goals`；返回当前唯一中期 Goal、同一 ID、`Planning`、`medium`，不是对话记忆回答。 |
+| Test 5 — Complete | PASS (cloud) | 同一 Goal ID 真实执行 `Planning → Completed → Planning`；完成测试没有新增记录，验收后已恢复最终业务状态。 |
+| Test 6 — Failure | PASS (cloud + local) | 无效写入凭证真实返回 HTTP 401 / `success=false`；MCP 仅在 HTTP 成功、`success=true` 且存在持久化对象 ID 时才声明入库成功。 |
+| MCP Goal tools | PASS (cloud + visual) | 已连接的 Personal OS 插件发现 `capture_personal_os_item`、`get_goals`、`update_goal`、`complete_goal`；Task 仍走现有 Task tools。 |
+| Local Goals UI | PASS (local + visual) | 既有页面已显示 Goals 导航、分类、卡片与 Goal→Task 上下文；浏览器控制台 0 error / 0 warning。 |
+| Production UI Visible | PASS (cloud + visual) | GitHub Pages 已发布提交 `523b0b3`；原登录会话刷新后显示“Tasks 与 Goals 已同步”，页面直接显示“职业 · 中期 / 财务岗位经营化转型 / 下一步：整理财务销售提成方案”。 |
+| Regression | PASS (local) | `npm run verify`：85 tests，0 fail；Task、Calendar projection、Morning Scheduler、Date/Deadline 与 Supabase key migration 测试全部保留。 |
+
+最终真实 Goal 状态：`Planning` / `medium` / `high` / `0%`。目标摘要为本 PRD 指定的完整经营化转型说明；后续待明确岗位职责、销售指标、项目归属、项目提成、薪酬分摊与项目利润核算。

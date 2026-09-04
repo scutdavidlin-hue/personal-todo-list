@@ -65,3 +65,18 @@
 - ChatGPT 自定义 MCP App 官方目前仅支持网页端；iPhone 只验收 Google Tasks / Calendar 的跨端结果。
 - `runtime-config.js` 只含公开的 Supabase URL 与 anon key；OAuth Client Secret、刷新令牌、加密密钥、service role key 和自动化 Token 均不在前端或 Git 中。
 - Postgres 不再保存第二套任务池；Google Tasks 是唯一任务状态真源，Supabase 只保存每日小结和加密后的 OAuth 凭证。
+
+## Goal & Plan 对话桥接 V1.0｜2026-09-05
+
+- [x] 先完成 Existing Capability Map；确认只扩展现有 Goal/Plan、Intake、MCP 与 Goals Web UI。
+- [x] 在现有 `goals_plans` 增量增加 `horizon`，未创建第二套 Goal 数据模型。
+- [x] 对话分类支持显式 Goal/Plan 语义，用户明确要求入库时不重复确认。
+- [x] Intake 改为 update-first：显式 `existing_goal_id` 优先，否则对 active goals 做保守语义匹配。
+- [x] MCP 补齐真实 `get_goals`、`update_goal`、`complete_goal`，查询不依赖 GPT Memory。
+- [x] Goal→Task 复用 Google Tasks 与 `task_context_links`，没有复制 Task 状态。
+- [x] 写入反馈严格区分 created / updated / failed；失败不伪装成功。
+- [x] `财务岗位经营化转型` 已真实创建并完成 Update、Read、Complete/Restore、Failure E2E。
+- [x] 关联 Task `整理财务销售提成方案` 已进入现有 Google Tasks 流程并关联唯一 Goal。
+- [x] 本地 Goals 页面与浏览器控制台验收通过。
+- [x] 现有 GitHub Pages 已发布 Goals UI；已认证页面真实同步并显示目标、`中期` horizon 与关联下一步 Task。
+- [x] 自动回归 85 tests / 0 fail，既有 Task、Calendar、晨会、夕会核心规则无 regression。
