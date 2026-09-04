@@ -1,6 +1,6 @@
-# Google Tasks 集成部署与真实验收
+# Personal OS V1.2 部署与真实验收
 
-代码与目标 Supabase Functions 已部署，现有 Google Cloud 项目也已启用 Tasks / Calendar API 并完成新增 Calendar scope 授权。以下保留为可重复部署说明；仓库不包含任何真实凭证。
+Goals & Plans 数据层与相关 Supabase Functions 已部署；现有 Google Tasks / Calendar 链路继续复用。以下保留为可重复部署说明；仓库不包含任何真实凭证。
 
 ## 1. Google Cloud
 
@@ -35,6 +35,8 @@ npx supabase db push
 `202609030002_google_tasks.sql` 会创建仅 service role 可访问的加密凭证表，并撤销客户端对旧 `tasks` 表的权限。每日小结表仍保留。
 
 `202609040002_task_scheduling_v1_1.sql` 新增一对一 Schedule Metadata；不保存 Task title、notes 或完成状态。
+
+`202609040003_goals_plans_v1_2.sql` 新增 `goals_plans`、`projects` 与 `task_context_links`，包括目标时间精度、财务余额、RLS 和归属校验。若远端已存在 `202609040004_task_lifecycle_v1_2.sql`，先把同一迁移文件同步到本地，再用 `db push --dry-run --include-all` 确认只补推 `003`；不要直接修改远端迁移历史。
 
 ## 3. 服务端 Secrets 与 Edge Functions
 
@@ -87,6 +89,17 @@ window.TASK_SYNC_CONFIG = Object.freeze({
 
 不要把 Google Client Secret、Google refresh token、service role key 或加密密钥放进此文件。
 
+正式前端必须通过 HTTPS 发布，确保以下文件可访问：
+
+- `/manifest.webmanifest`
+- `/sw.js`
+- `/apple-touch-icon.png`
+- `/icon-192.png`
+- `/icon-512.png`
+- `/icon-512-maskable.png`
+
+在 iPhone Safari 打开正式地址，选择“分享 → 添加到主屏幕”。Standalone、Safe Area 和离线 App Shell 都在同一个 PWA 中，不另建原生 App。
+
 ## 5. 真实验收
 
 1. 打开正式页面，点击“使用 Google 继续”，选择现有 Google 账号并同意 Tasks 权限。
@@ -96,7 +109,10 @@ window.TASK_SYNC_CONFIG = Object.freeze({
 5. 创建带明确时刻的 Task，确认 Google Calendar 在该时刻只出现一个 `☐` 投影。
 6. 回到 Personal OS 页面勾选完成，确认原 Calendar Event 立即保留并变为 `✓`；如果从 Google Tasks 原生界面外部修改状态，则由下一次 Scheduler reconciliation 校正投影。
 7. 调用 `action-router` 输入航班和行李两种语句，确认航班不创建 Task，行李重复输入返回 `deduplicated: true`。
-8. 运行 `npm run verify`，再使用 `AUTOMATION_API.md` 的 GET 验证自动化读取的也是同一个 Google Tasks 真源。
+8. 创建只带 `target_year` 的 Goal，确认没有 Deadline；创建 FinancialItem，确认余额自动计算。
+9. 在 Goal 下创建 Project，并关联/创建一个 Task；完成 Task 后确认 Goal 仍保留。
+10. 刷新现有 ChatGPT Personal OS App，确认同时发现 `create_task` 与 `capture_personal_os_item`。
+11. 运行 `npm run verify`，再使用 `AUTOMATION_API.md` 的 GET 验证自动化读取的仍是同一个 Google Tasks 真源。
 
 ## 6. 回滚与吊销
 

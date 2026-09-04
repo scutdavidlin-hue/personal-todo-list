@@ -4,12 +4,14 @@ import {
   collectLegacyTasks,
   fromDatabaseTask,
 } from "./core.js";
+import { cleanGoalWrite, normalizeGoal } from "./goals.js";
 
 export const GOOGLE_TASKS_SCOPE = "https://www.googleapis.com/auth/tasks";
 export const GOOGLE_CALENDAR_EVENTS_SCOPE = "https://www.googleapis.com/auth/calendar.events";
 
 const SESSION_KEY = "task-sync-auth-session-v1";
 const GOOGLE_OAUTH_TRANSIENT_KEY = "task-sync-google-oauth-transient-v1";
+const PLANNING_CACHE_KEY_PREFIX = "personal-os-planning-cache-v1";
 const REQUEST_TIMEOUT_MS = 45_000;
 
 export class CloudError extends Error {
@@ -320,6 +322,103 @@ export class TaskCloudClient {
       body: JSON.stringify({ date, note: review.note || "", mood: review.mood || null }),
     });
     return rows[0];
+  }
+
+  async listGoals() {
+    const rows = await this.authenticatedRequest("/rest/v1/goals_plans?select=*&order=updated_at.desc", { method: "GET" });
+    return rows.map(normalizeGoal);
+  }
+
+  async createGoal(goal) {
+    const payload = cleanGoalWrite({
+      ...goal,
+      original_input: goal.original_input || goal.title,
+    });
+    const rows = await this.authenticatedRequest("/rest/v1/goals_plans?select=*", {
+      method: "POST",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify(payload),
+    });
+    return normalizeGoal(rows[0]);
+  }
+
+  async updateGoal(id, changes) {
+    const rows = await this.authenticatedRequest(`/rest/v1/goals_plans?id=eq.${encodeURIComponent(id)}&select=*`, {
+      method: "PATCH",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify(cleanGoalWrite(changes)),
+    });
+    if (!rows[0]) throw new CloudError("目标不存在或无权修改", { status: 404, code: "GOAL_NOT_FOUND" });
+    return normalizeGoal(rows[0]);
+  }
+
+  async listProjects() {
+    return this.authenticatedRequest("/rest/v1/projects?select=*&order=updated_at.desc", { method: "GET" });
+  }
+
+  async createProject(project) {
+    const payload = {
+      goal_plan_id: project.goal_plan_id || null,
+      title: String(project.title || "").trim(),
+      description: String(project.description || "").trim(),
+      status: project.status || "Planning",
+      priority: project.priority || "medium",
+      progress_percent: Number(project.progress_percent) || 0,
+      start_date: project.start_date || null,
+      target_date: project.target_date || null,
+      original_input: String(project.original_input || project.title || "").trim(),
+    };
+    const rows = await this.authenticatedRequest("/rest/v1/projects?select=*", {
+      method: "POST",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify(payload),
+    });
+    return rows[0];
+  }
+
+  async updateProject(id, changes) {
+    const allowed = ["goal_plan_id", "title", "description", "status", "priority", "progress_percent", "start_date", "target_date", "original_input", "archived_at"];
+    const payload = Object.fromEntries(Object.entries(changes).filter(([key]) => allowed.includes(key)));
+    const rows = await this.authenticatedRequest(`/rest/v1/projects?id=eq.${encodeURIComponent(id)}&select=*`, {
+      method: "PATCH",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify(payload),
+    });
+    if (!rows[0]) throw new CloudError("项目不存在或无权修改", { status: 404, code: "PROJECT_NOT_FOUND" });
+    return rows[0];
+  }
+
+  async listTaskContextLinks() {
+    return this.authenticatedRequest("/rest/v1/task_context_links?select=*&order=updated_at.desc", { method: "GET" });
+  }
+
+  async linkTaskContext(googleTaskId, goalPlanId, projectId = null) {
+    const rows = await this.authenticatedRequest("/rest/v1/task_context_links?on_conflict=owner_id%2Cgoogle_task_id&select=*", {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates,return=representation" },
+      body: JSON.stringify({
+        google_task_id: googleTaskId,
+        goal_plan_id: goalPlanId || null,
+        project_id: projectId || null,
+      }),
+    });
+    return rows[0];
+  }
+
+  async unlinkTaskContext(googleTaskId) {
+    await this.authenticatedRequest(`/rest/v1/task_context_links?google_task_id=eq.${encodeURIComponent(googleTaskId)}`, {
+      method: "DELETE",
+      headers: { Prefer: "return=minimal" },
+    });
+    return { unlinked: true };
+  }
+
+  cachePlanning(userId, snapshot) {
+    this.storage?.setItem(`${PLANNING_CACHE_KEY_PREFIX}:${userId}`, JSON.stringify({ savedAt: new Date().toISOString(), ...snapshot }));
+  }
+
+  readCachedPlanning(userId) {
+    try { return JSON.parse(this.storage?.getItem(`${PLANNING_CACHE_KEY_PREFIX}:${userId}`) || "null"); } catch { return null; }
   }
 
   migrationState() {

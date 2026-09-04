@@ -24,7 +24,45 @@ curl --fail-with-body \
 
 只有 Google Tasks 返回真实对象后才会得到 `success:true`。相同 idempotency key 与相同请求会重放首次响应；同一个 key 用于不同请求会返回 `409`。每次请求都写入仅 service role 可访问的 `personal_os_intake_audit`。
 
-普通 Task 已接通 `Google Tasks + 可选 Schedule/Calendar 投影`。其他四类会正确分类并明确返回 `success:false`、`ADAPTER_NOT_CONFIGURED`，不会伪造已写入。
+普通 Task 已接通 `Google Tasks + 可选 Schedule/Calendar 投影`。`goal / plan / long_term_item / financial_item` 会写入 `goals_plans`；`calendar_event / project_data / contact / client / knowledge / gpt_job` 暂时只分类并明确返回 `ADAPTER_NOT_CONFIGURED`，不会误建 Task 或伪造成功。
+
+长期目标不需要虚构 Due Date。例如：
+
+```json
+{
+  "source": "chatgpt",
+  "raw_text": "2027 年完成家庭住房升级",
+  "type": "goal",
+  "title": "2027 年完成家庭住房升级",
+  "goal_type": "Goal",
+  "category": "Property",
+  "status": "Planning",
+  "target_year": 2027,
+  "why": "改善家庭居住条件",
+  "timezone": "Asia/Shanghai",
+  "idempotency_key": "chatgpt-goal-unique-intent"
+}
+```
+
+财务持续事项会在数据库中计算余额：
+
+```json
+{
+  "source": "chatgpt",
+  "raw_text": "小斌还欠我 3 万元",
+  "type": "financial_item",
+  "title": "小斌欠款",
+  "goal_type": "FinancialItem",
+  "category": "Finance",
+  "financial_type": "Receivable",
+  "amount_total": 30000,
+  "amount_completed": 0,
+  "currency": "CNY",
+  "counterparty": "小斌",
+  "timezone": "Asia/Shanghai",
+  "idempotency_key": "chatgpt-receivable-unique-intent"
+}
+```
 
 明确时刻的 Task 可附加：
 
@@ -70,7 +108,7 @@ curl --fail-with-body \
 }
 ```
 
-Task 会直接写入 Google Tasks。`calendar_event`、`project_data`、`knowledge` 和 `gpt_job` 只返回分类结果，交给现有对应服务处理；不会误建 Google Task。
+Task 会直接写入 Google Tasks。Router 对 Goal / Plan / LongTermItem / FinancialItem 负责分类；需要持久化时把同一结构化结果送到 `personal-os-intake`。`calendar_event`、`project_data`、`contact`、`client`、`knowledge` 和 `gpt_job` 只返回分类结果，交给现有对应服务处理；不会误建 Google Task。
 
 ## 读取晨夕会状态
 

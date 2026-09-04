@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   canonicalIntake,
   destinationFor,
+  goalPlanDispatchPayload,
   normalizeIntake,
   taskDispatchPayload,
 } from "../supabase/functions/_shared/personal-os-intake.js";
@@ -69,4 +70,57 @@ test("normalizes a scheduled task for Task creation plus Calendar projection", (
   assert.equal(intake.requested_time, "15:00");
   assert.equal(intake.schedule.scheduled_end, "15:45");
   assert.equal(intake.schedule.fixed_time, true);
+});
+
+test("auto-classifies and normalizes a Goal without inventing a deadline", () => {
+  const intake = normalizeIntake({ raw_text: "2027 年完成家庭住房升级", why: "让家庭长期居住更稳定" }, { baseDate });
+  assert.equal(intake.type, "goal");
+  assert.equal(intake.destination, "goals_plans");
+  assert.equal(intake.target_year, 2027);
+  assert.equal(intake.deadline, null);
+  assert.deepEqual(goalPlanDispatchPayload(intake), {
+    title: intake.title,
+    description: "2027 年完成家庭住房升级",
+    why: "让家庭长期居住更稳定",
+    type: "Goal",
+    category: "Property",
+    status: "Planning",
+    priority: "medium",
+    progress_percent: 0,
+    target_date: null,
+    target_month: null,
+    target_year: 2027,
+    start_date: null,
+    review_date: null,
+    deadline: null,
+    amount_total: null,
+    amount_completed: 0,
+    currency: "CNY",
+    counterparty: null,
+    financial_type: null,
+    client_id: null,
+    contact_id: null,
+    company_id: null,
+    notes: "",
+    original_input: "2027 年完成家庭住房升级",
+  });
+});
+
+test("auto-classifies a receivable and preserves the original wording", () => {
+  const intake = normalizeIntake({ raw_text: "小斌还欠我3万块" }, { baseDate });
+  const payload = goalPlanDispatchPayload(intake);
+  assert.equal(intake.type, "financial_item");
+  assert.equal(payload.financial_type, "Receivable");
+  assert.equal(payload.amount_total, 30000);
+  assert.equal(payload.counterparty, "小斌");
+  assert.equal(payload.original_input, "小斌还欠我3万块");
+});
+
+test("rejects conflicting target precision", () => {
+  assert.throws(() => normalizeIntake({
+    raw_text: "买房",
+    type: "goal",
+    target_year: 2027,
+    target_date: "2027-06-01",
+  }), /one target precision/);
 });

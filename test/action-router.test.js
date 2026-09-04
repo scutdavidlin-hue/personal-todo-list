@@ -64,3 +64,35 @@ test("a deadline is separated from a requested execution date", () => {
   assert.equal(route.payload.deadline, "2026-09-08");
   assert.equal(route.payload.requestedDate, null);
 });
+
+test("a future housing outcome routes to Goal rather than Task", () => {
+  const route = classifyAction("2027 年完成家庭住房升级", { baseDate });
+  assert.equal(route.type, "goal");
+  assert.equal(route.payload.targetYear, 2027);
+  assert.equal(route.payload.category, "Property");
+});
+
+test("a medium-term product direction routes to Plan", () => {
+  const route = classifyAction("10–11月开始做 To C 产品", { baseDate });
+  assert.equal(route.type, "plan");
+  assert.equal(route.payload.category, "Business");
+});
+
+test("a receivable fact routes to a durable Financial Item", () => {
+  const route = classifyAction("小斌还欠我3万块", { baseDate });
+  assert.equal(route.type, "financial_item");
+  assert.equal(route.payload.title, "小斌欠款");
+  assert.equal(route.payload.financialType, "Receivable");
+  assert.equal(route.payload.amountTotal, 30000);
+});
+
+test("a dated collection action remains a Task", () => {
+  const route = classifyAction("2026-09-07 催小斌归还 10,000 元旅游经费", { baseDate });
+  assert.equal(route.type, "task");
+  assert.equal(route.payload.dueDate, "2026-09-07");
+});
+
+test("a contact detail does not enter Goals & Plans", () => {
+  const route = classifyAction("小斌电话是 13800138000", { baseDate });
+  assert.equal(route.type, "contact");
+});

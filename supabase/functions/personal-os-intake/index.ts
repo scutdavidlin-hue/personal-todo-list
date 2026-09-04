@@ -1,5 +1,6 @@
 import {
   canonicalIntake,
+  goalPlanDispatchPayload,
   normalizeIntake,
   taskDispatchPayload,
 } from "../_shared/personal-os-intake.js";
@@ -58,13 +59,15 @@ async function sha256(value: string) {
 }
 
 async function rest(path: string, init: RequestInit = {}) {
+  const headers = new Headers();
+  Object.entries(serviceApiHeaders(SERVICE_API_KEY)).forEach(([key, value]) => {
+    if (typeof value === "string") headers.set(key, value);
+  });
+  headers.set("Content-Type", "application/json");
+  new Headers(init.headers).forEach((value, key) => headers.set(key, value));
   const response = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
     ...init,
-    headers: {
-      ...serviceApiHeaders(SERVICE_API_KEY),
-      "Content-Type": "application/json",
-      ...(init.headers || {}),
-    },
+    headers,
     signal: init.signal || AbortSignal.timeout(10_000),
   });
   const body = await responsePayload(response);
@@ -143,6 +146,32 @@ async function dispatchTask(intake: Record<string, unknown>) {
   };
 }
 
+async function dispatchGoalPlan(intake: Record<string, unknown>) {
+  const rows = await rest("goals_plans?select=*", {
+    method: "POST",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify({
+      owner_id: OWNER_USER_ID,
+      ...goalPlanDispatchPayload(intake),
+    }),
+  });
+  const item = rows?.[0];
+  if (!item?.id) throw new IntakeError("Goals & Plans write failed", 503, "GOAL_WRITE_FAILED");
+  return {
+    success: true,
+    destination: "goals_plans",
+    classification: intake.type,
+    id: item.id,
+    title: item.title,
+    goal_type: item.type,
+    status: item.status,
+    target_date: item.target_date || null,
+    target_month: item.target_month || null,
+    target_year: item.target_year || null,
+    amount_remaining: item.amount_remaining ?? null,
+  };
+}
+
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (request.method !== "POST") return json({ success: false, error: "Method not allowed" }, 405);
@@ -168,7 +197,8 @@ Deno.serve(async (request) => {
       return json({ ...reservation.row.response, replayed: true }, reservation.row.response_status || 200);
     }
 
-    if (intake.type !== "task") {
+    const isGoalPlan = ["goal", "plan", "long_term_item", "financial_item"].includes(intake.type);
+    if (intake.type !== "task" && !isGoalPlan) {
       const unsupported = {
         success: false,
         destination: intake.destination,
@@ -181,7 +211,8 @@ Deno.serve(async (request) => {
       return json(unsupported, 501);
     }
 
-    const result = { ...(await dispatchTask(intake)), idempotency_key: idempotencyKey, replayed: false };
+    const dispatched = intake.type === "task" ? await dispatchTask(intake) : await dispatchGoalPlan(intake);
+    const result = { ...dispatched, idempotency_key: idempotencyKey, replayed: false };
     await updateAudit(auditId, { status: "succeeded", object_id: result.id, response_status: 200, response: result });
     console.info("Personal OS intake succeeded", { auditId, destination: result.destination, objectId: result.id });
     return json(result);

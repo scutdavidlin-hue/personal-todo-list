@@ -1,8 +1,27 @@
 # Personal OS × Google Tasks 验收记录
 
-日期：2026-09-04
+日期：2026-09-05
 
 `PASS (cloud)` 表示已在目标 Google / Supabase 账号真实调用验证；`PASS (local)` 表示自动测试或本地实现验证；`PASS (device)` 表示用户已在 iPhone 真机确认。
+
+## V1.2 Goals & Plans 验收
+
+| # | 验收项 | 结果 | 说明 |
+|---|---|---|---|
+| 1 | 新增 Goals 页面 | PASS (local + visual) | 一级导航、五个分区、搜索、统计卡片和详情页均已实现。 |
+| 2 | 可创建 Goal / Plan | PASS (local + cloud schema) | 表单与写入客户端已实现；`goals_plans` migration 已部署。 |
+| 3 | Goal 可以关联 Task | PASS (local + cloud schema) | `task_context_links` 关联 Google Task ID；不复制 Task 内容或状态。 |
+| 4 | Goal 可以关联 Project | PASS (local + cloud schema) | 可在 Goal Detail 创建 Project，归属校验由数据库触发器保证。 |
+| 5 | 支持 target date，不强制 Deadline | PASS (local + cloud schema) | 日期、月份、年份互斥；Deadline 独立且可为空。 |
+| 6 | 支持 Financial Item | PASS (local + cloud schema) | 总额、已完成金额、币种、对手方、类型和自动余额均已实现。 |
+| 7 | 应收显示总额、已收与余额 | PASS (local + visual) | 卡片与详情均显示财务进度，余额为数据库生成列。 |
+| 8 | Task 完成不会删除 Goal | PASS (local + schema) | Task 真源与 Goal 分离；关系行没有任何级联删除 Goal 的路径。 |
+| 9 | 手机端正常显示 | PASS (local + visual) | 390×844 视口通过；底部导航、卡片、详情无横向溢出。 |
+| 10 | 支持安装为 iPhone PWA | PASS (local) / PENDING (device) | manifest、图标、Service Worker、Standalone 和 Safe Area 完成；待正式 HTTPS 地址上做真机安装。 |
+| 11 | GPT 支持 Task / Goal / Plan 自动分类 | PASS (local + cloud deploy) / PENDING (ChatGPT refresh) | Router 回归通过，MCP `1.2.0` 已部署；现有 App 需刷新工具清单。 |
+| 12 | 保留用户原始输入与 Why | PASS (local + cloud schema) | `original_input` 与 `why` 独立保存，MCP 明确禁止编造 Why。 |
+
+数据库部署预演只列出 `202609040003_goals_plans_v1_2.sql`；应用后相关三个 Edge Functions 均为 ACTIVE，公开健康端点返回 `{"name":"personal-os","version":"1.2.0","mcp":"/mcp"}`。
 
 | # | 验收项 | 结果 | 说明 |
 |---|---|---|---|
@@ -17,7 +36,7 @@
 
 ## 本地验证
 
-- `npm run verify`：通过；51 tests pass，0 fail。
+- `npm run verify`：通过；72 tests pass，0 fail。
 - 6 个受影响 Edge Functions 已通过 Deno 类型检查。
 - 本地桌面页与 iPhone 页面加载成功，浏览器控制台 0 error / 0 warning。
 - Router、统一 Task Model、Task Lists、筛选、CRUD、去重、晨夕会状态均有自动测试。

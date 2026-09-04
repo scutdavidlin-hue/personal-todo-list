@@ -35,7 +35,7 @@ h1 { margin: 0; font-size: 30px; font-weight: 760; letter-spacing: -.6px; }
 .rate { font-size: 34px; font-weight: 760; }
 .muted { color: #6e6e73; font-size: 13px; line-height: 1.5; }
 .progress { height: 8px; overflow: hidden; margin-top: 10px; border-radius: 99px; background: #ececf0; }
-.bar { width: 0; height: 100%; border-radius: 99px; background: #111; transition: width .25s ease; }
+.bar { width: 0; height: 100%; border-radius: 99px; background: #111; }
 .section-title { margin: 22px 4px 10px; font-size: 15px; font-weight: 700; }
 .task-card { padding-top: 4px; padding-bottom: 4px; }
 .task { display: flex; align-items: flex-start; gap: 12px; padding: 14px 0; border-bottom: 1px solid #eee; }

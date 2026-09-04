@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>Goals 视觉验收夹具</title>
+  <link rel="stylesheet" href="../../styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand"><div class="brand-mark">OS</div><div><strong>Personal OS</strong><span>方向与行动，各归其位</span></div></div>
+      <nav class="nav" aria-label="主导航">
+        <button class="nav-item"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.5"/><path d="M12 2.5v2M12 19.5v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M2.5 12h2M19.5 12h2"/></svg><span>今日</span></button>
+        <button class="nav-item"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11"/></svg><span>任务</span></button>
+        <button class="nav-item active"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><path d="m15.2 8.8 5.3-5.3M16.5 3.5h4v4"/></svg><span>目标</span></button>
+        <button class="nav-item"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V9M10 19V5M16 19v-7M22 19V2"/></svg><span>进展</span></button>
+      </nav>
+    </aside>
+    <main class="main">
+      <header class="topbar"><div><p class="date-label">2026年9月4日星期五</p><h1>长期方向，不必伪装成今日待办</h1></div><button class="primary-button"><span>＋</span> 添加目标</button></header>
+      <section class="view active">
+        <section class="goals-intro">
+          <div><h2>让长期方向一直留在视野里</h2><p>目标、计划与持续事项不会因为一个 Task 被勾选就消失。只有出现明确下一步时，才把行动交给 Google Tasks。</p></div>
+          <dl class="goals-overview"><div><dt>正在推进</dt><dd>2</dd></div><div><dt>等待复查</dt><dd>1</dd></div><div><dt>长期应收</dt><dd>1</dd></div></dl>
+        </section>
+        <div class="goals-toolbar">
+          <div class="goal-tabs"><button class="goal-tab active">Active</button><button class="goal-tab">Planning</button><button class="goal-tab">Someday</button><button class="goal-tab">Financial</button><button class="goal-tab">Completed</button></div>
+          <label class="goal-search"><span class="sr-only">搜索目标</span><input placeholder="搜索目标、计划或对方"></label>
+        </div>
+        <div class="goals-list">
+          <article class="goal-card"><button class="goal-card-open"><div class="goal-card-heading"><span class="goal-kind">目标 · 房产</span><span class="goal-status status-active">推进中</span></div><h3>2027 年完成家庭住房升级</h3><p>明确总价与首付预算，选择目标区域和户型，并在合适的时机完成家庭住房升级。</p><div class="goal-progress"><span style="width:32%"></span></div><div class="goal-card-meta"><span>2027 年</span><span>1 个项目</span><span>2 个下一步</span></div><div class="goal-next-action"><span>下一步</span><strong>查询金湖壹号真实成交价</strong><small>今天</small></div></button></article>
+          <article class="goal-card financial"><button class="goal-card-open"><div class="goal-card-heading"><span class="goal-kind">财务事项 · 财务</span><span class="goal-status status-active">推进中</span></div><h3>小斌欠款</h3><p>持续保留的应收事项；催款 Task 完成后，应收事实仍然存在。</p><div class="financial-balance"><span>剩余</span><strong>¥20,000.00</strong><small>小斌</small></div><div class="goal-progress"><span style="width:33%"></span></div><div class="goal-card-meta"><span>未设目标时间</span><span>0 个项目</span><span>1 个下一步</span></div><div class="goal-next-action"><span>下一步</span><strong>催小斌归还 10,000 元</strong><small>今天</small></div></button></article>
+          <article class="goal-card"><button class="goal-card-open"><div class="goal-card-heading"><span class="goal-kind">计划 · 事业</span><span class="goal-status status-planning">规划中</span></div><h3>10–11 月开始做 To C 产品</h3><p>先保留方向与判断，等形成明确范围后再创建阶段 Project。</p><div class="goal-progress"><span style="width:10%"></span></div><div class="goal-card-meta"><span>未设目标时间</span><span>0 个项目</span><span>0 个下一步</span></div><div class="goal-next-action"><span>下一步</span><strong>暂未创建明确动作</strong><small>今天</small></div></button></article>
+        </div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

@@ -1,5 +1,30 @@
 # Personal OS 实施计划
 
+## V1.2｜Goals & Plans 长期规划层
+
+基准需求：`PRD_GOALS_PLANS_V1_2.md`；产品约束：`PRODUCT.md`。
+
+### 已确认架构
+
+1. Goal / Plan 保存方向和持续状态，不是可勾选 Task。
+2. Project 是目标下的阶段性工作；Google Tasks 继续保存唯一行动与完成状态。
+3. Calendar 只投影有明确执行时间的 Task，不承载 Goal 或虚构的年末 Deadline。
+4. `goals_plans` 保存目标与财务状态，`projects` 保存阶段工作，`task_context_links` 只关联 Google Task ID。
+5. GPT 统一入口先分类，再写入对应层；保留原始输入与用户明确表达的 Why。
+
+### Phase 与验证
+
+- [x] Phase 1：建立 Goals / Projects / Task Links schema、约束、索引、RLS 与财务余额计算。
+- [x] Phase 2：新增一级 Goals 页面、分区卡片、搜索、创建/编辑与 Goal Detail。
+- [x] Phase 3：支持 Project 创建、已有 Task 关联、下一步 Task 创建及完成状态回读。
+- [x] Phase 4：扩展 Router、Intake 与 MCP，识别 Task / Goal / Plan / LongTermItem / FinancialItem。
+- [x] Phase 5：加入 manifest、图标、Service Worker、Standalone、Safe Area 与 iPhone 响应式布局。
+- [x] Phase 6：本地自动测试、Deno 类型检查、桌面与 390×844 手机视口视觉验收。
+- [x] Phase 7：仅补推 V1.2 migration，并部署 `action-router`、`personal-os-intake`、`personal-os-mcp`。
+- [ ] Phase 8：发布正式前端、刷新现有 ChatGPT App tools，并在 iPhone 完成添加到主屏幕验收。
+
+---
+
 ## V1.1｜智能排程 × Calendar 完成状态
 
 基准需求：`PRD_TASK_SCHEDULING_V1_1.md`。

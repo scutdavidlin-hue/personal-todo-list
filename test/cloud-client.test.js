@@ -202,3 +202,42 @@ test("schedule and reschedule use the dedicated projection service", async () =>
   assert.equal(calls[1].body.schedule.scheduling_status, "rescheduled");
   assert.equal(calls[2].body.action, "unschedule");
 });
+
+test("goals, projects, and Google Task context use Supabase without copying task status", async () => {
+  const calls = [];
+  const client = new TaskCloudClient(config, {
+    storage: sessionStorage(),
+    fetch: async (url, init) => {
+      const body = init.body ? JSON.parse(init.body) : null;
+      calls.push({ url, method: init.method, body });
+      if (url.includes("/goals_plans") && init.method === "POST") {
+        return response([{ id: "goal-1", ...body, amount_remaining: "20000.00" }], 201);
+      }
+      if (url.includes("/projects") && init.method === "POST") return response([{ id: "project-1", ...body }], 201);
+      if (url.includes("/task_context_links") && init.method === "POST") return response([{ id: "link-1", ...body }], 201);
+      return response([]);
+    },
+  });
+  const goal = await client.createGoal({
+    title: "小斌欠款",
+    type: "FinancialItem",
+    amount_total: 30000,
+    amount_completed: 10000,
+    original_input: "小斌还欠我 3 万元",
+  });
+  await client.createProject({ goal_plan_id: "goal-1", title: "分期回款" });
+  await client.linkTaskContext("google-task-1", "goal-1", "project-1");
+  assert.equal(goal.amount_remaining, 20000);
+  assert.equal(calls[0].body.original_input, "小斌还欠我 3 万元");
+  assert.equal("status" in calls[2].body, false);
+  assert.match(calls[2].url, /on_conflict=owner_id%2Cgoogle_task_id/);
+});
+
+test("planning cache supports offline read-only recovery", () => {
+  const storage = new MemoryStorage();
+  const client = new TaskCloudClient(config, { storage, fetch: async () => response({}) });
+  client.cachePlanning("user-1", { goals: [{ id: "g1" }], projects: [], links: [] });
+  const cached = client.readCachedPlanning("user-1");
+  assert.equal(cached.goals[0].id, "g1");
+  assert.ok(cached.savedAt);
+});

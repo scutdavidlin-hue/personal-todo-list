@@ -1,6 +1,22 @@
 # 开发进度
 
-最后更新：2026-09-04
+最后更新：2026-09-05
+
+## V1.2｜Goals & Plans
+
+- [x] 新增 `goals_plans`、`projects`、`task_context_links`；Goal 删除不随 Task 完成发生，Google Tasks 仍是行动真源。
+- [x] 支持 8 种长期事项类型、11 个类别、8 个状态和 priority / progress / review。
+- [x] 支持 `target_date / target_month / target_year` 三种精度及独立 `deadline`，不再用 12 月 31 日伪装年度目标。
+- [x] 支持 Receivable / Payable / Budget / SavingGoal / InvestmentGoal 与数据库自动余额。
+- [x] 新增 Goals 一级导航、Active / Planning / Someday / Financial / Completed 分区和完整 Goal Detail。
+- [x] Goal 可创建 Project、关联已有 Google Task、创建下一步 Task，并显示未完成 Task 数和下一行动。
+- [x] GPT Router / Intake / MCP 支持 Task / Goal / Plan / LongTermItem / FinancialItem 自动分类并保留原始输入与 Why。
+- [x] PWA manifest、四套安装图标、Service Worker、Standalone、Safe Area 和移动端底部导航。
+- [x] 本地桌面与 390×844 iPhone 视口视觉验收通过，登录页控制台 0 error / 0 warning。
+- [x] 最终回归 72 tests，0 fail；V1.2 三个入口通过 Deno 类型检查。
+- [x] Supabase 预演确认只新增 `202609040003_goals_plans_v1_2.sql`，迁移已应用；现有 `202609040004_task_lifecycle_v1_2.sql` 未重放或改写。
+- [x] `action-router`、`personal-os-intake`、`personal-os-mcp` 已部署并处于 ACTIVE；MCP 健康端点回报 `1.2.0`。
+- [ ] 正式前端发布、ChatGPT App tools 刷新与 iPhone 添加到主屏幕最终验收。
 
 ## 已完成
 
@@ -24,7 +40,7 @@
 
 ## 最终验收
 
-- [x] 最终自动回归（51 tests；0 fail）。
+- [x] V1.0/V1.1 自动回归（51 tests；0 fail）。
 - [x] 现有 Google Cloud / Supabase 一次性配置、数据库迁移、Functions 部署与 OAuth consent。
 - [x] 创建并核验 31 条真实未完成任务；完成日期、说明、originalIntent、去重、分流、完成与恢复的云端验收。
 - [x] Mac 页面真实显示、checkbox 完成同步与恢复验收。
