@@ -55,6 +55,7 @@
 - [x] ChatGPT Personal OS App 刷新成功；页面显示“操作已刷新”，`create_task` 已读取明确时间时传 `requested_date/requested_time` 并创建唯一 Calendar 投影的 V1.1 描述。
 - [x] Web ChatGPT 真实创建 `验收 V1.1 ChatGPT 排程`（Task `OXJReEgwS25DRnVxS3p5dw`），排到 2026-09-05 16:00–17:00；Calendar 仅有 Event `pos8e2f3519d8021f1e3607ac0d9984fab1a9c4586c`，`sync_required=false`、`last_sync_error=null`。
 - [x] 通过现有已认证 Personal OS 页面完成无人值守验收 Task `NWczWTZfS1JJdEJXNWNpWg`；Google Tasks 进入 Completed，同一 2026-09-04 23:00–23:30 Calendar Event `pos75397454c9c6f82a1c18d7415663180b0d2ff1f1` 原位显示 `✓`，未新建 Task/Event。
+- [x] 原 ChatGPT Scheduled Task `5点GPT晨会邮件`（ID `6a950e48fcb081919192fc5b2357097f`）已核对：每天 05:00，现有提示词已严格先运行 `task-scheduler`、失败重试一次，再读取 `task-status`；没有新建或改动其他自动化。
 
 ## 已确认限制
 

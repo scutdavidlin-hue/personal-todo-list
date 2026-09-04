@@ -39,6 +39,7 @@
 | ChatGPT App tools 刷新 | PASS (visual) | 页面显示“操作已刷新”；`create_task` 描述已要求明确时间时传 `requested_date/requested_time` 并创建唯一 Calendar 投影。 |
 | Web ChatGPT → Task → Calendar | PASS (cloud + visual) | Web ChatGPT 真实创建 `验收 V1.1 ChatGPT 排程`（Task `OXJReEgwS25DRnVxS3p5dw`）；2026-09-05 16:00–17:00 只有一个 `☐` Event `pos8e2f3519d8021f1e3607ac0d9984fab1a9c4586c`，Schedule 无同步错误。 |
 | 无人值守 Task → Complete → Calendar `✓` | PASS (cloud + visual) | 在现有已认证 Personal OS 页面完成 Task `NWczWTZfS1JJdEJXNWNpWg`；Completed 区只保留一条，同一 2026-09-04 23:00–23:30 Event `pos75397454c9c6f82a1c18d7415663180b0d2ff1f1` 原位显示 `✓`。 |
+| 05:00 晨会 Scheduler 接入 | PASS (visual) | 原 Scheduled Task `5点GPT晨会邮件`（`6a950e48fcb081919192fc5b2357097f`）仍为每天 05:00；提示词已包含 `task-scheduler → task-status`、一次失败重试、Tasks 真源与禁止复制规则，未增加自动化数量。 |
 | iPhone Tasks + Calendar | PENDING | 仅验收跨端结果；自定义 MCP App 官方当前仅网页端。 |
 
 即时 `☐/✓` 同步已验证的是 Personal OS / 服务端写入路径。Google Tasks API 没有为本实现提供完成状态 webhook；若直接在 Google Tasks 原生界面修改，现有 Morning Scheduler 会在下一次 reconciliation 读取真源并修正 Calendar 投影。
