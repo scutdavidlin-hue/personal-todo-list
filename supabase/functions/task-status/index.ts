@@ -86,6 +86,17 @@ async function restRpc(name: string, body: Record<string, unknown>) {
   return data;
 }
 
+async function readSchedules() {
+  const query = new URLSearchParams({ owner_id: `eq.${OWNER_USER_ID}`, select: "*", order: "scheduled_date.asc,scheduled_start.asc" });
+  const response = await requestWithTimeout(`${SUPABASE_URL}/rest/v1/task_schedule_metadata?${query}`, {
+    headers: { apikey: SERVICE_ROLE_KEY, Authorization: `Bearer ${SERVICE_ROLE_KEY}` },
+  });
+  const data = await payload(response);
+  if (response.status === 404) return [];
+  if (!response.ok) throw new ApiError(data?.message || "Schedule store unavailable", 503, "SCHEDULE_STORE_ERROR");
+  return data || [];
+}
+
 async function googleContext() {
   const rows = await restRpc("read_google_tasks_credentials", {
     target_owner: OWNER_USER_ID,
@@ -155,7 +166,22 @@ async function allTasks(showCompleted = true) {
 }
 
 async function readStatus(targetDate: string) {
-  return buildStatus((await allTasks(true)).tasks, targetDate);
+  const [google, schedules] = await Promise.all([allTasks(true), readSchedules()]);
+  return buildStatus(google.tasks, targetDate, new Date(), schedules);
+}
+
+async function scheduleProjection(taskId: string, schedule: Record<string, unknown> | null | undefined) {
+  if (!schedule) return null;
+  const response = await requestWithTimeout(`${SUPABASE_URL}/functions/v1/task-scheduler`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${WRITE_TOKEN}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "schedule", task_id: taskId, schedule }),
+  });
+  const result = await payload(response);
+  if (!response.ok || result?.success !== true) {
+    throw new ApiError(result?.error || "Calendar projection failed", response.status || 503, result?.code || "CALENDAR_PROJECTION_FAILED");
+  }
+  return result;
 }
 
 async function createTask(request: Request) {
@@ -185,7 +211,8 @@ async function createTask(request: Request) {
       }), google.taskListId);
     }
     console.info("Task Deduplicated", { taskId: task.id, taskListId: google.taskListId });
-    return json({ task: { ...task, metadata: { ...task.metadata, deduplicated: true } }, deduplicated: true }, 200);
+    const schedule = await scheduleProjection(task.id, input.schedule);
+    return json({ task: { ...task, metadata: { ...task.metadata, deduplicated: true } }, deduplicated: true, schedule }, 200);
   }
   let taskBody;
   try { taskBody = createGoogleTaskPayload(taskInput); }
@@ -193,7 +220,8 @@ async function createTask(request: Request) {
   const created = await googleRequest(google.accessToken, tasksPath(google.taskListId), { method: "POST", body: JSON.stringify(taskBody) });
   const task = toTaskModel(created, google.taskListId);
   console.info("Task Created", { taskId: task.id, taskListId: google.taskListId, source: "automation" });
-  return json({ task, deduplicated: false }, 201);
+  const schedule = await scheduleProjection(task.id, input.schedule);
+  return json({ task, deduplicated: false, schedule }, 201);
 }
 
 Deno.serve(async (request) => {

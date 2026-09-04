@@ -1,4 +1,5 @@
-import { classifyAction } from "./action-router.js";
+import { classifyAction, parseIntentDate, parseIntentDuration, parseIntentTime } from "./action-router.js";
+import { normalizeScheduleInput, validScheduleTime } from "./schedule-core.js";
 
 export const INTAKE_TYPES = Object.freeze([
   "task",
@@ -49,6 +50,33 @@ export function normalizeIntake(input, options = {}) {
   const title = cleanString(input.title || route.payload?.title || rawText, 200);
   if (type === "task" && !title) throw new Error("title is required for task intake");
 
+  const parsedDate = parseIntentDate(rawText, input.baseDate || options.baseDate ? new Date(input.baseDate || options.baseDate) : new Date());
+  const parsedTime = parseIntentTime(rawText);
+  const deadline = cleanString(input.deadline || route.payload?.deadline, 10) || null;
+  if (deadline && !validDate(deadline)) throw new Error("deadline must be YYYY-MM-DD");
+  const requestedDate = cleanString(input.requested_date || input.requestedDate || route.payload?.requestedDate || (!deadline ? due || parsedDate : ""), 10) || null;
+  if (requestedDate && !validDate(requestedDate)) throw new Error("requested_date must be YYYY-MM-DD");
+  const requestedTime = cleanString(input.requested_time || input.requestedTime || route.payload?.requestedTime || parsedTime, 5) || null;
+  if (requestedTime && !validScheduleTime(requestedTime)) throw new Error("requested_time must be HH:MM");
+  const estimatedDuration = Number(input.estimated_duration || input.estimatedDuration || route.payload?.estimatedDuration || parseIntentDuration(rawText));
+  const priority = cleanString(input.priority || route.payload?.priority, 20) || "medium";
+  const fixedTime = input.fixed_time === true || input.fixedTime === true || route.payload?.fixedTime === true;
+  const schedulingSource = cleanString(input.scheduling_source || input.schedulingSource || route.payload?.schedulingSource, 30)
+    || (requestedDate || requestedTime ? "explicit_user" : "gpt_inferred");
+  const schedule = type === "task" && (requestedDate || requestedTime || deadline || input.schedule)
+    ? normalizeScheduleInput({
+      ...(input.schedule || {}),
+      scheduled_date: requestedDate,
+      scheduled_start: requestedTime,
+      duration_minutes: estimatedDuration,
+      deadline,
+      priority,
+      fixed_time: fixedTime,
+      scheduling_source: schedulingSource,
+      timezone: cleanString(input.timezone, 80) || "Asia/Shanghai",
+    })
+    : null;
+
   return {
     source: cleanString(input.source, 80) || "chatgpt",
     raw_text: rawText,
@@ -59,6 +87,14 @@ export function normalizeIntake(input, options = {}) {
     notes: cleanString(input.notes || route.payload?.notes),
     due: due || null,
     timezone: cleanString(input.timezone, 80) || "Asia/Shanghai",
+    deadline,
+    requested_date: requestedDate,
+    requested_time: requestedTime,
+    estimated_duration: estimatedDuration,
+    priority,
+    fixed_time: fixedTime,
+    scheduling_source: schedulingSource,
+    schedule,
     payload: route.payload || {},
   };
 }
@@ -72,6 +108,13 @@ export function canonicalIntake(intake) {
     notes: intake.notes,
     due: intake.due,
     timezone: intake.timezone,
+    deadline: intake.deadline,
+    requested_date: intake.requested_date,
+    requested_time: intake.requested_time,
+    estimated_duration: intake.estimated_duration,
+    priority: intake.priority,
+    fixed_time: intake.fixed_time,
+    scheduling_source: intake.scheduling_source,
   });
 }
 
@@ -83,5 +126,6 @@ export function taskDispatchPayload(intake) {
     dueDate: intake.due,
     originalIntent: intake.raw_text,
     source: intake.source,
+    ...(intake.schedule ? { schedule: intake.schedule } : {}),
   };
 }

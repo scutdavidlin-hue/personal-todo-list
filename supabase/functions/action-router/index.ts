@@ -1,4 +1,5 @@
 import { classifyAction } from "../_shared/action-router.js";
+import { normalizeIntake, taskDispatchPayload } from "../_shared/personal-os-intake.js";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const WRITE_TOKEN = Deno.env.get("AUTOMATION_WRITE_TOKEN") ?? "";
@@ -40,7 +41,7 @@ Deno.serve(async (request) => {
     const response = await fetch(`${SUPABASE_URL}/functions/v1/task-status`, {
       method: "POST",
       headers: { Authorization: `Bearer ${WRITE_TOKEN}`, "Content-Type": "application/json" },
-      body: JSON.stringify(route.payload),
+      body: JSON.stringify(taskDispatchPayload(normalizeIntake({ raw_text: input.input }, { baseDate: input.baseDate }))),
       signal: AbortSignal.timeout(10_000),
     });
     const result = await response.json();

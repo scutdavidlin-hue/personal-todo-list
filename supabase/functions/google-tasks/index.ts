@@ -14,6 +14,7 @@ const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
 const GOOGLE_CLIENT_ID = Deno.env.get("GOOGLE_OAUTH_CLIENT_ID") ?? "";
 const GOOGLE_CLIENT_SECRET = Deno.env.get("GOOGLE_OAUTH_CLIENT_SECRET") ?? "";
 const TOKEN_ENCRYPTION_KEY = Deno.env.get("GOOGLE_TOKEN_ENCRYPTION_KEY") ?? "";
+const WRITE_TOKEN = Deno.env.get("AUTOMATION_WRITE_TOKEN") ?? "";
 const TASK_LIST_TITLE = Deno.env.get("GOOGLE_TASKS_LIST_TITLE") || DEFAULT_TASK_LIST_TITLE;
 const GOOGLE_TASKS_BASE = "https://tasks.googleapis.com/tasks/v1";
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -273,11 +274,33 @@ async function patchTask(userId: string, id: string, changes: Record<string, unk
   return task;
 }
 
+async function schedulerSync(action: string, taskId: string, extra: Record<string, unknown> = {}) {
+  if (WRITE_TOKEN.length < 32) return { success: false, code: "SCHEDULER_NOT_CONFIGURED" };
+  try {
+    const response = await requestWithTimeout(`${SUPABASE_URL}/functions/v1/task-scheduler`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${WRITE_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ action, task_id: taskId, ...extra }),
+    });
+    const result = await parseJson(response);
+    return response.ok ? result : { success: false, code: result?.code || "CALENDAR_SYNC_FAILED", error: result?.error || "Calendar sync failed" };
+  } catch (error) {
+    return { success: false, code: "CALENDAR_SYNC_FAILED", error: error instanceof Error ? error.message : "Calendar sync failed" };
+  }
+}
+
 async function deleteTask(userId: string, id: string) {
   if (!id) throw new ApiError("id is required", 400, "INVALID_TASK");
   const google = await context(userId);
   await googleRequest(google.accessToken, taskPath(google.tasklist_id, id), { method: "DELETE" });
   console.info("Task Deleted", { taskId: id, taskListId: google.tasklist_id });
+}
+
+async function getTaskBeforeDelete(userId: string, id: string) {
+  if (!id) throw new ApiError("id is required", 400, "INVALID_TASK");
+  const google = await context(userId);
+  const task = await googleRequest(google.accessToken, taskPath(google.tasklist_id, id));
+  return toTaskModel(task, google.tasklist_id);
 }
 
 Deno.serve(async (request) => {
@@ -304,20 +327,28 @@ Deno.serve(async (request) => {
     if (request.method === "POST" && input.action === "connect") return json(await connect(user.id, input));
     if (request.method === "POST" && input.action === "create") {
       const result = await createTask(user.id, (input.task || {}) as Record<string, unknown>);
-      return json(result, result.deduplicated ? 200 : 201);
+      const schedule = (input.task as Record<string, unknown> | undefined)?.schedule as Record<string, unknown> | undefined;
+      const projection = schedule ? await schedulerSync("schedule", result.task.id, { schedule }) : null;
+      return json({ ...result, projection }, result.deduplicated ? 200 : 201);
     }
     if (request.method === "PATCH" && input.action === "complete") {
-      return json({ task: await patchTask(user.id, String(input.id || ""), { status: input.completed === false ? "open" : "completed" }) });
+      const task = await patchTask(user.id, String(input.id || ""), { status: input.completed === false ? "open" : "completed" });
+      return json({ task, projection: await schedulerSync("sync_task", task.id) });
     }
     if (request.method === "PATCH" && input.action === "reopen") {
-      return json({ task: await patchTask(user.id, String(input.id || ""), { status: "open" }) });
+      const task = await patchTask(user.id, String(input.id || ""), { status: "open" });
+      return json({ task, projection: await schedulerSync("sync_task", task.id) });
     }
     if (request.method === "PATCH" && input.action === "update") {
-      return json({ task: await patchTask(user.id, String(input.id || ""), (input.changes || {}) as Record<string, unknown>) });
+      const task = await patchTask(user.id, String(input.id || ""), (input.changes || {}) as Record<string, unknown>);
+      return json({ task, projection: await schedulerSync("sync_task", task.id) });
     }
     if (request.method === "DELETE") {
-      await deleteTask(user.id, String(input.id || ""));
-      return json({ deleted: true });
+      const id = String(input.id || "");
+      let title = "已取消任务";
+      try { title = (await getTaskBeforeDelete(user.id, id)).title || title; } catch { /* deletion still uses Google Tasks as truth */ }
+      await deleteTask(user.id, id);
+      return json({ deleted: true, projection: await schedulerSync("cancel_task", id, { title }) });
     }
     throw new ApiError("Method not allowed", 405, "METHOD_NOT_ALLOWED");
   } catch (error) {

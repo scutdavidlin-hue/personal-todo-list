@@ -24,7 +24,21 @@ curl --fail-with-body \
 
 只有 Google Tasks 返回真实对象后才会得到 `success:true`。相同 idempotency key 与相同请求会重放首次响应；同一个 key 用于不同请求会返回 `409`。每次请求都写入仅 service role 可访问的 `personal_os_intake_audit`。
 
-本次 P0 只接通 `task → Google Tasks`。其他四类会正确分类并明确返回 `success:false`、`ADAPTER_NOT_CONFIGURED`，不会伪造已写入。
+普通 Task 已接通 `Google Tasks + 可选 Schedule/Calendar 投影`。其他四类会正确分类并明确返回 `success:false`、`ADAPTER_NOT_CONFIGURED`，不会伪造已写入。
+
+明确时刻的 Task 可附加：
+
+```json
+{
+  "requested_date": "2026-09-05",
+  "requested_time": "15:00",
+  "estimated_duration": 30,
+  "priority": "high",
+  "fixed_time": true
+}
+```
+
+只有 Task 与 Calendar 投影都成功时，带具体时刻的 intake 才返回 `success:true`。Calendar 临时失败会留下 `sync_required=true` 供重试，不会复制 Task。
 
 ## 自然语言分流
 
@@ -66,7 +80,7 @@ curl --fail-with-body \
   "https://YOUR_PROJECT_REF.supabase.co/functions/v1/task-status?date=2026-09-04"
 ```
 
-响应 `schema_version` 为 `2.0`，主要字段：
+响应 `schema_version` 为 `3.0`。除 V1 字段外新增：
 
 - `today_open`：今日未完成。
 - `overdue_open`：逾期未完成。
@@ -76,6 +90,11 @@ curl --fail-with-body \
 - `yesterday_completed`：昨天完成。
 - `upcoming`：未来七天。
 - `unscheduled`：未设置 Due Date。
+- `today_plan`：今天有 Schedule 的计划，包含完成项。
+- `tomorrow`：明天计划。
+- `next_three_days`：后两日至未来三天计划。
+- `backlog` / `waiting`：未占用 Calendar 的事项。
+- `evening_summary`：今天 planned / completed / rescheduled / cancelled。
 
 任务对象使用统一模型：`id`、`externalId`、`provider`、`taskListId`、`title`、`notes`、`status`、`dueDate`、`completedAt`、`originalIntent`、`priority` 和 `metadata`。状态只使用 `open / completed / cancelled`。
 
@@ -99,6 +118,17 @@ curl --fail-with-body \
 
 ## 编排规则
 
-- 晨会读取 `today_open`、`overdue_open`、`priority_open`、`personally_required` 和 `upcoming`。
-- 夕会读取 `today_completed`、`today_open` 与 `overdue_open`；未完成任务保留原 ID，不重复创建。
+- 现有 05:00 晨会流程先 `POST task-scheduler`：`{"action":"run","date":"YYYY-MM-DD"}`，再读取 `task-status`。
+- 晨会优先读取 `today_plan`、`tomorrow`、`next_three_days`、`backlog` 和 `waiting`；兼容字段继续保留。
+- 夕会读取 `evening_summary`、`today_plan` 与 `overdue_open`；未完成任务保留原 ID，不重复创建。
 - 每日简报只展示数量和摘要，点击后进入同一 Tasks 页面。
+
+直接排程/改期使用 `task-scheduler`：
+
+```bash
+curl --fail-with-body -X POST \
+  -H "Authorization: Bearer YOUR_AUTOMATION_WRITE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"action":"schedule","task_id":"GOOGLE_TASK_ID","schedule":{"scheduled_date":"2026-09-05","scheduled_start":"15:00","duration_minutes":30,"scheduling_source":"explicit_user","fixed_time":true}}' \
+  "https://YOUR_PROJECT_REF.supabase.co/functions/v1/task-scheduler"
+```

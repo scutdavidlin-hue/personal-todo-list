@@ -1,4 +1,32 @@
-# GPT 晨会 × 今日任务云同步实施计划
+# Personal OS 实施计划
+
+## V1.1｜智能排程 × Calendar 完成状态
+
+基准需求：`PRD_TASK_SCHEDULING_V1_1.md`。
+
+### 已确认架构
+
+1. Google Tasks 继续保存唯一 Task 与完成状态。
+2. Supabase `task_schedule_metadata` 只保存一对一排程字段，不复制 Task 内容或状态。
+3. `task-scheduler` Edge Function 负责稳定 Event ID、Calendar upsert、完成前缀同步和晨间 reconciliation。
+4. Intake 同时解析日期、时间、deadline、duration、priority、fixed_time；普通行动仍先创建 Google Task，再附加 Schedule。
+5. Google OAuth 增加最小 Calendar Event scope；现有 refresh token 在用户重新同意前继续只支持 Tasks。
+
+### Phase 与验证
+
+- [x] Phase 1：新增 Schedule Metadata migration、约束与 RLS，并部署到现有 Supabase。
+- [x] Phase 2：新增 Calendar projection core 和 `task-scheduler` API；稳定 ID 保证单 Event。
+- [x] Phase 3：Google Task 完成/恢复/取消后触发投影同步，失败进入可重试状态。
+- [x] Phase 4：扩展 Intake / MCP schema 与 parser，支持明确时刻、deadline、duration、priority。
+- [x] Phase 5：实现保守 Morning Scheduler，避开已有 Event，限制每日容量，固定事项不可移动。
+- [x] Phase 6：扩展状态接口的 Today / Tomorrow / Next 3 Days / Backlog / Waiting 与夕会统计。
+- [ ] Phase 7：migration/functions、Calendar scope、Calendar API 与 Mac 端 `☐→✓` 已完成；刷新 ChatGPT App tools 与 iPhone 结果验收待用户确认/操作。
+
+每个 Phase 都必须通过单元测试、静态检查与 Secret 扫描；外部部署只有在本地验证通过后执行。
+
+---
+
+## V1.0｜GPT 晨会 × 今日任务云同步（历史）
 
 > 历史方案说明：本文记录最初的 Supabase 任务表方案。2026-09-04 起，Google Tasks 已替代 Postgres `tasks` 表成为唯一任务状态真源；当前实现与验收以 `README.md`、`AUTOMATION_API.md` 和 `ACCEPTANCE.md` 为准。
 

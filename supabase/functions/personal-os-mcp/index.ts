@@ -15,6 +15,12 @@ const TaskInput = z.object({
   title: z.string().min(1).max(200).describe("A concise actionable task title."),
   notes: z.string().max(10_000).optional().describe("Helpful task details without secrets."),
   due: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional().describe("Due date in YYYY-MM-DD, or null when no date was requested."),
+  deadline: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional().describe("Hard deadline date, or null when none was stated."),
+  requested_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional().describe("The execution date explicitly requested by the user."),
+  requested_time: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/).nullable().optional().describe("The execution time explicitly requested by the user. Never invent this when only a date was stated."),
+  estimated_duration: z.number().int().min(5).max(720).default(30).describe("Estimated duration in minutes."),
+  priority: z.enum(["low", "medium", "high", "urgent"]).default("medium"),
+  fixed_time: z.boolean().default(false).describe("True when the user explicitly gave the execution time; the automatic scheduler must not move it."),
   timezone: z.string().default("Asia/Shanghai").describe("IANA timezone used to interpret the request."),
   idempotency_key: z.string().min(8).max(200).describe("A unique key for this user intent. Reuse exactly the same key only when retrying the same request."),
 });
@@ -28,6 +34,7 @@ const TaskOutput = z.object({
   deduplicated: z.boolean().optional(),
   idempotency_key: z.string().optional(),
   replayed: z.boolean().optional(),
+  schedule: z.record(z.string(), z.unknown()).nullable().optional(),
   code: z.string().optional(),
   error: z.string().optional(),
 });
@@ -37,7 +44,7 @@ const AUTH_SCHEMES = [{ type: "oauth2", scopes: ["openid", "email", "profile"] }
 const CREATE_TASK_TOOL = {
   name: "create_task",
   title: "Create a Personal OS task",
-  description: "Create an ordinary reminder, todo, or action item in the user's Personal OS Google Tasks list. Use this only when the requested future action merely needs a reminder. Do not use it for meetings, flights, appointments, time blocks, recurring web research, analysis jobs, project facts, or durable knowledge. Report success only when this tool returns success=true.",
+  description: "Create an ordinary reminder, todo, or action item in the user's Personal OS Google Tasks list. When the user explicitly states an execution time, also pass requested_date/requested_time so Personal OS creates one linked Google Calendar projection. Do not use it for meetings, flights, appointments, recurring web research, analysis jobs, project facts, or durable knowledge. Report success only when this tool returns success=true.",
   inputSchema: {
     type: "object",
     properties: {
@@ -45,6 +52,12 @@ const CREATE_TASK_TOOL = {
       title: { type: "string", minLength: 1, maxLength: 200, description: "A concise actionable task title." },
       notes: { type: "string", maxLength: 10_000, description: "Helpful task details without secrets." },
       due: { anyOf: [{ type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" }, { type: "null" }], description: "Due date in YYYY-MM-DD, or null when no date was requested." },
+      deadline: { anyOf: [{ type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" }, { type: "null" }], description: "Hard deadline date, or null." },
+      requested_date: { anyOf: [{ type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" }, { type: "null" }], description: "Explicit execution date." },
+      requested_time: { anyOf: [{ type: "string", pattern: "^(?:[01]\\d|2[0-3]):[0-5]\\d$" }, { type: "null" }], description: "Explicit execution time; never invent it for a date-only request." },
+      estimated_duration: { type: "integer", minimum: 5, maximum: 720, default: 30, description: "Estimated duration in minutes." },
+      priority: { type: "string", enum: ["low", "medium", "high", "urgent"], default: "medium" },
+      fixed_time: { type: "boolean", default: false, description: "True only when the user explicitly gave the execution time." },
       timezone: { type: "string", default: "Asia/Shanghai", description: "IANA timezone used to interpret the request." },
       idempotency_key: { type: "string", minLength: 8, maxLength: 200, description: "A unique key for this user intent. Reuse exactly the same key only when retrying the same request." },
     },
@@ -62,6 +75,7 @@ const CREATE_TASK_TOOL = {
       deduplicated: { type: "boolean" },
       idempotency_key: { type: "string" },
       replayed: { type: "boolean" },
+      schedule: { anyOf: [{ type: "object", additionalProperties: true }, { type: "null" }] },
       code: { type: "string" },
       error: { type: "string" },
     },
@@ -100,6 +114,13 @@ async function createTask(args: z.infer<typeof TaskInput>) {
         title: args.title,
         notes: args.notes || "",
         due: args.due || null,
+        deadline: args.deadline || null,
+        requested_date: args.requested_date || null,
+        requested_time: args.requested_time || null,
+        estimated_duration: args.estimated_duration,
+        priority: args.priority,
+        fixed_time: args.fixed_time,
+        scheduling_source: args.requested_date || args.requested_time ? "explicit_user" : "gpt_inferred",
         timezone: args.timezone,
         idempotency_key: args.idempotency_key,
       }),
@@ -120,7 +141,7 @@ async function createTask(args: z.infer<typeof TaskInput>) {
     content: [{
       type: "text",
       text: succeeded
-        ? `已真实写入 Google Tasks：${result.title}${result.due ? `（到期 ${result.due}）` : ""}`
+        ? `已真实写入 Google Tasks${args.requested_time ? " 并建立 Calendar 时间投影" : ""}：${result.title}${result.due ? `（到期 ${result.due}）` : ""}`
         : `任务未写入：${result.error || `Personal OS returned ${response.status}`}`,
     }],
     structuredContent: result,
@@ -163,7 +184,7 @@ async function handleMcp(request: Request) {
     const requestedVersion = typeof params.protocolVersion === "string" ? params.protocolVersion : "2025-06-18";
     return rpcResult(id, {
       protocolVersion: requestedVersion,
-      serverInfo: { name: "personal-os", title: "Personal OS", version: "1.0.1" },
+      serverInfo: { name: "personal-os", title: "Personal OS", version: "1.1.0" },
       capabilities: { tools: { listChanged: false } },
       instructions: "Use create_task only for ordinary reminders and todos that the user wants written to Personal OS Google Tasks.",
     });

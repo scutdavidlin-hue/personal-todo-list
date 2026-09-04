@@ -29,6 +29,10 @@ test("automation summary returns morning and evening Google Tasks buckets and hi
     yesterday_completed: 1,
     upcoming: 1,
     unscheduled: 0,
+    today_planned: 0,
+    today_plan_completed: 0,
+    today_rescheduled: 0,
+    today_cancelled: 0,
   });
   assert.equal(status.today_open[0].id, "new");
   assert.equal(status.overdue_open[0].id, "late");
@@ -38,6 +42,25 @@ test("automation summary returns morning and evening Google Tasks buckets and hi
   assert.equal(status.yesterday_completed[0].id, "yesterday");
   assert.equal(status.upcoming[0].id, "future");
   assert.equal("owner_id" in status.today_open[0], false);
+});
+
+test("V1.1 status exposes timeline buckets without changing Task truth", () => {
+  const rows = [
+    { ...base, id: "planned", title: "计划任务", dueDate: "2026-09-03", status: "completed", completedAt: "2026-09-03T02:00:00Z" },
+    { ...base, id: "tomorrow", title: "明日任务", dueDate: "2026-09-04", status: "open", completedAt: null },
+    { ...base, id: "backlog", title: "无日期", dueDate: null, status: "open", completedAt: null },
+  ];
+  const schedules = [
+    { owner_id: "private", google_task_id: "planned", scheduled_date: "2026-09-03", scheduled_start: "09:00", scheduling_status: "scheduled" },
+    { owner_id: "private", google_task_id: "tomorrow", scheduled_date: "2026-09-04", scheduled_start: "10:00", scheduling_status: "scheduled" },
+    { owner_id: "private", google_task_id: "backlog", scheduled_date: null, scheduled_start: null, scheduling_status: "backlog" },
+  ];
+  const status = buildStatus(rows, "2026-09-03", new Date("2026-09-03T12:00:00Z"), schedules);
+  assert.equal(status.today_plan[0].id, "planned");
+  assert.equal(status.today_plan[0].schedule.owner_id, undefined);
+  assert.equal(status.tomorrow[0].id, "tomorrow");
+  assert.equal(status.backlog[0].id, "backlog");
+  assert.deepEqual(status.evening_summary, { planned: 1, completed: 1, rescheduled: 0, cancelled: 0 });
 });
 
 test("Shanghai completion date handles UTC day boundary", () => {

@@ -1,4 +1,4 @@
-const TASK_VERBS = /(?:完成|处理|联系|购买|买|整理|检查|查看|复查|查询|查|登录|修改|跟进|报销|收拾|准备|验收|提交|确认|回复|发送|预约|提醒)/;
+const TASK_VERBS = /(?:做|完成|处理|联系|购买|买|整理|检查|查看|复查|查询|查|登录|修改|跟进|报销|收拾|准备|验收|提交|确认|回复|发送|预约|提醒|导出|补录)/;
 const CALENDAR_NOUNS = /(?:飞机|航班|高铁|火车|会议|开会|面谈|看电影|医院预约|行程|出发|抵达|纪念日|婚礼|课程)/;
 const PROJECT_DATA_PATTERNS = /(?:可以对接|客户资源|客户线索|项目资料|合作方|供应商|联系人|商机)/;
 const GPT_JOB_PATTERNS = /(?:(?:每天|每日|每晚|每周|每月|定期|持续).*(?:搜索|查询|监控|分析|汇总|研究|跟踪)|(?:搜索|查询|监控|分析|汇总|研究|跟踪).*(?:每天|每日|每晚|每周|每月|定期|持续))/;
@@ -56,6 +56,20 @@ export function parseIntentTime(text) {
   return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
+export function parseIntentDuration(text, fallback = 30) {
+  const hours = text.match(/(\d+(?:\.\d+)?)\s*(?:个)?小时/);
+  const minutes = text.match(/(\d{1,3})\s*分钟/);
+  const value = hours ? Math.round(Number(hours[1]) * 60) : minutes ? Number(minutes[1]) : fallback;
+  return Number.isInteger(value) && value >= 5 && value <= 720 ? value : fallback;
+}
+
+function parsePriority(text) {
+  if (/(?:紧急|马上|立刻|最高优先级)/.test(text)) return "urgent";
+  if (/(?:重要|高优先级|尽快)/.test(text)) return "high";
+  if (/(?:低优先级|有空再)/.test(text)) return "low";
+  return "medium";
+}
+
 function cleanTitle(text) {
   return String(text)
     .replace(/20\d{2}[-年]\d{1,2}[-月]\d{1,2}[日号]?/g, "")
@@ -78,13 +92,21 @@ function calendarPayload(text, dueDate, time) {
   };
 }
 
-function taskPayload(text, dueDate) {
+function taskPayload(text, dueDate, time) {
+  const deadline = dueDate && /(?:之前|以前|截止|最晚|前把|前完成)/.test(text) ? dueDate : null;
+  const requestedDate = deadline ? null : dueDate;
   return {
     title: cleanTitle(text) || text.trim(),
     notes: "",
     dueDate,
+    requestedDate,
+    requestedTime: time,
+    deadline,
+    estimatedDuration: parseIntentDuration(text),
+    priority: parsePriority(text),
+    fixedTime: Boolean(requestedDate && time),
+    schedulingSource: requestedDate || time ? "explicit_user" : "gpt_inferred",
     originalIntent: text.trim(),
-    priority: "medium",
   };
 }
 
@@ -108,6 +130,9 @@ export function classifyAction(input, options = {}) {
   if (KNOWLEDGE_PATTERNS.test(text)) {
     return { type: "knowledge", confidence: 0.9, payload: contentPayload(text) };
   }
+  if (dueDate && /(?:之前|以前|截止|最晚|前把|前完成)/.test(text) && TASK_VERBS.test(text)) {
+    return { type: "task", confidence: 0.98, payload: taskPayload(text, dueDate, time) };
+  }
   if (CALENDAR_NOUNS.test(text) && (time || dueDate)) {
     return { type: "calendar_event", confidence: time ? 0.99 : 0.9, payload: calendarPayload(text, dueDate, time) };
   }
@@ -115,7 +140,7 @@ export function classifyAction(input, options = {}) {
     return { type: "calendar_event", confidence: 0.86, payload: calendarPayload(text, dueDate, time) };
   }
   if (TASK_VERBS.test(text)) {
-    return { type: "task", confidence: dueDate ? 0.97 : 0.9, payload: taskPayload(text, dueDate) };
+    return { type: "task", confidence: dueDate ? 0.97 : 0.9, payload: taskPayload(text, dueDate, time) };
   }
   return { type: "knowledge", confidence: 0.62, payload: contentPayload(text) };
 }

@@ -51,3 +51,6 @@ verify_jwt = false
 
 [functions.personal-os-mcp]
 verify_jwt = false
+
+[functions.task-scheduler]
+verify_jwt = false

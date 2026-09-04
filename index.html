@@ -207,8 +207,11 @@
       <input type="hidden" id="taskId">
       <label>任务名称<input id="taskTitle" required maxlength="80" placeholder="例如：完成项目方案"></label>
       <label>截止日期<input type="date" id="taskDate"></label>
+      <label>执行时间<input type="time" id="taskTime"><small class="muted">填写后会在 Google Calendar 建立唯一时间块。</small></label>
+      <label>预计分钟<input type="number" id="taskDuration" min="5" max="720" step="5" value="30"></label>
+      <label><span><input type="checkbox" id="taskFixedTime"> 用户明确指定时间，不允许自动 Scheduler 移动</span></label>
       <label>说明<textarea id="taskNotes" rows="3" maxlength="8192" placeholder="补充一点细节（可选）"></textarea></label>
-      <small class="muted">任务只保存日期，不保存具体时刻。会议、行程、预约和固定时间块请创建 Google Calendar Event。</small>
+      <small class="muted">Google Tasks 只保存日期；具体时刻投影到 Calendar。会议、航班和预约仍应创建原生 Calendar Event。</small>
       <div class="dialog-actions">
         <button class="secondary-button" id="cancelTaskDialog" type="button">取消</button>
         <button class="primary-button" id="saveTaskButton" type="submit">保存任务</button>

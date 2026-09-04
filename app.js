@@ -14,6 +14,7 @@ const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 
 let tasks = [];
+let schedules = [];
 let currentUser = null;
 let currentFilter = "all";
 let pendingIds = new Set();
@@ -67,6 +68,7 @@ function showCloudContent(show) {
 
 function renderTaskItem(task) {
   const syncing = pendingIds.has(task.id);
+  const schedule = schedules.find((item) => item.google_task_id === task.id);
   return `
     <div class="task-item ${task.done ? "done" : ""} ${syncing ? "syncing" : ""}" data-id="${task.id}">
       <input class="task-check" type="checkbox" ${task.done ? "checked" : ""} ${syncing ? "disabled" : ""} aria-label="完成 ${escapeHtml(task.title)}">
@@ -74,6 +76,7 @@ function renderTaskItem(task) {
         <strong>${escapeHtml(task.title)}</strong>
         <small>
           ${task.carriedFromDate ? `<span class="carry-chip">↪ ${escapeHtml(task.carriedFromDate)} 延续</span>` : ""}
+          ${schedule?.scheduled_start ? `<span class="carry-chip">${schedule.scheduling_status === "rescheduled" ? "↪" : "◷"} ${escapeHtml(schedule.scheduled_date)} ${escapeHtml(schedule.scheduled_start.slice(0, 5))}</span>` : ""}
           <span>Google Tasks</span>
         </small>
       </div>
@@ -225,6 +228,14 @@ async function mutateTask(id, changes, successMessage) {
   try {
     const updated = await client.updateTask(id, changes);
     tasks = replaceTask(tasks, updated);
+    const changedDate = changes.dueDate ?? changes.date;
+    if (changedDate) {
+      const currentSchedule = schedules.find((item) => item.google_task_id === id);
+      const scheduleResult = currentSchedule
+        ? await client.rescheduleTask(id, { ...currentSchedule, scheduled_date: changedDate })
+        : await client.scheduleTask(id, { scheduled_date: changedDate, scheduling_source: "explicit_user" });
+      if (scheduleResult.schedule) schedules = [...schedules.filter((item) => item.google_task_id !== id), scheduleResult.schedule];
+    }
     updateCachedTasks();
     setConnection("", `已同步 · ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`);
     showToast(successMessage);
@@ -269,11 +280,15 @@ async function cancelTask(id) {
 }
 
 function openTaskDialog(task = null) {
+  const schedule = task ? schedules.find((item) => item.google_task_id === task.id) : null;
   $("#dialogTitle").textContent = task ? "编辑这件事" : "添加一件要做的事";
   $("#taskId").value = task?.id || "";
   $("#taskTitle").value = task?.title || "";
   $("#taskDate").value = task?.date || localDateISO();
   $("#taskNotes").value = task?.notes || "";
+  $("#taskTime").value = schedule?.scheduled_start?.slice(0, 5) || "";
+  $("#taskDuration").value = schedule?.duration_minutes || 30;
+  $("#taskFixedTime").checked = schedule?.fixed_time === true;
   $("#taskDialog").showModal();
   setTimeout(() => $("#taskTitle").focus(), 50);
 }
@@ -290,13 +305,27 @@ async function saveTask(event) {
     dueDate: $("#taskDate").value || null,
     notes: $("#taskNotes").value.trim(),
   };
+  const schedule = {
+    scheduled_date: formData.dueDate,
+    scheduled_start: $("#taskTime").value || null,
+    duration_minutes: Number($("#taskDuration").value || 30),
+    scheduling_source: "explicit_user",
+    fixed_time: $("#taskFixedTime").checked,
+  };
   let deduplicated = false;
   try {
     if (id) {
       const updated = await client.updateTask(id, formData);
       tasks = replaceTask(tasks, updated);
+      const currentSchedule = schedules.find((item) => item.google_task_id === id);
+      const scheduleResult = schedule.scheduled_start
+        ? await (currentSchedule ? client.rescheduleTask(id, schedule) : client.scheduleTask(id, schedule))
+        : currentSchedule?.scheduled_start
+          ? await client.unscheduleTask(id, schedule)
+          : await client.scheduleTask(id, schedule);
+      if (scheduleResult.schedule) schedules = [...schedules.filter((item) => item.google_task_id !== id), scheduleResult.schedule];
     } else {
-      const created = await client.createTask({ ...formData, status: "open", source: "manual", originalIntent: formData.title });
+      const created = await client.createTask({ ...formData, schedule, status: "open", source: "manual", originalIntent: formData.title });
       deduplicated = created.metadata?.deduplicated === true;
       if (deduplicated) tasks = replaceTask(tasks, created);
       else tasks.push(fromDatabaseTask(created));
@@ -349,7 +378,9 @@ async function refreshTasks({ quiet = false } = {}) {
   setConnection("syncing", "正在读取云端任务…");
   $("#refreshButton").disabled = true;
   try {
-    tasks = await client.getTasks();
+    const [cloudTasks, scheduleResult] = await Promise.all([client.getTasks(), client.listSchedules()]);
+    tasks = cloudTasks;
+    schedules = scheduleResult.schedules || [];
     updateCachedTasks();
     setConnection("", `已同步 · ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`);
     render();

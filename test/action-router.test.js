@@ -47,3 +47,20 @@ test("a durable fact routes to knowledge", () => {
   const route = classifyAction("记住：普通待办只进入 Google Tasks", { baseDate });
   assert.equal(route.type, "knowledge");
 });
+
+test("an explicit task time remains a Task and carries schedule metadata", () => {
+  const route = classifyAction("明天下午3点做导出 ChatGPT 历史数据，预计45分钟", { baseDate });
+  assert.equal(route.type, "task");
+  assert.equal(route.payload.dueDate, "2026-09-05");
+  assert.equal(route.payload.requestedDate, "2026-09-05");
+  assert.equal(route.payload.requestedTime, "15:00");
+  assert.equal(route.payload.estimatedDuration, 45);
+  assert.equal(route.payload.fixedTime, true);
+});
+
+test("a deadline is separated from a requested execution date", () => {
+  const route = classifyAction("9月8日出发之前把行李收拾完成", { baseDate });
+  assert.equal(route.type, "task");
+  assert.equal(route.payload.deadline, "2026-09-08");
+  assert.equal(route.payload.requestedDate, null);
+});

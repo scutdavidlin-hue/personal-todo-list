@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { CloudError, GOOGLE_TASKS_SCOPE, TaskCloudClient } from "../src/cloud-client.js";
+import { CloudError, GOOGLE_CALENDAR_EVENTS_SCOPE, GOOGLE_TASKS_SCOPE, TaskCloudClient } from "../src/cloud-client.js";
 
 class MemoryStorage {
   constructor(values = {}) { this.values = new Map(Object.entries(values)); }
@@ -39,7 +39,7 @@ test("Google OAuth reuses Supabase Auth and requests Tasks offline scope", () =>
   assert.equal(assigned, url);
   assert.equal(parsed.pathname, "/auth/v1/authorize");
   assert.equal(parsed.searchParams.get("provider"), "google");
-  assert.equal(parsed.searchParams.get("scopes"), GOOGLE_TASKS_SCOPE);
+  assert.equal(parsed.searchParams.get("scopes"), `${GOOGLE_TASKS_SCOPE} ${GOOGLE_CALENDAR_EVENTS_SCOPE}`);
   assert.equal(parsed.searchParams.get("access_type"), "offline");
   assert.equal(parsed.searchParams.get("prompt"), "consent");
   assert.equal(parsed.searchParams.get("redirect_to"), "https://example.com/today.html");
@@ -186,4 +186,19 @@ test("local sign out clears the session even when cloud logout fails", async () 
   const client = new TaskCloudClient(config, { storage, transientStorage: new MemoryStorage(), fetch: async () => { throw new Error("offline"); } });
   await client.signOut();
   assert.equal(client.session(), null);
+});
+
+test("schedule and reschedule use the dedicated projection service", async () => {
+  const calls = [];
+  const client = new TaskCloudClient(config, {
+    storage: sessionStorage(),
+    fetch: async (url, init) => { calls.push({ url, body: JSON.parse(init.body) }); return response({ success: true }); },
+  });
+  await client.scheduleTask("task-1", { scheduled_date: "2026-09-05", scheduled_start: "15:00" });
+  await client.rescheduleTask("task-1", { scheduled_date: "2026-09-05", scheduled_start: "16:00" });
+  await client.unscheduleTask("task-1", { scheduled_date: "2026-09-05" });
+  assert.match(calls[0].url, /\/functions\/v1\/task-scheduler$/);
+  assert.equal(calls[0].body.action, "schedule");
+  assert.equal(calls[1].body.schedule.scheduling_status, "rescheduled");
+  assert.equal(calls[2].body.action, "unschedule");
 });

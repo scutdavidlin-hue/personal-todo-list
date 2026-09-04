@@ -134,6 +134,7 @@ async function dispatchTask(intake: Record<string, unknown>) {
     title: result.task.title,
     due: result.task.dueDate || null,
     deduplicated: result.deduplicated === true,
+    schedule: result.schedule || null,
   };
 }
 

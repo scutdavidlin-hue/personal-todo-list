@@ -6,6 +6,7 @@ import {
 } from "./core.js";
 
 export const GOOGLE_TASKS_SCOPE = "https://www.googleapis.com/auth/tasks";
+export const GOOGLE_CALENDAR_EVENTS_SCOPE = "https://www.googleapis.com/auth/calendar.events";
 
 const SESSION_KEY = "task-sync-auth-session-v1";
 const GOOGLE_OAUTH_TRANSIENT_KEY = "task-sync-google-oauth-transient-v1";
@@ -31,6 +32,7 @@ export class TaskCloudClient {
     this.googleOAuthScopes = [...new Set([
       ...String(config.googleOAuthScopes || "").split(/[\s,]+/).filter(Boolean),
       GOOGLE_TASKS_SCOPE,
+      GOOGLE_CALENDAR_EVENTS_SCOPE,
     ])].join(" ");
   }
 
@@ -272,6 +274,38 @@ export class TaskCloudClient {
 
   async cancelTask(id) {
     return this.deleteTask(id);
+  }
+
+  async listSchedules() {
+    return this.authenticatedRequest("/functions/v1/task-scheduler", { method: "GET" });
+  }
+
+  async scheduleTask(id, schedule) {
+    return this.authenticatedRequest("/functions/v1/task-scheduler", {
+      method: "POST",
+      body: JSON.stringify({ action: "schedule", task_id: id, schedule }),
+    });
+  }
+
+  async rescheduleTask(id, schedule) {
+    return this.authenticatedRequest("/functions/v1/task-scheduler", {
+      method: "POST",
+      body: JSON.stringify({ action: "reschedule", task_id: id, schedule: { ...schedule, scheduling_source: "rescheduled", scheduling_status: "rescheduled" } }),
+    });
+  }
+
+  async unscheduleTask(id, schedule = {}) {
+    return this.authenticatedRequest("/functions/v1/task-scheduler", {
+      method: "POST",
+      body: JSON.stringify({ action: "unschedule", task_id: id, schedule }),
+    });
+  }
+
+  async runMorningScheduler(date) {
+    return this.authenticatedRequest("/functions/v1/task-scheduler", {
+      method: "POST",
+      body: JSON.stringify({ action: "run", date }),
+    });
   }
 
   async getReview(date) {

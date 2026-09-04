@@ -24,14 +24,39 @@
 
 ## 待完成
 
-- [x] 最终自动回归（41 tests；0 fail）。
+- [x] 最终自动回归（51 tests；0 fail）。
 - [x] 现有 Google Cloud / Supabase 一次性配置、数据库迁移、Functions 部署与 OAuth consent。
 - [x] 创建并核验 31 条真实未完成任务；完成日期、说明、originalIntent、去重、分流、完成与恢复的云端验收。
 - [x] Mac 页面真实显示、checkbox 完成同步与恢复验收。
-- [ ] 在 ChatGPT Developer mode 注册 MCP、取得技术 ID、打包安装插件并做 iPhone 最终验收。
+- [x] 在 ChatGPT Developer mode 注册并连接 MCP；App ID `asdk_app_6a9ab767459c8191934b1ec76be1378e`，`create_task` 工具发现成功。
+- [x] ChatGPT 网页端真实调用 `create_task`，Google Tasks 回读到“完成 Personal OS V1 MCP 真实调用验收”（Due 2026-09-05）。
+- [ ] iPhone 在正式部署地址做 Google Tasks / Google Calendar 最终触控验收。
+
+## V1.1｜智能排程 × Calendar 投影
+
+- [x] 固化 `PRD_TASK_SCHEDULING_V1_1.md`，确认 Google Tasks 是唯一任务/完成状态真源。
+- [x] 确认 Calendar Event 是时间投影，并以稳定 Event ID + `googleTaskId` 私有扩展属性保证幂等。
+- [x] Phase 1：Schedule Metadata migration 已部署；`(owner_id, google_task_id)` 唯一，未复制 Task 状态。
+- [x] Phase 2：`task-scheduler` 与稳定 Calendar Event ID 已部署；改期 upsert 同一 Event。
+- [x] Phase 3：完成/恢复/改名/取消触发投影同步；失败保留 `sync_required`。
+- [x] Phase 4：日期/时间/deadline/duration/priority/fixed_time Intake Parser 与 MCP schema。
+- [x] Phase 5：Morning Scheduler 核心已实现并部署，避开 busy Event、限制 09:00–21:00、无日期留 Backlog。
+- [x] Phase 6：`task-status` schema 3.0 提供 Today/Tomorrow/Next 3 Days/Backlog/Waiting 与夕会统计。
+- [ ] Phase 7：migration/functions 部署、Calendar OAuth 与 Mac 端 `☐→✓` 真机验收已完成；剩余 ChatGPT App schema 刷新与 iPhone 结果验收。
+
+## V1.1 验证
+
+- [x] `npm run verify`：51 tests，0 fail；静态检查与 Secret 扫描通过。
+- [x] 6 个受影响 Edge Functions 通过 Deno 类型检查。
+- [x] 线上 `task-status` schema 3.0 生效；当前 31 个 open Tasks 留在 Backlog，已完成的验收 Task 不再进入未完成池，Today Plan 为 0。
+- [x] Google Calendar API 已在现有 Google Cloud 项目启用；缺 API 与缺 scope 分别返回 `CALENDAR_API_DISABLED` / `CALENDAR_SCOPE_MISSING`，不伪造成功。
+- [x] MCP 验收 Task 已投影到 2026-09-05 15:00–15:30；Calendar 中只有一个稳定 Event `pos18ea83471493168c9aa7bee962ae96f08765a4b1`。
+- [x] 完成回调重新部署后，真实执行“恢复 → 完成”；同一 Calendar Event 自动完成 `✓ → ☐ → ✓`，Schedule 行保持 `sync_required=false`、`last_sync_error=null`。
 
 ## 已确认限制
 
-- 当前仓库没有原有 Google Calendar 写入实现；本阶段 Router 会正确分类并阻止误建 Task，但不会在本仓库重复建设 Calendar 服务。
+- V1.0 没有 Google Calendar 写入实现；V1.1 只新增 Task 的时间投影，不另建 Calendar App 或第二任务库。
+- Google Tasks API 的 `due` 只保存日期；具体时刻由 Calendar Event 承担。
+- ChatGPT 自定义 MCP App 官方目前仅支持网页端；iPhone 只验收 Google Tasks / Calendar 的跨端结果。
 - `runtime-config.js` 只含公开的 Supabase URL 与 anon key；OAuth Client Secret、刷新令牌、加密密钥、service role key 和自动化 Token 均不在前端或 Git 中。
 - Postgres 不再保存第二套任务池；Google Tasks 是唯一任务状态真源，Supabase 只保存每日小结和加密后的 OAuth 凭证。

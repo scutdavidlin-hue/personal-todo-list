@@ -27,6 +27,19 @@ test("normalizes the Issue #1 task contract", () => {
     dueDate: "2026-09-05",
     originalIntent: "明天提醒我安排小青蛙寄养。",
     source: "chatgpt",
+    schedule: {
+      scheduled_date: "2026-09-05",
+      scheduled_start: null,
+      scheduled_end: null,
+      timezone: "Asia/Shanghai",
+      duration_minutes: 30,
+      scheduling_status: "unscheduled",
+      scheduling_source: "explicit_user",
+      calendar_id: "primary",
+      fixed_time: false,
+      priority: "medium",
+      deadline: null,
+    },
   });
 });
 
@@ -47,4 +60,13 @@ test("rejects invalid types and dates", () => {
 test("canonical intake is stable and excludes transient fields", () => {
   const intake = normalizeIntake({ raw_text: "下周跟袁老师确认三一重工的对接", type: "task", due: "2026-09-07" });
   assert.equal(canonicalIntake(intake), canonicalIntake({ ...intake, confidence: 0.1, payload: { ignored: true } }));
+});
+
+test("normalizes a scheduled task for Task creation plus Calendar projection", () => {
+  const intake = normalizeIntake({ raw_text: "明天下午3点做导出 ChatGPT 历史数据，预计45分钟" }, { baseDate });
+  assert.equal(intake.type, "task");
+  assert.equal(intake.requested_date, "2026-09-05");
+  assert.equal(intake.requested_time, "15:00");
+  assert.equal(intake.schedule.scheduled_end, "15:45");
+  assert.equal(intake.schedule.fixed_time, true);
 });
