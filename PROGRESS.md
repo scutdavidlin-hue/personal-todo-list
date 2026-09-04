@@ -48,12 +48,13 @@
 
 - [x] `npm run verify`：51 tests，0 fail；静态检查与 Secret 扫描通过。
 - [x] 6 个受影响 Edge Functions 通过 Deno 类型检查。
-- [x] 线上 `task-status` schema 3.0 生效；当前 26 个 open Tasks 中 24 个留在 Backlog，另有 1 个明日 date-only 待排程事项和 1 个明日 16:00 明确排程；已完成的 V1 验收 Task 不再进入未完成池，Today Plan 为 0。
+- [x] 线上 `task-status` schema 3.0 生效；2026-09-04 22:42 Personal OS 回读为 27 个 open Tasks（Today 2、未来/待安排 25、Overdue 0），已完成验收项不再进入未完成池。
 - [x] Google Calendar API 已在现有 Google Cloud 项目启用；缺 API 与缺 scope 分别返回 `CALENDAR_API_DISABLED` / `CALENDAR_SCOPE_MISSING`，不伪造成功。
 - [x] MCP 验收 Task 已投影到 2026-09-05 15:00–15:30；Calendar 中只有一个稳定 Event `pos18ea83471493168c9aa7bee962ae96f08765a4b1`。
 - [x] 完成回调重新部署后，真实执行“恢复 → 完成”；同一 Calendar Event 自动完成 `✓ → ☐ → ✓`，Schedule 行保持 `sync_required=false`、`last_sync_error=null`。
 - [x] ChatGPT Personal OS App 刷新成功；页面显示“操作已刷新”，`create_task` 已读取明确时间时传 `requested_date/requested_time` 并创建唯一 Calendar 投影的 V1.1 描述。
 - [x] Web ChatGPT 真实创建 `验收 V1.1 ChatGPT 排程`（Task `OXJReEgwS25DRnVxS3p5dw`），排到 2026-09-05 16:00–17:00；Calendar 仅有 Event `pos8e2f3519d8021f1e3607ac0d9984fab1a9c4586c`，`sync_required=false`、`last_sync_error=null`。
+- [x] 通过现有已认证 Personal OS 页面完成无人值守验收 Task `NWczWTZfS1JJdEJXNWNpWg`；Google Tasks 进入 Completed，同一 2026-09-04 23:00–23:30 Calendar Event `pos75397454c9c6f82a1c18d7415663180b0d2ff1f1` 原位显示 `✓`，未新建 Task/Event。
 
 ## 已确认限制
 

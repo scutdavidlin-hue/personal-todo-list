@@ -38,6 +38,7 @@
 | Complete → Calendar `✓` | PASS (cloud + visual) | 恢复后原 Event 变 `☐`，再次完成后原 Event 自动变 `✓`；Event ID 始终为 `pos18ea83471493168c9aa7bee962ae96f08765a4b1`。 |
 | ChatGPT App tools 刷新 | PASS (visual) | 页面显示“操作已刷新”；`create_task` 描述已要求明确时间时传 `requested_date/requested_time` 并创建唯一 Calendar 投影。 |
 | Web ChatGPT → Task → Calendar | PASS (cloud + visual) | Web ChatGPT 真实创建 `验收 V1.1 ChatGPT 排程`（Task `OXJReEgwS25DRnVxS3p5dw`）；2026-09-05 16:00–17:00 只有一个 `☐` Event `pos8e2f3519d8021f1e3607ac0d9984fab1a9c4586c`，Schedule 无同步错误。 |
+| 无人值守 Task → Complete → Calendar `✓` | PASS (cloud + visual) | 在现有已认证 Personal OS 页面完成 Task `NWczWTZfS1JJdEJXNWNpWg`；Completed 区只保留一条，同一 2026-09-04 23:00–23:30 Event `pos75397454c9c6f82a1c18d7415663180b0d2ff1f1` 原位显示 `✓`。 |
 | iPhone Tasks + Calendar | PENDING | 仅验收跨端结果；自定义 MCP App 官方当前仅网页端。 |
 
 即时 `☐/✓` 同步已验证的是 Personal OS / 服务端写入路径。Google Tasks API 没有为本实现提供完成状态 webhook；若直接在 Google Tasks 原生界面修改，现有 Morning Scheduler 会在下一次 reconciliation 读取真源并修正 Calendar 投影。
@@ -46,11 +47,10 @@
 
 OAuth 已完成。2026-09-04 又对 Gmail 中的晨会、夕会、每日简报、提案关键词和待办关键词做了集中清点；安全提醒、测试邮件、新闻、行情和已有监控没有转成 Task。
 
-- Google Tasks 当前未完成任务：26 条。
-- 明确日期任务：15 条；未定期项目动作：11 条。
-- 今日任务：2 条；未来七天：8 条。
-- 重复标题：0；所有任务状态均已从 Google Tasks 回读为 `open`。
+- 2026-09-04 22:42 Personal OS 页面回读：未完成 27 条，其中 Today 2、未来/待安排 25、Overdue 0；Completed 显示 10 条。
+- 两条带时刻的 V1.1 验收链路均为一 Task 一 Calendar Event；没有为重试或完成动作创建重复对象。
 - `验收 V1.1 ChatGPT 排程` 由 Web ChatGPT 真实创建，Due `2026-09-05`，并在 16:00–17:00 形成唯一 Calendar 投影。
+- `验收 Personal OS 无人值守环境 V1` 已从 Today 移入 Completed；原 23:00–23:30 Calendar Event 保留并显示 `✓`。
 - `收拾东北旅行行李` 仍为原 Task，Due `2026-09-06`，清单已补入“呼吸机”，未新建重复任务。
 - `东北旅行行李最终检查` Due `2026-09-07`。
 - `查看域名审核结果` Due `2026-09-13`；`完成 Google OAuth 正式发布` 同日作为后续可勾选动作。
