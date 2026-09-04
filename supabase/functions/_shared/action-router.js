@@ -1,8 +1,13 @@
-const TASK_VERBS = /(?:做|完成|处理|联系|购买|买|整理|检查|查看|复查|查询|查|登录|修改|跟进|报销|收拾|准备|验收|提交|确认|回复|发送|预约|提醒|导出|补录)/;
+const TASK_VERBS = /(?:做|完成|处理|联系|打电话|致电|购买|买|整理|检查|查看|看看|复查|查询|查|登录|修改|跟进|催|归还|还款|核算|报销|收拾|准备|验收|提交|确认|回复|发送|预约|提醒|导出|补录)/;
 const CALENDAR_NOUNS = /(?:飞机|航班|高铁|火车|会议|开会|面谈|看电影|医院预约|行程|出发|抵达|纪念日|婚礼|课程)/;
 const PROJECT_DATA_PATTERNS = /(?:可以对接|客户资源|客户线索|项目资料|合作方|供应商|联系人|商机)/;
+const CONTACT_PATTERNS = /(?:(?:电话|手机号|邮箱|微信|联系方式)(?:是|为|：|:)|认识.{0,24}(?:CFO|CEO|负责人|总监|经理))/i;
 const GPT_JOB_PATTERNS = /(?:(?:每天|每日|每晚|每周|每月|定期|持续).*(?:搜索|查询|监控|分析|汇总|研究|跟踪)|(?:搜索|查询|监控|分析|汇总|研究|跟踪).*(?:每天|每日|每晚|每周|每月|定期|持续))/;
 const KNOWLEDGE_PATTERNS = /(?:记住|长期保存|沉淀为知识|知识库|经验总结|以后遵循|原则是)/;
+const FINANCIAL_ITEM_PATTERNS = /(?:欠我|我欠|应收|应付|待收|待付|长期预算|买房预算|购房预算|储蓄目标|存款目标|投资目标)/;
+const GOAL_PATTERNS = /(?:(?:20\d{2}\s*年|明年|后年|未来|长期|中期|短期|以后).{0,40}(?:想|希望|目标|完成|实现|升级|达到|成为|商业化|转型|要|会|承担|开发|建立)|(?:目标是|目标：|希望在).{1,80}|(?:放到|放进|记录到|作为).{0,18}(?:Goal\s*(?:&|and)?\s*Plan|目标|规划)|(?:接下来的方向|之后要推进|以后我要做))/i;
+const PLAN_PATTERNS = /(?:(?:计划|打算).{1,80}|(?:20\d{2}\s*年|明年|后年|今年年底|接下来几个月|\d{1,2}\s*[–—~-]\s*\d{1,2}\s*月|\d{1,2}\s*月).{0,24}(?:开始|推进|筹备|规划|测试).{0,80})/;
+const LONG_TERM_ITEM_PATTERNS = /(?:(?:持续|长期).{0,12}(?:事项|状态|跟踪|关注)|(?:尚未|一直).{0,24}(?:完成|解决|处理))/;
 const WEEKDAYS = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 日: 0, 天: 0 };
 
 function localDate(date) {
@@ -81,6 +86,127 @@ function cleanTitle(text) {
     .trim();
 }
 
+function cleanLongTermTitle(text) {
+  return String(text)
+    .replace(/^(?:我)?(?:明年|后年|未来|以后|长期)?\s*(?:想|希望|打算|计划)?\s*/, "")
+    .replace(/^(?:目标是|目标：)\s*/, "")
+    .replace(/[，,。.!！?？]+$/g, "")
+    .trim() || String(text).trim();
+}
+
+function parseTargetYear(text, baseDate = new Date()) {
+  const explicit = String(text).match(/\b(20\d{2})\s*年?/);
+  if (explicit) return Number(explicit[1]);
+  const year = baseDate.getFullYear();
+  if (String(text).includes("明年")) return year + 1;
+  if (String(text).includes("后年")) return year + 2;
+  return null;
+}
+
+function parseTargetMonth(text, targetYear, baseDate = new Date()) {
+  if (/\d{1,2}\s*[–—~-]\s*\d{1,2}\s*月/.test(text)) return null;
+  const match = String(text).match(/(?:20\d{2}\s*年)?\s*(\d{1,2})\s*月/);
+  if (!match) return null;
+  const month = Number(match[1]);
+  if (month < 1 || month > 12) return null;
+  return `${targetYear || baseDate.getFullYear()}-${String(month).padStart(2, "0")}`;
+}
+
+function monthsFrom(baseDate, targetDate) {
+  return (targetDate.getFullYear() - baseDate.getFullYear()) * 12 + targetDate.getMonth() - baseDate.getMonth();
+}
+
+export function inferGoalHorizon(text, options = {}) {
+  const value = String(text || "");
+  if (/(?:短期|近期|未来\s*30\s*天|接下来\s*30\s*天|一个月内|本月|这个月)/.test(value)) return "short";
+  if (/(?:中期|接下来(?:的)?几个月|未来几个月|今年年底|本年年底|\d{1,2}\s*[–—~-]\s*\d{1,2}\s*月)/.test(value)) return "medium";
+  if (/(?:长期|长远|半年以上|6\s*个?月以上|一年以上|未来|以后)/.test(value)) return "long";
+
+  const baseDate = options.baseDate ? new Date(options.baseDate) : new Date();
+  let target = null;
+  if (options.targetDate) target = new Date(`${options.targetDate}T12:00:00`);
+  else if (options.targetMonth && /^20\d{2}-\d{2}$/.test(options.targetMonth)) target = new Date(`${options.targetMonth}-15T12:00:00`);
+  else if (options.targetYear) target = new Date(`${options.targetYear}-12-31T12:00:00`);
+  if (target && !Number.isNaN(target.valueOf())) {
+    const months = monthsFrom(baseDate, target);
+    if (months <= 1) return "short";
+    if (months <= 6) return "medium";
+    return "long";
+  }
+  return "medium";
+}
+
+function inferCategory(text) {
+  if (/(?:买房|购房|住房|楼盘|房产|首付)/.test(text)) return "Property";
+  if (/(?:家庭|孩子|父母|家人)/.test(text)) return "Family";
+  if (/(?:事业|职业|工作|升职)/.test(text)) return "Career";
+  if (/(?:产品|创业|商业|公司|客户)/.test(text)) return "Business";
+  if (/(?:健康|运动|体检|睡眠)/.test(text)) return "Health";
+  if (/(?:学习|课程|读书|考试)/.test(text)) return "Learning";
+  if (/(?:旅行|旅游|出行)/.test(text)) return "Travel";
+  if (FINANCIAL_ITEM_PATTERNS.test(text) || /(?:预算|投资|存款|金额|元|块)/.test(text)) return "Finance";
+  return "Personal";
+}
+
+function parseAmount(text) {
+  const match = String(text).match(/(\d+(?:,\d{3})*(?:\.\d+)?)\s*(万|千)\s*(?:元|块)?|(\d+(?:,\d{3})*(?:\.\d+)?)\s*(?:元|块)/);
+  if (!match) return null;
+  const base = Number((match[1] || match[3]).replace(/,/g, ""));
+  if (!Number.isFinite(base)) return null;
+  return base * (match[2] === "万" ? 10_000 : match[2] === "千" ? 1_000 : 1);
+}
+
+function parseCounterparty(text, financialType) {
+  const pattern = financialType === "Receivable"
+    ? /^([\p{Script=Han}A-Za-z0-9·]{1,30}?)(?:还|仍然|目前)?欠我/u
+    : /我(?:还|仍然|目前)?欠([\p{Script=Han}A-Za-z0-9·]{1,30})/u;
+  return String(text).match(pattern)?.[1] || null;
+}
+
+function longTermPayload(text, itemType, baseDate) {
+  const targetYear = parseTargetYear(text, baseDate);
+  const targetMonth = parseTargetMonth(text, targetYear, baseDate);
+  return {
+    title: cleanLongTermTitle(text),
+    description: text.trim(),
+    category: inferCategory(text),
+    status: itemType === "goal" ? "Planning" : itemType === "plan" ? "Thinking" : "Active",
+    targetYear,
+    targetMonth,
+    horizon: inferGoalHorizon(text, { baseDate, targetMonth, targetYear }),
+    originalIntent: text.trim(),
+  };
+}
+
+function financialPayload(text) {
+  const financialType = /(?:欠我|应收|待收)/.test(text)
+    ? "Receivable"
+    : /(?:我欠|应付|待付)/.test(text)
+      ? "Payable"
+      : /(?:储蓄目标|存款目标)/.test(text)
+        ? "SavingGoal"
+        : /投资目标/.test(text)
+          ? "InvestmentGoal"
+          : "Budget";
+  const counterparty = parseCounterparty(text, financialType);
+  const title = counterparty
+    ? `${counterparty}${financialType === "Receivable" ? "欠款" : "应付款"}`
+    : cleanLongTermTitle(text);
+  return {
+    title,
+    description: text.trim(),
+    category: "Finance",
+    status: "Active",
+    horizon: inferGoalHorizon(text),
+    financialType,
+    amountTotal: parseAmount(text),
+    amountCompleted: 0,
+    currency: "CNY",
+    counterparty,
+    originalIntent: text.trim(),
+  };
+}
+
 function calendarPayload(text, dueDate, time) {
   const title = cleanTitle(text) || text.trim();
   return {
@@ -127,6 +253,9 @@ export function classifyAction(input, options = {}) {
   if (PROJECT_DATA_PATTERNS.test(text) && !time) {
     return { type: "project_data", confidence: 0.92, payload: contentPayload(text) };
   }
+  if (CONTACT_PATTERNS.test(text) && !time) {
+    return { type: "contact", confidence: 0.93, payload: contentPayload(text) };
+  }
   if (KNOWLEDGE_PATTERNS.test(text)) {
     return { type: "knowledge", confidence: 0.9, payload: contentPayload(text) };
   }
@@ -138,6 +267,21 @@ export function classifyAction(input, options = {}) {
   }
   if (time && !TASK_VERBS.test(text)) {
     return { type: "calendar_event", confidence: 0.86, payload: calendarPayload(text, dueDate, time) };
+  }
+  if (dueDate && TASK_VERBS.test(text)) {
+    return { type: "task", confidence: 0.97, payload: taskPayload(text, dueDate, time) };
+  }
+  if (FINANCIAL_ITEM_PATTERNS.test(text) && !TASK_VERBS.test(text)) {
+    return { type: "financial_item", confidence: 0.98, payload: financialPayload(text) };
+  }
+  if (GOAL_PATTERNS.test(text)) {
+    return { type: "goal", confidence: 0.94, payload: longTermPayload(text, "goal", baseDate) };
+  }
+  if (PLAN_PATTERNS.test(text)) {
+    return { type: "plan", confidence: 0.92, payload: longTermPayload(text, "plan", baseDate) };
+  }
+  if (LONG_TERM_ITEM_PATTERNS.test(text)) {
+    return { type: "long_term_item", confidence: 0.9, payload: longTermPayload(text, "long_term_item", baseDate) };
   }
   if (TASK_VERBS.test(text)) {
     return { type: "task", confidence: dueDate ? 0.97 : 0.9, payload: taskPayload(text, dueDate, time) };

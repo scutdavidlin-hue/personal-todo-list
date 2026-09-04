@@ -1,8 +1,10 @@
 import {
   canonicalIntake,
+  goalPlanDispatchPayload,
   normalizeIntake,
   taskDispatchPayload,
 } from "../_shared/personal-os-intake.js";
+import { findExistingGoalMatch, mergeGoalPlanUpdate } from "../_shared/goal-operations.js";
 import { resolveServiceApiKey, serviceApiHeaders } from "../_shared/supabase-api-keys.js";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
@@ -132,6 +134,25 @@ async function dispatchTask(intake: Record<string, unknown>) {
   if (!response.ok || !result?.task?.id) {
     throw new IntakeError(result?.error || "Google Tasks write failed", response.status || 503, result?.code || "TASK_WRITE_FAILED");
   }
+  let goalLinked = false;
+  let goalLinkError = "";
+  if (intake.goal_plan_id) {
+    try {
+      const linked = await rest("task_context_links?on_conflict=owner_id%2Cgoogle_task_id&select=id,goal_plan_id,project_id", {
+        method: "POST",
+        headers: { Prefer: "resolution=merge-duplicates,return=representation" },
+        body: JSON.stringify({
+          owner_id: OWNER_USER_ID,
+          google_task_id: result.task.id,
+          goal_plan_id: intake.goal_plan_id,
+          project_id: null,
+        }),
+      });
+      goalLinked = linked?.[0]?.goal_plan_id === intake.goal_plan_id;
+    } catch (error) {
+      goalLinkError = error instanceof Error ? error.message : "Task created but Goal link failed";
+    }
+  }
   return {
     success: true,
     destination: "google_tasks",
@@ -140,6 +161,61 @@ async function dispatchTask(intake: Record<string, unknown>) {
     due: result.task.dueDate || null,
     deduplicated: result.deduplicated === true,
     schedule: result.schedule || null,
+    goal_plan_id: intake.goal_plan_id || null,
+    goal_linked: goalLinked,
+    ...(goalLinkError ? { goal_link_error: goalLinkError } : {}),
+  };
+}
+
+async function dispatchGoalPlan(intake: Record<string, unknown>) {
+  const payload = goalPlanDispatchPayload(intake);
+  const query = new URLSearchParams({
+    owner_id: `eq.${OWNER_USER_ID}`,
+    select: "*",
+    order: "updated_at.desc",
+    limit: "100",
+  });
+  if (intake.existing_goal_id) query.set("id", `eq.${intake.existing_goal_id}`);
+  else query.set("status", "not.in.(Completed,Dropped,Archived)");
+  const candidates = await rest(`goals_plans?${query}`);
+
+  let match = null;
+  if (intake.existing_goal_id) {
+    if (!candidates?.[0]) throw new IntakeError("Existing Goal was not found", 404, "GOAL_NOT_FOUND");
+    match = { goal: candidates[0], score: 1 };
+  } else {
+    match = findExistingGoalMatch({ ...payload, raw_text: intake.raw_text }, candidates || []);
+  }
+
+  const rows = match
+    ? await rest(`goals_plans?id=eq.${encodeURIComponent(match.goal.id)}&owner_id=eq.${OWNER_USER_ID}&select=*`, {
+      method: "PATCH",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify(mergeGoalPlanUpdate(match.goal, payload, intake.explicit_fields || {})),
+    })
+    : await rest("goals_plans?select=*", {
+      method: "POST",
+      headers: { Prefer: "return=representation" },
+      body: JSON.stringify({ owner_id: OWNER_USER_ID, ...payload }),
+    });
+  const item = rows?.[0];
+  if (!item?.id) throw new IntakeError("Goals & Plans write failed", 503, "GOAL_WRITE_FAILED");
+  return {
+    success: true,
+    destination: "goals_plans",
+    classification: intake.type,
+    id: item.id,
+    title: item.title,
+    goal_type: item.type,
+    status: item.status,
+    horizon: item.horizon,
+    operation: match ? "updated" : "created",
+    matched_existing: Boolean(match),
+    match_score: match?.score ?? null,
+    target_date: item.target_date || null,
+    target_month: item.target_month || null,
+    target_year: item.target_year || null,
+    amount_remaining: item.amount_remaining ?? null,
   };
 }
 
@@ -168,7 +244,8 @@ Deno.serve(async (request) => {
       return json({ ...reservation.row.response, replayed: true }, reservation.row.response_status || 200);
     }
 
-    if (intake.type !== "task") {
+    const isGoalPlan = ["goal", "plan", "long_term_item", "financial_item"].includes(intake.type);
+    if (intake.type !== "task" && !isGoalPlan) {
       const unsupported = {
         success: false,
         destination: intake.destination,
@@ -181,7 +258,8 @@ Deno.serve(async (request) => {
       return json(unsupported, 501);
     }
 
-    const result = { ...(await dispatchTask(intake)), idempotency_key: idempotencyKey, replayed: false };
+    const dispatched = intake.type === "task" ? await dispatchTask(intake) : await dispatchGoalPlan(intake);
+    const result = { ...dispatched, idempotency_key: idempotencyKey, replayed: false };
     await updateAudit(auditId, { status: "succeeded", object_id: result.id, response_status: 200, response: result });
     console.info("Personal OS intake succeeded", { auditId, destination: result.destination, objectId: result.id });
     return json(result);

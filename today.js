@@ -245,4 +245,10 @@ async function boot() {
   await refresh({ quiet: true });
 }
 
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(() => {
+    // Online mode remains available when Service Workers are blocked.
+  }));
+}
+
 boot();

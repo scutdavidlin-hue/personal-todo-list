@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Personal OS</title>
+  <desc id="desc">Deep green rounded square with a warm white path connecting direction to action.</desc>
+  <rect width="512" height="512" fill="#203c34"/>
+  <circle cx="256" cy="172" r="78" fill="none" stroke="#f7f3e8" stroke-width="28"/>
+  <circle cx="256" cy="172" r="18" fill="#d4864d"/>
+  <path d="M256 250v92c0 24 18 43 42 43h72" fill="none" stroke="#f7f3e8" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="m338 349 34 36-34 36" fill="none" stroke="#f7f3e8" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M174 342h82" fill="none" stroke="#d4864d" stroke-width="28" stroke-linecap="round"/>
+</svg>

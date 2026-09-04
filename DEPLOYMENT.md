@@ -36,6 +36,8 @@ npx supabase db push
 
 `202609040002_task_scheduling_v1_1.sql` 新增一对一 Schedule Metadata；不保存 Task title、notes 或完成状态。
 
+`202609040003_goals_plans_v1_2.sql` 复用同一 Supabase 项目创建长期规划表与 Task 关系；`202609050001_goal_conversation_bridge_v1.sql` 只给原表补充 horizon 和查询索引，不创建第二套 Goal 数据。
+
 ## 3. 服务端 Secrets 与 Edge Functions
 
 生成独立的 32 字节以上随机加密密钥和自动化 Token：
@@ -70,6 +72,8 @@ npx supabase functions deploy task-scheduler --project-ref YOUR_PROJECT_REF --no
 npx supabase functions deploy personal-os-intake --project-ref YOUR_PROJECT_REF --no-verify-jwt
 npx supabase functions deploy personal-os-mcp --project-ref YOUR_PROJECT_REF --no-verify-jwt
 ```
+
+Goal/Plan 对话链路变更只需要重新部署 `personal-os-intake` 与 `personal-os-mcp`；其余函数仍按原主链路回归验证，不需要建立新服务。
 
 函数在代码中自行验证调用方：浏览器请求验证 Supabase 用户 JWT；自动化请求使用独立的恒定时间 Token 比较。
 

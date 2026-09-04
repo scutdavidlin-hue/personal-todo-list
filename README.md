@@ -22,6 +22,9 @@ V1.1 增加一对一 Schedule Metadata 与 Google Calendar 时间投影。Calend
 - Morning Scheduler 避开 Calendar 已有事件、尊重固定时间和每日容量；无日期 Task 保留 Backlog。
 - 状态接口新增 Today Plan、Tomorrow、Next 3 Days、Backlog、Waiting 与 evening summary。
 - 创建前语义去重：相同未完成事项更新原 Task，不重复创建。
+- Conversation 可通过现有 Intake/MCP 直接创建或更新 `goals_plans`；先匹配 Active Goal，再决定是否新增。
+- Goal 支持 short / medium / long 语义时间层级；用户明确表述优先，时间窗口不会被伪造成 Deadline。
+- ChatGPT 通过同一个 MCP 查询、更新和完成真实 Goal，查询不再仅依赖 Memory。
 - Google provider 刷新令牌仅在回调页短暂停留，随后由 Edge Function 使用 AES-256 加密保存；不进入 localStorage 或 Git。
 - checkbox 真正写入云端；失败时恢复原状态并提示，杜绝“假完成”。
 - 新增、编辑、删除、恢复未完成、移到明天。
@@ -59,6 +62,7 @@ python3 -m http.server 4173 --bind 127.0.0.1
 - [开发进度](PROGRESS.md)
 - [需用户介入事项](OPEN_QUESTIONS.md)
 - [ChatGPT MCP 接入](MCP_INTEGRATION.md)
+- [Goal & Plan 架构审计](ARCHITECTURE_AUDIT_GOAL_PLAN_V1.md)
 
 ## 安全说明
 

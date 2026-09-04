@@ -9,18 +9,29 @@ const requiredFiles = [
   "today.html",
   "app.js",
   "today.js",
+  "sw.js",
+  "manifest.webmanifest",
+  "icons/icon.svg",
+  "icons/apple-touch-icon.png",
+  "icons/icon-192.png",
+  "icons/icon-512.png",
+  "icons/icon-512-maskable.png",
   "runtime-config.js",
   "oauth/consent/index.html",
   "oauth/consent/app.js",
   "src/core.js",
+  "src/goals.js",
   "src/cloud-client.js",
   "supabase/migrations/202609030001_task_sync_v1.sql",
   "supabase/migrations/202609030002_google_tasks.sql",
   "supabase/migrations/202609040001_personal_os_intake.sql",
   "supabase/migrations/202609040002_task_scheduling_v1_1.sql",
+  "supabase/migrations/202609040003_goals_plans_v1_2.sql",
+  "supabase/migrations/202609050001_goal_conversation_bridge_v1.sql",
   "supabase/functions/google-tasks/index.ts",
   "supabase/functions/_shared/google-tasks-core.js",
   "supabase/functions/_shared/action-router.js",
+  "supabase/functions/_shared/goal-operations.js",
   "supabase/functions/_shared/personal-os-intake.js",
   "supabase/functions/_shared/schedule-core.js",
   "supabase/functions/action-router/index.ts",
@@ -29,6 +40,7 @@ const requiredFiles = [
   "supabase/functions/personal-os-intake/index.ts",
   "supabase/functions/personal-os-mcp/index.ts",
   "supabase/functions/task-scheduler/index.ts",
+  "test/goal-conversation-flow.test.js",
 ];
 
 const contents = new Map();
@@ -36,9 +48,13 @@ for (const file of requiredFiles) contents.set(file, await readFile(new URL(file
 
 assert.match(contents.get("index.html"), /type="module" src="app\.js"/);
 assert.match(contents.get("index.html"), /id="cancelTaskDialog" type="button"/);
+assert.match(contents.get("index.html"), /id="goalsView"/);
+assert.match(contents.get("index.html"), /rel="manifest" href="manifest\.webmanifest"/);
+assert.match(contents.get("index.html"), /rel="apple-touch-icon"/);
 assert.match(contents.get("index.html"), /Content-Security-Policy/);
 assert.match(contents.get("today.html"), /type="module" src="today\.js(?:\?[^\"]+)?"/);
 assert.match(contents.get("today.html"), /Content-Security-Policy/);
+assert.match(contents.get("today.html"), /rel="manifest" href="manifest\.webmanifest"/);
 assert.match(contents.get("today.js"), /type="checkbox" data-action="toggle"/);
 assert.doesNotMatch(contents.get("app.js"), /richeng-tasks-v1|sampleTasks/);
 assert.doesNotMatch(contents.get("today.js"), /gpt-personal-tasks-v1|function seed/);
@@ -51,6 +67,9 @@ assert.match(contents.get("src/cloud-client.js"), /async completeTask\(/);
 assert.match(contents.get("src/cloud-client.js"), /async reopenTask\(/);
 assert.match(contents.get("src/cloud-client.js"), /async updateTask\(/);
 assert.match(contents.get("src/cloud-client.js"), /async deleteTask\(/);
+assert.match(contents.get("src/cloud-client.js"), /async createGoal\(/);
+assert.match(contents.get("src/cloud-client.js"), /async createProject\(/);
+assert.match(contents.get("src/cloud-client.js"), /async linkTaskContext\(/);
 assert.match(contents.get("supabase/migrations/202609030001_task_sync_v1.sql"), /enable row level security/i);
 assert.match(contents.get("supabase/migrations/202609030001_task_sync_v1.sql"), /revoke all on table public\.daily_reviews from anon, authenticated/i);
 assert.match(contents.get("supabase/migrations/202609030002_google_tasks.sql"), /pgp_sym_encrypt/i);
@@ -66,15 +85,34 @@ assert.match(contents.get("supabase/functions/personal-os-intake/index.ts"), /pe
 assert.match(contents.get("supabase/functions/personal-os-mcp/index.ts"), /tools\/list/);
 assert.match(contents.get("supabase/functions/personal-os-mcp/index.ts"), /tools\/call/);
 assert.match(contents.get("supabase/functions/personal-os-mcp/index.ts"), /create_task/);
+assert.match(contents.get("supabase/functions/personal-os-mcp/index.ts"), /capture_personal_os_item/);
+assert.match(contents.get("supabase/functions/personal-os-mcp/index.ts"), /get_goals/);
+assert.match(contents.get("supabase/functions/personal-os-mcp/index.ts"), /update_goal/);
+assert.match(contents.get("supabase/functions/personal-os-mcp/index.ts"), /complete_goal/);
+assert.match(contents.get("supabase/functions/_shared/personal-os-intake.js"), /goalPlanDispatchPayload/);
+assert.match(contents.get("supabase/functions/_shared/goal-operations.js"), /findExistingGoalMatch/);
 assert.match(contents.get("supabase/migrations/202609040001_personal_os_intake.sql"), /unique \(owner_id, idempotency_key\)/i);
 assert.match(contents.get("supabase/migrations/202609040002_task_scheduling_v1_1.sql"), /unique \(owner_id, google_task_id\)/i);
 assert.doesNotMatch(contents.get("supabase/migrations/202609040002_task_scheduling_v1_1.sql"), /\n\s+(?:title|completed_at|task_status)\s/i);
+assert.match(contents.get("supabase/migrations/202609040003_goals_plans_v1_2.sql"), /create table if not exists public\.goals_plans/i);
+assert.match(contents.get("supabase/migrations/202609040003_goals_plans_v1_2.sql"), /amount_remaining numeric\(18, 2\) generated always/i);
+assert.match(contents.get("supabase/migrations/202609040003_goals_plans_v1_2.sql"), /create table if not exists public\.task_context_links/i);
+assert.match(contents.get("supabase/migrations/202609040003_goals_plans_v1_2.sql"), /enable row level security/i);
+assert.match(contents.get("supabase/migrations/202609050001_goal_conversation_bridge_v1.sql"), /add column if not exists horizon/i);
+assert.doesNotMatch(contents.get("supabase/migrations/202609050001_goal_conversation_bridge_v1.sql"), /create table/i);
 assert.match(contents.get("supabase/functions/task-scheduler/index.ts"), /stableCalendarEventId/);
 assert.match(contents.get("supabase/functions/_shared/schedule-core.js"), /personalOsProjection/);
 assert.match(contents.get("oauth/consent/app.js"), /approveAuthorization/);
 assert.match(contents.get("supabase/functions/task-status/index.ts"), /AUTOMATION_READ_TOKEN/);
 assert.match(contents.get("supabase/functions/task-status/index.ts"), /AUTOMATION_WRITE_TOKEN/);
 assert.match(contents.get("supabase/functions/task-status/index.ts"), /tasks\.googleapis\.com\/tasks\/v1/);
+
+const manifest = JSON.parse(contents.get("manifest.webmanifest"));
+assert.equal(manifest.display, "standalone");
+assert.ok(manifest.icons.some((icon) => icon.sizes === "192x192"));
+assert.ok(manifest.icons.some((icon) => icon.sizes === "512x512" && icon.purpose === "maskable"));
+assert.match(contents.get("sw.js"), /personal-os-shell-v1\.2\.1/);
+assert.match(contents.get("sw.js"), /request\.method !== "GET"/);
 
 const config = contents.get("runtime-config.js");
 assert.match(config, /supabaseUrl:\s*"https:\/\/[a-z0-9-]+\.supabase\.co"/i);
