@@ -5,9 +5,15 @@ import {
   toTaskModel,
   updateGoogleTaskPayload,
 } from "../_shared/google-tasks-core.js";
+import { resolveServiceApiKey, serviceApiHeaders } from "../_shared/supabase-api-keys.js";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
-const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+const USE_NEW_API_KEYS = Deno.env.get("SUPABASE_USE_NEW_API_KEYS") === "true";
+const SERVICE_API_KEY = resolveServiceApiKey({
+  secretKeys: Deno.env.get("SUPABASE_SECRET_KEYS"),
+  serviceRoleKey: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"),
+  preferNew: USE_NEW_API_KEYS,
+});
 const OWNER_USER_ID = Deno.env.get("OWNER_USER_ID") ?? "";
 const READ_TOKEN = Deno.env.get("AUTOMATION_READ_TOKEN") ?? "";
 const WRITE_TOKEN = Deno.env.get("AUTOMATION_WRITE_TOKEN") ?? "";
@@ -78,7 +84,7 @@ function requestWithTimeout(url: string, init: RequestInit = {}) {
 async function restRpc(name: string, body: Record<string, unknown>) {
   const response = await requestWithTimeout(`${SUPABASE_URL}/rest/v1/rpc/${name}`, {
     method: "POST",
-    headers: { apikey: SERVICE_ROLE_KEY, Authorization: `Bearer ${SERVICE_ROLE_KEY}`, "Content-Type": "application/json" },
+    headers: { ...serviceApiHeaders(SERVICE_API_KEY), "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
   const data = await payload(response);
@@ -89,7 +95,7 @@ async function restRpc(name: string, body: Record<string, unknown>) {
 async function readSchedules() {
   const query = new URLSearchParams({ owner_id: `eq.${OWNER_USER_ID}`, select: "*", order: "scheduled_date.asc,scheduled_start.asc" });
   const response = await requestWithTimeout(`${SUPABASE_URL}/rest/v1/task_schedule_metadata?${query}`, {
-    headers: { apikey: SERVICE_ROLE_KEY, Authorization: `Bearer ${SERVICE_ROLE_KEY}` },
+    headers: serviceApiHeaders(SERVICE_API_KEY),
   });
   const data = await payload(response);
   if (response.status === 404) return [];
@@ -227,7 +233,7 @@ async function createTask(request: Request) {
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (!["GET", "POST"].includes(request.method)) return json({ error: "Method not allowed" }, 405);
-  if (!SUPABASE_URL || !SERVICE_ROLE_KEY || !/^[0-9a-f-]{36}$/i.test(OWNER_USER_ID)
+  if (!SUPABASE_URL || !SERVICE_API_KEY || !/^[0-9a-f-]{36}$/i.test(OWNER_USER_ID)
     || READ_TOKEN.length < 32 || WRITE_TOKEN.length < 32 || !GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || TOKEN_ENCRYPTION_KEY.length < 32) {
     return json({ error: "Server configuration incomplete" }, 503);
   }

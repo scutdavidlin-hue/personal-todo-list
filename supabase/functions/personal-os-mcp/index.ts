@@ -1,8 +1,15 @@
 import { Hono } from "hono";
 import { z } from "zod";
 
+import { resolvePublishableApiKey } from "../_shared/supabase-api-keys.js";
+
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
-const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+const USE_NEW_API_KEYS = Deno.env.get("SUPABASE_USE_NEW_API_KEYS") === "true";
+const SUPABASE_PUBLIC_KEY = resolvePublishableApiKey({
+  publishableKeys: Deno.env.get("SUPABASE_PUBLISHABLE_KEYS"),
+  anonKey: Deno.env.get("SUPABASE_ANON_KEY"),
+  preferNew: USE_NEW_API_KEYS,
+});
 const OWNER_USER_ID = Deno.env.get("OWNER_USER_ID") ?? "";
 const WRITE_TOKEN = Deno.env.get("AUTOMATION_WRITE_TOKEN") ?? "";
 const FUNCTION_ROOT = `${SUPABASE_URL}/functions/v1/personal-os-mcp`;
@@ -222,7 +229,7 @@ async function authorize(request: Request) {
   const authorization = request.headers.get("authorization") || "";
   if (!/^Bearer\s+\S+$/i.test(authorization)) return null;
   const response = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
-    headers: { apikey: SUPABASE_ANON_KEY, Authorization: authorization },
+    headers: { apikey: SUPABASE_PUBLIC_KEY, Authorization: authorization },
     signal: AbortSignal.timeout(10_000),
   });
   if (!response.ok) return null;
@@ -242,7 +249,7 @@ functionApp.get("/.well-known/oauth-protected-resource", (context) => context.js
   resource_documentation: "https://scutdavidlin-hue.github.io/personal-todo-list/",
 }));
 functionApp.all("/mcp", async (context) => {
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !/^[0-9a-f-]{36}$/i.test(OWNER_USER_ID) || WRITE_TOKEN.length < 32) {
+  if (!SUPABASE_URL || !SUPABASE_PUBLIC_KEY || !/^[0-9a-f-]{36}$/i.test(OWNER_USER_ID) || WRITE_TOKEN.length < 32) {
     return context.json({ error: "Server configuration incomplete" }, 503);
   }
   if (!await authorize(context.req.raw)) return unauthorized();

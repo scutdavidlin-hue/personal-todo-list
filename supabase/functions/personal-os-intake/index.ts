@@ -3,9 +3,15 @@ import {
   normalizeIntake,
   taskDispatchPayload,
 } from "../_shared/personal-os-intake.js";
+import { resolveServiceApiKey, serviceApiHeaders } from "../_shared/supabase-api-keys.js";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
-const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+const USE_NEW_API_KEYS = Deno.env.get("SUPABASE_USE_NEW_API_KEYS") === "true";
+const SERVICE_API_KEY = resolveServiceApiKey({
+  secretKeys: Deno.env.get("SUPABASE_SECRET_KEYS"),
+  serviceRoleKey: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"),
+  preferNew: USE_NEW_API_KEYS,
+});
 const OWNER_USER_ID = Deno.env.get("OWNER_USER_ID") ?? "";
 const WRITE_TOKEN = Deno.env.get("AUTOMATION_WRITE_TOKEN") ?? "";
 
@@ -55,8 +61,7 @@ async function rest(path: string, init: RequestInit = {}) {
   const response = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
     ...init,
     headers: {
-      apikey: SERVICE_ROLE_KEY,
-      Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+      ...serviceApiHeaders(SERVICE_API_KEY),
       "Content-Type": "application/json",
       ...(init.headers || {}),
     },
@@ -141,7 +146,7 @@ async function dispatchTask(intake: Record<string, unknown>) {
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (request.method !== "POST") return json({ success: false, error: "Method not allowed" }, 405);
-  if (!SUPABASE_URL || !SERVICE_ROLE_KEY || !/^[0-9a-f-]{36}$/i.test(OWNER_USER_ID) || WRITE_TOKEN.length < 32) {
+  if (!SUPABASE_URL || !SERVICE_API_KEY || !/^[0-9a-f-]{36}$/i.test(OWNER_USER_ID) || WRITE_TOKEN.length < 32) {
     return json({ success: false, error: "Server configuration incomplete" }, 503);
   }
   const token = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "")

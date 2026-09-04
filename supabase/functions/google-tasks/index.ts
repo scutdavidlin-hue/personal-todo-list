@@ -7,10 +7,24 @@ import {
   toTaskModel,
   updateGoogleTaskPayload,
 } from "../_shared/google-tasks-core.js";
+import {
+  resolvePublishableApiKey,
+  resolveServiceApiKey,
+  serviceApiHeaders,
+} from "../_shared/supabase-api-keys.js";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
-const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+const USE_NEW_API_KEYS = Deno.env.get("SUPABASE_USE_NEW_API_KEYS") === "true";
+const SERVICE_API_KEY = resolveServiceApiKey({
+  secretKeys: Deno.env.get("SUPABASE_SECRET_KEYS"),
+  serviceRoleKey: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"),
+  preferNew: USE_NEW_API_KEYS,
+});
+const SUPABASE_PUBLIC_KEY = resolvePublishableApiKey({
+  publishableKeys: Deno.env.get("SUPABASE_PUBLISHABLE_KEYS"),
+  anonKey: Deno.env.get("SUPABASE_ANON_KEY"),
+  preferNew: USE_NEW_API_KEYS,
+});
 const GOOGLE_CLIENT_ID = Deno.env.get("GOOGLE_OAUTH_CLIENT_ID") ?? "";
 const GOOGLE_CLIENT_SECRET = Deno.env.get("GOOGLE_OAUTH_CLIENT_SECRET") ?? "";
 const TOKEN_ENCRYPTION_KEY = Deno.env.get("GOOGLE_TOKEN_ENCRYPTION_KEY") ?? "";
@@ -55,7 +69,7 @@ async function authenticatedUser(request: Request) {
   const authorization = request.headers.get("authorization") || "";
   if (!authorization.toLowerCase().startsWith("bearer ")) throw new ApiError("请先使用 Google 登录", 401, "AUTH_REQUIRED");
   const response = await requestWithTimeout(`${SUPABASE_URL}/auth/v1/user`, {
-    headers: { apikey: SUPABASE_ANON_KEY, Authorization: authorization },
+    headers: { apikey: SUPABASE_PUBLIC_KEY, Authorization: authorization },
   });
   const user = await parseJson(response);
   if (!response.ok || !user?.id) throw new ApiError("登录已过期，请重新登录", 401, "AUTH_REQUIRED");
@@ -66,8 +80,7 @@ async function rpc(name: string, body: Record<string, unknown>) {
   const response = await requestWithTimeout(`${SUPABASE_URL}/rest/v1/rpc/${name}`, {
     method: "POST",
     headers: {
-      apikey: SERVICE_ROLE_KEY,
-      Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+      ...serviceApiHeaders(SERVICE_API_KEY),
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
@@ -305,7 +318,7 @@ async function getTaskBeforeDelete(userId: string, id: string) {
 
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
-  if (!SUPABASE_URL || !SERVICE_ROLE_KEY || !SUPABASE_ANON_KEY || !GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || TOKEN_ENCRYPTION_KEY.length < 32) {
+  if (!SUPABASE_URL || !SERVICE_API_KEY || !SUPABASE_PUBLIC_KEY || !GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || TOKEN_ENCRYPTION_KEY.length < 32) {
     return json({ error: "Google Tasks 服务端配置不完整", code: "SERVER_CONFIGURATION_ERROR" }, 503);
   }
   try {

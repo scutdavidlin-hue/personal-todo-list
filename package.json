@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "node --test",
-    "check": "node --check app.js && node --check today.js && node --check oauth/consent/app.js && node --check src/core.js && node --check src/cloud-client.js && node --check supabase/functions/_shared/google-tasks-core.js && node --check supabase/functions/_shared/action-router.js && node --check supabase/functions/_shared/personal-os-intake.js && node --check supabase/functions/_shared/schedule-core.js && node scripts/verify.mjs",
+    "check": "node --check app.js && node --check today.js && node --check oauth/consent/app.js && node --check src/core.js && node --check src/cloud-client.js && node --check supabase/functions/_shared/google-tasks-core.js && node --check supabase/functions/_shared/action-router.js && node --check supabase/functions/_shared/personal-os-intake.js && node --check supabase/functions/_shared/schedule-core.js && node --check supabase/functions/_shared/supabase-api-keys.js && node scripts/verify.mjs",
     "verify": "npm run check && npm test"
   },
   "engines": {
