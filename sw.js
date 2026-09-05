@@ -1,10 +1,11 @@
-const CACHE_NAME = "personal-os-shell-v1.3.2-conversation";
+const CACHE_NAME = "personal-os-shell-v1.3.3-conversation";
 const APP_SHELL = [
   "./",
   "./index.html",
   "./today.html",
   "./styles.css",
   "./today.css",
+  "./app-loader.js",
   "./app.js",
   "./today.js",
   "./runtime-config.js",
@@ -22,19 +23,17 @@ const APP_SHELL = [
 ];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)));
-  self.skipWaiting();
+  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)).then(() => self.skipWaiting()));
 });
 
 self.addEventListener("activate", (event) => {
-  event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key)))));
-  self.clients.claim();
+  event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => key.startsWith("personal-os-shell-") && key !== CACHE_NAME).map((key) => caches.delete(key)))).then(() => self.clients.claim()));
 });
 
 async function networkFirst(request, fallbackPath) {
   const cache = await caches.open(CACHE_NAME);
   try {
-    const response = await fetch(request);
+    const response = await fetch(request, { cache: "no-cache" });
     if (response.ok) cache.put(request, response.clone());
     return response;
   } catch {
@@ -62,7 +61,7 @@ self.addEventListener("fetch", (event) => {
   event.respondWith(caches.open(CACHE_NAME).then(async (cache) => {
     const cached = await cache.match(request, { ignoreSearch: true });
     if (cached) return cached;
-    const response = await fetch(request);
+    const response = await fetch(request, { cache: "no-cache" });
     if (response.ok) cache.put(request, response.clone());
     return response;
   }));

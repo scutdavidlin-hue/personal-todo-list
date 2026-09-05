@@ -86,13 +86,13 @@ const requiredFiles = [
 const contents = new Map();
 for (const file of requiredFiles) contents.set(file, await readFile(new URL(file, root), "utf8"));
 
-assert.match(contents.get("index.html"), /type="module" src="app\.js"/);
+assert.match(contents.get("index.html"), /type="module" src="app-loader\.js"/);
 assert.match(contents.get("index.html"), /id="cancelTaskDialog" type="button"/);
 assert.match(contents.get("index.html"), /id="goalsView"/);
 assert.match(contents.get("index.html"), /rel="manifest" href="manifest\.webmanifest"/);
 assert.match(contents.get("index.html"), /rel="apple-touch-icon"/);
 assert.match(contents.get("index.html"), /Content-Security-Policy/);
-assert.match(contents.get("today.html"), /type="module" src="today\.js(?:\?[^\"]+)?"/);
+assert.match(contents.get("today.html"), /type="module" src="app-loader\.js"/);
 assert.match(contents.get("today.html"), /Content-Security-Policy/);
 assert.match(contents.get("today.html"), /rel="manifest" href="manifest\.webmanifest"/);
 assert.match(contents.get("today.js"), /type="checkbox" data-action="toggle"/);
@@ -182,7 +182,7 @@ const manifest = JSON.parse(contents.get("manifest.webmanifest"));
 assert.equal(manifest.display, "standalone");
 assert.ok(manifest.icons.some((icon) => icon.sizes === "192x192"));
 assert.ok(manifest.icons.some((icon) => icon.sizes === "512x512" && icon.purpose === "maskable"));
-assert.match(contents.get("sw.js"), /personal-os-shell-v1\.3\.2-conversation/);
+assert.match(contents.get("sw.js"), /personal-os-shell-v1\.3\.3-conversation/);
 assert.match(contents.get("sw.js"), /request\.method !== "GET"/);
 
 const config = contents.get("runtime-config.js");

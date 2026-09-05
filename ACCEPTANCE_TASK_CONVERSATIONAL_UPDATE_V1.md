@@ -69,3 +69,10 @@ User explicitly requested deployment to the existing Personal OS URL.
 - Production preview published at GitHub commit 84829844790a1dd6419ff49706b46d0836c9ef0d; Pages build 33973546317 succeeded.
 - Signed-in Chrome verified task conversation loading, 20:15 -> 20:30 preview, natural-language confirmation and same Task/Event readback. Unknown question clarified without changing notes.
 - Live acceptance found unpreviewed reminder inference on existing-task reschedule. Fixed preservation across scheduler normalization and Calendar projection. Regression: 307 tests, 305 passed, 0 failed, 2 skipped; new-task smart inference remains unchanged. Three runtime entrypoints passed typecheck again.
+
+## iPhone stale-shell recovery — 2026-09-05
+
+WHY: User screenshots showed Personal OS still without conversation controls despite published assets. Old workers can serve cached app.js before a new worker activates.
+GOAL: Existing installed entry loads current code without clearing login/task data.
+IMPLEMENTATION: New uncached loader pathname waits for worker activation before dynamic entry import; scoped shell-cache cleanup; network revalidation for code/styles; upgrade errors offer retry. Both main and today routes use the loader.
+TEST: 308 passed, 0 failed, 2 skipped. Real isolated-browser test seeded legacy app.js in an active cache, navigated to new index.html, and read appRelease=20260905-conversation-4 with legacy=null. iPhone user-side acceptance remains pending.

@@ -1077,11 +1077,7 @@ async function boot() {
   await Promise.all([refreshTasks({ quiet: true }), loadReview()]);
 }
 
-if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(() => {
-    // The app remains usable online if a browser or local preview blocks Service Workers.
-  }));
-}
+
 
 boot();
 setInterval(checkReminders, 30_000);
