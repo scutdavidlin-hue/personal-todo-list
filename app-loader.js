@@ -1,5 +1,5 @@
 // Load the app only after an existing offline worker has finished upgrading.
-export const APP_RELEASE = '20260905-conversation-4';
+export const APP_RELEASE = '20260905-live-speech-5';
 
 export function waitForActivation(worker, timeoutMs = 20000) {
   if (!worker || worker.state === 'activated') return Promise.resolve();

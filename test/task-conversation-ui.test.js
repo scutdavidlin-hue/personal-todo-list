@@ -10,6 +10,7 @@ const playwrightModule = "/Users/davidlin/.cache/codex-runtimes/codex-primary-ru
 const browserEndpoint = process.env.TASK_CONVERSATION_TEST_BROWSER_CDP;
 const taskConversationSource = (await readFile(resolve(root, "src/task-conversation.js"), "utf8"))
   .replace('import { escapeHtml } from \'./core.js\';', 'const escapeHtml = (value) => String(value ?? "").replace(/[&<>"\']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", \'"\': "&quot;", "\'": "&#39;" }[character]));')
+  .replace("export function startSpeechDraft", "function startSpeechDraft")
   .replace("export function proposalHtml", "function proposalHtml")
   .replace("export function createTaskConversation", "window.__createTaskConversation = function createTaskConversation");
 

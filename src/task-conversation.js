@@ -12,6 +12,28 @@ export function proposalHtml(pending) {
   return Object.entries(proposal?.proposed_changes || {}).map(([field, change]) => `<div class="conversation-diff"><strong>${escapeHtml(labels[field] || field)}</strong><span>${escapeHtml(display(change?.from))}</span><span aria-label="改为">→</span><b>${escapeHtml(display(change?.to ?? change))}</b></div>`).join('');
 }
 
+/** One dictation session; temporary hypotheses replace each other, never accumulate. */
+export function startSpeechDraft(Speech, { prefix = '', onDraft, onEnd, onError }) {
+  const recognition = new Speech();
+  let active = true, failed = false;
+  recognition.lang = 'zh-CN';
+  recognition.interimResults = true;
+  recognition.continuous = true;
+  recognition.onresult = (event) => {
+    if (!active) return;
+    const transcript = Array.from(event.results).map((result) => result[0]?.transcript || '').join('');
+    onDraft((prefix + transcript).slice(0, 10000));
+  };
+  recognition.onerror = () => { if (active) { failed = true; onError(); } };
+  recognition.onend = () => { if (active) { active = false; onEnd(failed); } };
+  try { recognition.start(); }
+  catch { failed = true; onError(); active = false; onEnd(true); }
+  return {
+    stop() { if (active) { try { recognition.stop(); } catch { active = false; onEnd(failed); } } },
+    abort() { active = false; try { recognition.abort(); } catch { /* Already stopped. */ } },
+  };
+}
+
 /** Task-bound UI. Formal state and pending proposals are always server-owned. */
 export function createTaskConversation({ client, onChanged = async () => {} }) {
   const dialog = document.createElement('dialog');
@@ -31,12 +53,18 @@ export function createTaskConversation({ client, onChanged = async () => {} }) {
   let source = 'text', failedRequest = null;
   let history = [], historyCursor = null;
   const Speech = globalThis.SpeechRecognition || globalThis.webkitSpeechRecognition;
-  el('[data-voice-hint]').textContent = Speech ? '识别后可修改文字；说“对”可确认当前预览。' : '此浏览器不支持直接识音，可使用 iPhone 键盘麦克风听写。';
+  el('[data-voice-hint]').textContent = Speech ? '边说边显示，临时文字会随识别修正。停止后可修改，再点发送。' : '此浏览器不支持直接识音，可使用 iPhone 键盘麦克风听写。';
   el('[data-voice]').disabled = !Speech;
   const setBusy = (value) => {
     busy = value;
     dialog.querySelectorAll('form button, [data-confirm], [data-discard]').forEach((button) => { button.disabled = value || pending?.status === 'committing'; });
     el('[data-voice]').disabled = value || !Speech || pending?.status === 'committing';
+    el('button[type="submit"]').disabled = value || listening || pending?.status === 'committing';
+  };
+  const cancelSpeech = () => {
+    recognition?.abort(); recognition = null; listening = false;
+    el('[data-voice]').textContent = '🎙 继续说';
+    setBusy(busy);
   };
   const render = (result) => {
     pending = result.pending || null;
@@ -62,6 +90,7 @@ export function createTaskConversation({ client, onChanged = async () => {} }) {
   };
   async function send(text, inputSource = 'text') {
     if (busy || !taskId || !text.trim()) return;
+    cancelSpeech();
     const current = generation;
     const payload = { task_id: taskId, text: text.trim(), source: inputSource, proposal_id: pending?.id || pending?.proposal_id || undefined };
     const signature = JSON.stringify(payload);
@@ -78,8 +107,11 @@ export function createTaskConversation({ client, onChanged = async () => {} }) {
       if (current === generation) status.textContent = `未确认执行结果：${error.message}。请先刷新并核对任务与对话记录，再决定是否重试。`;
     } finally { if (current === generation) setBusy(false); }
   }
-  el('form').addEventListener('submit', (event) => { event.preventDefault(); send(input.value, source); });
-  input.addEventListener('input', () => { source = 'text'; });
+  el('form').addEventListener('submit', (event) => { event.preventDefault(); if (!listening) send(input.value, source); });
+  input.addEventListener('input', () => {
+    if (listening) { cancelSpeech(); status.textContent = '已停止聆听，可以修改文字后发送。'; }
+    source = 'text';
+  });
   el('[data-confirm]').addEventListener('click', () => send('确认'));
   el('[data-discard]').addEventListener('click', () => send('算了'));
   el('[data-close]').addEventListener('click', () => { if (dialog.open) dialog.close(); });
@@ -99,23 +131,30 @@ export function createTaskConversation({ client, onChanged = async () => {} }) {
     // Some engines deliver a previous close event after the next task has opened.
     // It must not erase that task's session, proposal, or in-flight request.
     if (dialog.open) return;
-    generation++; recognition?.abort(); recognition = null; listening = false; taskId = null; pending = null; failedRequest = null; input.value = '';
+    generation++; cancelSpeech(); taskId = null; pending = null; failedRequest = null; input.value = '';
   });
   el('[data-voice]').addEventListener('click', () => {
     if (listening) { recognition?.stop(); return; }
     if (!Speech || busy) return;
     const current = generation;
-    recognition = new Speech(); recognition.lang = 'zh-CN'; recognition.interimResults = false; recognition.continuous = false;
-    recognition.onresult = (event) => {
-      if (current !== generation) return;
-      const text = Array.from(event.results).filter((result) => result.isFinal).map((result) => result[0].transcript).join('');
-      input.value = text; source = 'voice';
-      // The current proposal id travels with a spoken confirmation, never inferred from another task.
-      recognition.stop(); send(text, 'voice');
-    };
-    recognition.onerror = () => { if (current === generation) status.textContent = '语音识别未成功，请重试或使用键盘听写。'; };
-    recognition.onend = () => { if (current === generation) { listening = false; el('[data-voice]').textContent = '🎙 继续说'; } };
-    try { recognition.start(); listening = true; el('[data-voice]').textContent = '停止聆听'; status.textContent = '正在聆听…'; } catch { status.textContent = '无法启动麦克风，请检查浏览器权限或使用键盘听写。'; }
+    listening = true; setBusy(busy);
+    el('[data-voice]').textContent = '停止聆听';
+    status.textContent = '正在聆听，文字会边说边显示…';
+    recognition = startSpeechDraft(Speech, {
+      prefix: input.value,
+      onDraft(text) {
+        if (current !== generation) return;
+        input.value = text; input.scrollTop = input.scrollHeight; source = 'voice';
+      },
+      onError() {
+        if (current === generation) status.textContent = '语音识别未成功，已显示的文字会保留。请重试或使用键盘听写。';
+      },
+      onEnd(failed) {
+        if (current !== generation) return;
+        listening = false; el('[data-voice]').textContent = '🎙 继续说'; setBusy(busy);
+        if (!failed) status.textContent = input.value.trim() ? '已停止聆听，请核对文字后点发送。' : '没有识别到文字，请重新说或使用键盘听写。';
+      },
+    });
   });
   return {
     close: () => { if (dialog.open) dialog.close(); },
@@ -123,7 +162,7 @@ export function createTaskConversation({ client, onChanged = async () => {} }) {
       if (!task?.id) return;
       if (dialog.open) dialog.close();
       const current = ++generation;
-      recognition?.abort(); recognition = null; listening = false;
+      cancelSpeech();
       taskId = task.id; pending = null; input.value = ''; failedRequest = null;
       render({task,history:[],pending:null,message:'正在读取任务和对话记录…'});
       dialog.showModal(); setBusy(true);

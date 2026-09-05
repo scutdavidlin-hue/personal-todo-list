@@ -182,7 +182,7 @@ const manifest = JSON.parse(contents.get("manifest.webmanifest"));
 assert.equal(manifest.display, "standalone");
 assert.ok(manifest.icons.some((icon) => icon.sizes === "192x192"));
 assert.ok(manifest.icons.some((icon) => icon.sizes === "512x512" && icon.purpose === "maskable"));
-assert.match(contents.get("sw.js"), /personal-os-shell-v1\.3\.3-conversation/);
+assert.match(contents.get("sw.js"), /personal-os-shell-v1\.3\.4-live-speech/);
 assert.match(contents.get("sw.js"), /request\.method !== "GET"/);
 
 const config = contents.get("runtime-config.js");

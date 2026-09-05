@@ -1,4 +1,4 @@
-const CACHE_NAME = "personal-os-shell-v1.3.3-conversation";
+const CACHE_NAME = "personal-os-shell-v1.3.4-live-speech";
 const APP_SHELL = [
   "./",
   "./index.html",
