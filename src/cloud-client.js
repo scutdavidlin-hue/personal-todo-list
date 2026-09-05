@@ -14,6 +14,12 @@ const GOOGLE_OAUTH_TRANSIENT_KEY = "task-sync-google-oauth-transient-v1";
 const PLANNING_CACHE_KEY_PREFIX = "personal-os-planning-cache-v1";
 const REQUEST_TIMEOUT_MS = 45_000;
 
+function taskMutationKey(action = "task") {
+  const id = globalThis.crypto?.randomUUID?.()
+    || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  return `${action}:${id}`;
+}
+
 export class CloudError extends Error {
   constructor(message, { status = 0, code = "", cause } = {}) {
     super(message, { cause });
@@ -219,15 +225,17 @@ export class TaskCloudClient {
     }
   }
 
-  async tasksRequest(method, body = null, query = "") {
+  async tasksRequest(method, body = null, query = "", { idempotencyKey = "" } = {}) {
     return this.authenticatedRequest(`/functions/v1/google-tasks${query}`, {
       method,
+      headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined,
       body: body === null ? undefined : JSON.stringify(body),
     });
   }
 
   async createTask(task) {
-    const result = await this.tasksRequest("POST", { action: "create", task });
+    const idempotencyKey = String(task?.idempotency_key || task?.idempotencyKey || taskMutationKey("create"));
+    const result = await this.tasksRequest("POST", { action: "create", task }, "", { idempotencyKey });
     return result.task;
   }
 
@@ -253,12 +261,12 @@ export class TaskCloudClient {
   }
 
   async completeTask(id, completed = true) {
-    const result = await this.tasksRequest("PATCH", { action: "complete", id, completed });
+    const result = await this.tasksRequest("PATCH", { action: "complete", id, completed }, "", { idempotencyKey: taskMutationKey("complete") });
     return result.task;
   }
 
   async reopenTask(id) {
-    const result = await this.tasksRequest("PATCH", { action: "reopen", id });
+    const result = await this.tasksRequest("PATCH", { action: "reopen", id }, "", { idempotencyKey: taskMutationKey("reopen") });
     return result.task;
   }
 
@@ -266,12 +274,12 @@ export class TaskCloudClient {
     if (Object.hasOwn(changes, "status") && Object.keys(changes).every((key) => ["status", "completed_at"].includes(key))) {
       return changes.status === "open" ? this.reopenTask(id) : this.completeTask(id, true);
     }
-    const result = await this.tasksRequest("PATCH", { action: "update", id, changes });
+    const result = await this.tasksRequest("PATCH", { action: "update", id, changes }, "", { idempotencyKey: taskMutationKey("update") });
     return result.task;
   }
 
   async deleteTask(id) {
-    return this.tasksRequest("DELETE", { id });
+    return this.tasksRequest("DELETE", { id }, "", { idempotencyKey: taskMutationKey("delete") });
   }
 
   async cancelTask(id) {
@@ -293,6 +301,13 @@ export class TaskCloudClient {
     return this.authenticatedRequest("/functions/v1/task-scheduler", {
       method: "POST",
       body: JSON.stringify({ action: "reschedule", task_id: id, schedule: { ...schedule, scheduling_source: "rescheduled", scheduling_status: "rescheduled" } }),
+    });
+  }
+
+  async updateTaskReminder(id, reminder) {
+    return this.authenticatedRequest("/functions/v1/task-scheduler", {
+      method: "POST",
+      body: JSON.stringify({ action: "update_reminder", task_id: id, reminder }),
     });
   }
 

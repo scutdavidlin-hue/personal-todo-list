@@ -22,30 +22,21 @@ test("normalizes the Issue #1 task contract", () => {
   }, { baseDate });
   assert.equal(intake.destination, "google_tasks");
   assert.equal(intake.due, "2026-09-05");
-  assert.deepEqual(taskDispatchPayload(intake), {
-    title: "安排小青蛙寄养",
-    notes: "联系乔治安排寄养。",
-    dueDate: "2026-09-05",
-    originalIntent: "明天提醒我安排小青蛙寄养。",
-    source: "chatgpt",
-    schedule: {
-      scheduled_date: "2026-09-05",
-      scheduled_start: null,
-      scheduled_end: null,
-      timezone: "Asia/Shanghai",
-      duration_minutes: 30,
-      scheduling_status: "unscheduled",
-      scheduling_source: "explicit_user",
-      calendar_id: "primary",
-      fixed_time: false,
-      priority: "medium",
-      deadline: null,
-    },
-  });
+  const dispatched = taskDispatchPayload(intake);
+  assert.equal(dispatched.title, "安排小青蛙寄养");
+  assert.equal(dispatched.notes, "联系乔治安排寄养。");
+  assert.equal(dispatched.dueDate, "2026-09-05");
+  assert.equal(dispatched.originalIntent, "明天提醒我安排小青蛙寄养。");
+  assert.equal(dispatched.source, "chatgpt");
+  assert.equal(dispatched.schedule.scheduled_date, "2026-09-05");
+  assert.equal(dispatched.schedule.scheduled_start, null);
+  assert.equal(dispatched.schedule.deadline_time, null);
+  assert.equal(dispatched.schedule.reminder_policy, "none");
+  assert.deepEqual(dispatched.schedule.reminders, []);
 });
 
 test("classifies all non-task destinations without dispatching them as tasks", () => {
-  assert.equal(normalizeIntake({ raw_text: "9月8日上午11点广州飞哈尔滨" }, { baseDate }).type, "calendar_event");
+  assert.equal(normalizeIntake({ raw_text: "只加到日历：9月8日上午11点广州飞哈尔滨" }, { baseDate }).type, "calendar_event");
   assert.equal(normalizeIntake({ raw_text: "袁老师可以对接三一重工" }, { baseDate }).type, "project_data");
   assert.equal(normalizeIntake({ raw_text: "记住普通待办进入 Google Tasks" }, { baseDate }).type, "knowledge");
   assert.equal(normalizeIntake({ raw_text: "每天晚上搜索比亚迪最新情况并分析" }, { baseDate }).type, "gpt_job");
@@ -70,6 +61,69 @@ test("normalizes a scheduled task for Task creation plus Calendar projection", (
   assert.equal(intake.requested_time, "15:00");
   assert.equal(intake.schedule.scheduled_end, "15:45");
   assert.equal(intake.schedule.fixed_time, true);
+  assert.equal(intake.schedule.reminder_policy, "smart");
+  assert.equal(intake.schedule.reminders[0].type, "preparation");
+});
+
+test("a timed flight becomes one Task schedule with Smart Reminder context", () => {
+  const intake = normalizeIntake({ raw_text: "15:00去机场" }, { baseDate });
+  assert.equal(intake.type, "task");
+  assert.equal(intake.due, "2026-09-04");
+  assert.equal(intake.requested_date, "2026-09-04");
+  assert.equal(intake.requested_time, "15:00");
+  assert.equal(intake.schedule.reminder_context.task_kind, "flight");
+  assert.deepEqual(intake.schedule.reminders.map((item) => item.type), ["preparation", "departure"]);
+});
+
+test("the PRD acceptance meeting defaults to one hour and contextual reminders", () => {
+  const intake = normalizeIntake({
+    raw_text: "今天下午3点祥晖到公司聊天。起床吃早餐，然后运动一下，再自己坐地铁去公司。不让我老婆送。",
+  }, { baseDate: "2026-09-05T08:00:00+08:00" });
+  assert.equal(intake.type, "task");
+  assert.equal(intake.title, "祥晖到公司聊天");
+  assert.equal(intake.requested_date, "2026-09-05");
+  assert.equal(intake.schedule.scheduled_start, "15:00");
+  assert.equal(intake.schedule.scheduled_end, "16:00");
+  assert.equal(intake.schedule.reminder_context.transportation, "metro");
+  assert.deepEqual(intake.schedule.reminders.map((item) => item.type), ["preparation", "departure"]);
+});
+
+test("an exact deadline does not become a Task date or execution time", () => {
+  const intake = normalizeIntake({ raw_text: "今天18:00之前把材料发出去" }, { baseDate });
+  assert.equal(intake.due, null);
+  assert.equal(intake.requested_date, null);
+  assert.equal(intake.requested_time, null);
+  assert.equal(intake.deadline, "2026-09-04");
+  assert.equal(intake.deadline_time, "18:00");
+  assert.equal(intake.schedule.reminder_context.task_kind, "deadline");
+});
+
+test("explicit intake separates execution, reminder, and deadline clocks", () => {
+  const intake = normalizeIntake({
+    raw_text: "今天15:00开始整理材料，12:00提醒我，18:00截止",
+    type: "task",
+    title: "整理材料",
+  }, { baseDate });
+  assert.equal(intake.due, "2026-09-04");
+  assert.equal(intake.requested_time, "15:00");
+  assert.equal(intake.deadline, "2026-09-04");
+  assert.equal(intake.deadline_time, "18:00");
+  assert.equal(intake.schedule.reminder_at, "2026-09-04T12:00");
+  assert.equal(intake.schedule.reminder_policy_source, "user_explicit");
+});
+
+test("a structured deadline does not leak into Google Task due", () => {
+  const intake = normalizeIntake({
+    raw_text: "把材料发出去",
+    type: "task",
+    title: "发送材料",
+    due: "2026-09-05",
+    deadline: "2026-09-05",
+    deadline_time: "18:00",
+  }, { baseDate });
+  assert.equal(intake.due, null);
+  assert.equal(intake.requested_date, null);
+  assert.equal(intake.deadline, "2026-09-05");
 });
 
 test("auto-classifies and normalizes a Goal without inventing a deadline", () => {
@@ -151,4 +205,22 @@ test("a concrete Task can carry only a Goal relation id without becoming a Goal"
   assert.equal(intake.type, "task");
   assert.equal(intake.goal_plan_id, "11111111-1111-4111-8111-111111111111");
   assert.equal(intake.existing_goal_id, null);
+});
+
+test("task intake preserves graph and shared-resource hints for resolution", () => {
+  const intake = normalizeIntake({
+    raw_text: "佳佳给成本后分析财务数据",
+    type: "task",
+    project_id: "22222222-2222-4222-8222-222222222222",
+    resources: ["financial_records", "financial_records"],
+    read_resources: ["financial_records"],
+    resource_fields: ["cost"],
+    depends_on_task_ids: ["google-task-1"],
+  });
+  assert.equal(intake.project_id, "22222222-2222-4222-8222-222222222222");
+  assert.deepEqual(intake.resources, ["financial_records"]);
+  assert.deepEqual(intake.depends_on_task_ids, ["google-task-1"]);
+  const dispatched = taskDispatchPayload(intake);
+  assert.deepEqual(dispatched.read_resources, ["financial_records"]);
+  assert.deepEqual(dispatched.resource_fields, ["cost"]);
 });

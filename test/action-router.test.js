@@ -12,12 +12,13 @@ test("an actionable Sunday reminder routes to Google Tasks with a due date", () 
   assert.equal(route.payload.originalIntent, "周日记得收拾东北旅行的行李");
 });
 
-test("a scheduled flight routes to Calendar rather than Tasks", () => {
+test("a scheduled flight routes through one canonical Task and Calendar projection", () => {
   const route = classifyAction("2026年9月8日上午11点飞哈尔滨", { baseDate });
-  assert.equal(route.type, "calendar_event");
-  assert.equal(route.payload.date, "2026-09-08");
-  assert.equal(route.payload.time, "11:00");
-  assert.equal(route.payload.start, "2026-09-08T11:00:00+08:00");
+  assert.equal(route.type, "task");
+  assert.equal(route.payload.dueDate, "2026-09-08");
+  assert.equal(route.payload.requestedDate, "2026-09-08");
+  assert.equal(route.payload.requestedTime, "11:00");
+  assert.equal(route.payload.fixedTime, true);
 });
 
 test("a customer relationship fact routes to project data", () => {
@@ -63,6 +64,39 @@ test("a deadline is separated from a requested execution date", () => {
   assert.equal(route.type, "task");
   assert.equal(route.payload.deadline, "2026-09-08");
   assert.equal(route.payload.requestedDate, null);
+  assert.equal(route.payload.deadlineTime, null);
+});
+
+test("an exact-time deadline keeps deadline time separate from execution time", () => {
+  const route = classifyAction("今天18:00之前把材料发出去", { baseDate });
+  assert.equal(route.type, "task");
+  assert.equal(route.payload.title, "把材料发出去");
+  assert.equal(route.payload.dueDate, null);
+  assert.equal(route.payload.deadline, "2026-09-04");
+  assert.equal(route.payload.deadlineTime, "18:00");
+  assert.equal(route.payload.requestedDate, null);
+  assert.equal(route.payload.requestedTime, null);
+});
+
+test("an explicit reminder clock is not mistaken for the event time", () => {
+  const eventFirst = classifyAction("15:00开会，12:00提醒我", { baseDate });
+  const reminderFirst = classifyAction("12点提醒我下午3点开会", { baseDate });
+  assert.equal(eventFirst.payload.requestedTime, "15:00");
+  assert.equal(reminderFirst.payload.requestedTime, "15:00");
+});
+
+test("execution and deadline clocks remain separate in one intent", () => {
+  const route = classifyAction("今天15:00开始整理材料，18:00截止", { baseDate });
+  assert.equal(route.type, "task");
+  assert.equal(route.payload.dueDate, "2026-09-04");
+  assert.equal(route.payload.requestedTime, "15:00");
+  assert.equal(route.payload.deadline, "2026-09-04");
+  assert.equal(route.payload.deadlineTime, "18:00");
+});
+
+test("an explicit calendar-only request can still bypass Task creation", () => {
+  const route = classifyAction("只加到日历：今天15:00公司停电", { baseDate });
+  assert.equal(route.type, "calendar_event");
 });
 
 test("a future housing outcome routes to Goal rather than Task", () => {

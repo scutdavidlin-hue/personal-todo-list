@@ -1,3 +1,11 @@
+import {
+  calendarReminderOverrides,
+  reminderActionGuidance,
+  reminderNotificationCue,
+  reminderProjectionFields,
+  resolveReminderPolicy,
+} from "./reminder-policy-core.js";
+
 const VALID_STATUS = new Set(["unscheduled", "scheduled", "rescheduled", "backlog", "waiting", "cancelled"]);
 const VALID_SOURCE = new Set(["explicit_user", "gpt_inferred", "morning_plan", "rescheduled"]);
 const VALID_PRIORITY = new Set(["low", "medium", "high", "urgent"]);
@@ -42,8 +50,18 @@ export function normalizeScheduleInput(input = {}) {
   const source = String(input.scheduling_source || input.schedulingSource || "gpt_inferred");
   const priority = String(input.priority || "medium");
   const explicitStatus = input.scheduling_status || input.schedulingStatus;
-  const status = String(explicitStatus || (scheduledStart ? "scheduled" : scheduledDate ? "unscheduled" : "backlog"));
   const deadline = input.deadline || null;
+  const deadlineTime = normalizeTime(input.deadline_time || input.deadlineTime || null);
+  const taskType = String(input.task_type || input.taskType || "task");
+  const parentTaskId = input.parent_task_id ?? input.parentTaskId ?? null;
+  const followUpOf = input.follow_up_of ?? input.followUpOf ?? null;
+  const followUpSequence = Number(input.follow_up_sequence ?? input.followUpSequence ?? (taskType === "follow_up" ? 2 : 1));
+  if (!["task", "follow_up"].includes(taskType)) throw new Error("task_type is invalid");
+  for (const value of [parentTaskId, followUpOf]) {
+    if (value !== null && (typeof value !== "string" || !value.trim() || value.length > 1024)) throw new Error("Task relationship id is invalid");
+  }
+  if (!Number.isInteger(followUpSequence) || followUpSequence < 1 || followUpSequence > 99) throw new Error("follow_up_sequence is invalid");
+  const status = String(explicitStatus || (scheduledStart ? "scheduled" : scheduledDate || deadline ? "unscheduled" : "backlog"));
 
   if (scheduledDate && !validScheduleDate(scheduledDate)) throw new Error("scheduled_date must be YYYY-MM-DD");
   if (scheduledStart && !validScheduleTime(scheduledStart)) throw new Error("scheduled_start must be HH:MM");
@@ -57,8 +75,10 @@ export function normalizeScheduleInput(input = {}) {
   if (!VALID_SOURCE.has(source)) throw new Error("scheduling_source is invalid");
   if (!VALID_PRIORITY.has(priority)) throw new Error("priority is invalid");
   if (deadline && !validScheduleDate(deadline)) throw new Error("deadline must be YYYY-MM-DD");
+  if (deadlineTime && !validScheduleTime(deadlineTime)) throw new Error("deadline_time must be HH:MM");
+  if (deadlineTime && !deadline) throw new Error("deadline is required when deadline_time is set");
 
-  return {
+  const schedule = {
     scheduled_date: scheduledDate,
     scheduled_start: scheduledStart,
     scheduled_end: scheduledEnd,
@@ -67,10 +87,94 @@ export function normalizeScheduleInput(input = {}) {
     scheduling_status: status,
     scheduling_source: source,
     calendar_id: String(input.calendar_id || input.calendarId || "primary"),
-    fixed_time: input.fixed_time === true || input.fixedTime === true,
+    fixed_time: input.fixed_time === true || input.fixedTime === true || (source === "explicit_user" && Boolean(scheduledStart)),
     priority,
     deadline,
+    deadline_time: deadlineTime,
+    task_type: taskType,
+    parent_task_id: parentTaskId,
+    follow_up_of: followUpOf,
+    follow_up_sequence: followUpSequence,
   };
+  return {
+    ...schedule,
+    ...reminderProjectionFields(resolveReminderPolicy({ ...input, ...schedule })),
+  };
+}
+
+function owns(value, key) {
+  return Boolean(value && Object.hasOwn(value, key));
+}
+
+/**
+ * @param {Record<string, any> | null} current
+ * @param {Record<string, any>} changes
+ * @param {string | null} taskDue
+ */
+export function applyTaskSchedulePatch(current, changes = {}, taskDue = null) {
+  const hasCurrent = Boolean(current);
+  const next = { ...(current || {}) };
+  let touched = false;
+  let timingChanged = false;
+
+  if (owns(changes, "due")) {
+    next.scheduled_date = changes.due;
+    touched = true;
+    timingChanged = true;
+  }
+  if (owns(changes, "requested_date")) {
+    next.scheduled_date = changes.requested_date;
+    touched = true;
+    timingChanged = true;
+  }
+  if (owns(changes, "requested_time")) {
+    next.scheduled_start = changes.requested_time;
+    next.scheduled_end = null;
+    if (changes.requested_time === null && !owns(changes, "fixed_time")) next.fixed_time = false;
+    touched = true;
+    timingChanged = true;
+  }
+  if (owns(changes, "estimated_duration")) {
+    next.duration_minutes = changes.estimated_duration;
+    next.scheduled_end = null;
+    touched = true;
+    timingChanged = Boolean(next.scheduled_start) || timingChanged;
+  }
+  const directFields = {
+    deadline_time: "deadline_time",
+    deadline: "deadline",
+    priority: "priority",
+    fixed_time: "fixed_time",
+    timezone: "timezone",
+    task_type: "task_type",
+    parent_task_id: "parent_task_id",
+    follow_up_of: "follow_up_of",
+    follow_up_sequence: "follow_up_sequence",
+  };
+  for (const [changeField, scheduleField] of Object.entries(directFields)) {
+    if (!owns(changes, changeField)) continue;
+    next[scheduleField] = changes[changeField];
+    touched = true;
+  }
+  if (!touched) return { touched: false, schedule: current || null, timing_changed: false };
+  if (!hasCurrent && !owns(next, "scheduled_date")) next.scheduled_date = taskDue || null;
+  if (!next.scheduled_date) {
+    next.scheduled_start = null;
+    next.scheduled_end = null;
+    next.fixed_time = false;
+  } else if (next.scheduled_start && !next.scheduled_end) {
+    next.scheduled_end = addMinutes(String(next.scheduled_start).slice(0, 5), Number(next.duration_minutes || 30));
+  }
+  if (timingChanged) {
+    if (next.reminder_policy_source === "ai_inferred" || next.reminder_policy_source === "system_default") {
+      next.reminders = [];
+      next.reminder_at = null;
+      next.reminder_offset_minutes = null;
+    }
+    next.scheduling_status = next.scheduled_start ? (hasCurrent ? "rescheduled" : "scheduled") : next.scheduled_date ? "unscheduled" : "backlog";
+    next.scheduling_source = hasCurrent ? "rescheduled" : "explicit_user";
+  }
+  return { touched: true, schedule: normalizeScheduleInput(next), timing_changed: timingChanged };
 }
 
 export async function stableCalendarEventId(googleTaskId) {
@@ -88,24 +192,60 @@ export function projectionPrefix(taskStatus, schedulingStatus) {
   return "☐";
 }
 
-export function buildCalendarEvent(task, schedule, eventId = "") {
-  const normalized = normalizeScheduleInput(schedule);
-  if (!normalized.scheduled_date || !normalized.scheduled_start || !normalized.scheduled_end) {
-    throw new Error("A Calendar projection requires scheduled_date, scheduled_start, and scheduled_end");
+function shiftedDateTime(date, time, amount) {
+  const result = new Date(`${date}T${time}:00Z`);
+  result.setUTCMinutes(result.getUTCMinutes() + amount);
+  const value = result.toISOString();
+  return { date: value.slice(0, 10), time: value.slice(11, 16) };
+}
+
+export function calendarProjectionWindow(schedule) {
+  if (schedule?.scheduled_date && schedule?.scheduled_start && schedule?.scheduled_end) {
+    return {
+      kind: "execution",
+      start: { date: schedule.scheduled_date, time: String(schedule.scheduled_start).slice(0, 5) },
+      end: { date: schedule.scheduled_date, time: String(schedule.scheduled_end).slice(0, 5) },
+    };
   }
+  if (schedule?.deadline && schedule?.deadline_time) {
+    return {
+      kind: "deadline",
+      start: { date: schedule.deadline, time: String(schedule.deadline_time).slice(0, 5) },
+      end: shiftedDateTime(schedule.deadline, String(schedule.deadline_time).slice(0, 5), 5),
+    };
+  }
+  return null;
+}
+
+export function buildCalendarEvent(task, schedule, eventId = "") {
+  const normalized = normalizeScheduleInput({
+    ...schedule,
+    raw_text: task.originalIntent || task.original_intent || schedule.raw_text,
+    title: task.title,
+    notes: task.notes,
+  });
+  const window = calendarProjectionWindow(normalized);
+  if (!window) throw new Error("A Calendar projection requires a scheduled time or an exact deadline time");
   const prefix = projectionPrefix(task.status, normalized.scheduling_status);
+  const inactive = normalized.scheduling_status === "cancelled" || task.status === "completed" || task.status === "done";
+  const guidance = inactive ? "" : reminderActionGuidance(task, normalized);
+  const notificationCue = inactive ? "" : reminderNotificationCue(normalized);
+  const reminderReason = normalized.reminder_reason ? `\n提醒依据：${normalized.reminder_reason}` : "";
+  const overrides = inactive ? [] : calendarReminderOverrides(normalized);
   return {
     ...(eventId ? { id: eventId } : {}),
-    summary: `${prefix} ${String(task.title || "").trim()}`,
-    description: "Personal OS Google Task 的时间投影。任务内容与完成状态以 Google Tasks 为准。",
-    start: { dateTime: `${normalized.scheduled_date}T${normalized.scheduled_start}:00`, timeZone: normalized.timezone },
-    end: { dateTime: `${normalized.scheduled_date}T${normalized.scheduled_end}:00`, timeZone: normalized.timezone },
+    summary: `${prefix} ${String(task.title || "").trim()}${window.kind === "deadline" ? "（截止）" : ""}${notificationCue ? `｜${notificationCue}` : ""}`,
+    description: `Personal OS Google Task 的时间投影。任务内容与完成状态以 Google Tasks 为准。${guidance ? `\n行动提示：${guidance}` : ""}${reminderReason}`,
+    start: { dateTime: `${window.start.date}T${window.start.time}:00`, timeZone: normalized.timezone },
+    end: { dateTime: `${window.end.date}T${window.end.time}:00`, timeZone: normalized.timezone },
     transparency: "opaque",
     colorId: prefix === "✓" ? "10" : prefix === "↪" ? "5" : prefix === "✕" ? "8" : "9",
+    reminders: { useDefault: false, overrides },
     extendedProperties: {
       private: {
         googleTaskId: String(task.id || task.google_task_id || ""),
         personalOsProjection: "v1",
+        reminderPolicy: normalized.reminder_policy,
       },
     },
   };
@@ -136,6 +276,7 @@ export function planTaskSlots(tasks, schedules = [], busyByDate = {}, options = 
     .filter((task) => !scheduleByTask.get(task.id)?.fixed_time)
     .map((task) => ({ task, schedule: scheduleByTask.get(task.id) || null }))
     .filter(({ task, schedule }) => {
+      if (schedule?.deadline_time && !schedule?.scheduled_start) return false;
       if (schedule?.scheduled_start && schedule.scheduled_date >= today) return false;
       const due = task.dueDate || task.date || schedule?.deadline || null;
       if (!due) { backlog.push(task.id); return false; }
@@ -163,7 +304,7 @@ export function planTaskSlots(tasks, schedules = [], busyByDate = {}, options = 
       for (let start = dayStart; start + duration <= dayEnd; start += 15) {
         const end = start + duration;
         if (overlaps(start, end, busy)) continue;
-        placed = { google_task_id: task.id, scheduled_date: targetDate, scheduled_start: timeFromMinutes(start), scheduled_end: timeFromMinutes(end), duration_minutes: duration, scheduling_status: schedule ? "rescheduled" : "scheduled", scheduling_source: schedule ? "rescheduled" : "morning_plan", fixed_time: false, priority: schedule?.priority || task.priority || "medium", deadline: schedule?.deadline || null, timezone: schedule?.timezone || "Asia/Shanghai", calendar_id: schedule?.calendar_id || "primary" };
+        placed = { google_task_id: task.id, scheduled_date: targetDate, scheduled_start: timeFromMinutes(start), scheduled_end: timeFromMinutes(end), duration_minutes: duration, scheduling_status: schedule ? "rescheduled" : "scheduled", scheduling_source: schedule ? "rescheduled" : "morning_plan", fixed_time: false, priority: schedule?.priority || task.priority || "medium", deadline: schedule?.deadline || null, deadline_time: schedule?.deadline_time || null, timezone: schedule?.timezone || "Asia/Shanghai", calendar_id: schedule?.calendar_id || "primary" };
         busy.push({ start: placed.scheduled_start, end: placed.scheduled_end });
         occupied.set(targetDate, busy);
         break;

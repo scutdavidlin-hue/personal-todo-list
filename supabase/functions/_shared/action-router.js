@@ -1,5 +1,6 @@
 const TASK_VERBS = /(?:做|完成|处理|联系|打电话|致电|购买|买|整理|检查|查看|看看|复查|查询|查|登录|修改|跟进|催|归还|还款|核算|报销|收拾|准备|验收|提交|确认|回复|发送|预约|提醒|导出|补录)/;
-const CALENDAR_NOUNS = /(?:飞机|航班|高铁|火车|会议|开会|面谈|看电影|医院预约|行程|出发|抵达|纪念日|婚礼|课程)/;
+const CALENDAR_NOUNS = /(?:飞机|航班|高铁|火车|会议|开会|面谈|见面|会面|聊天|拜访|看电影|医院预约|行程|出发|抵达|纪念日|婚礼|课程)/;
+const CALENDAR_ONLY_PATTERNS = /(?:(?:只|仅).{0,8}(?:放进|写入|添加到|加到)?(?:日历|Calendar)|(?:日历|Calendar).{0,8}(?:不要|不需要).{0,6}(?:任务|Task))/i;
 const PROJECT_DATA_PATTERNS = /(?:可以对接|客户资源|客户线索|项目资料|合作方|供应商|联系人|商机)/;
 const CONTACT_PATTERNS = /(?:(?:电话|手机号|邮箱|微信|联系方式)(?:是|为|：|:)|认识.{0,24}(?:CFO|CEO|负责人|总监|经理))/i;
 const GPT_JOB_PATTERNS = /(?:(?:每天|每日|每晚|每周|每月|定期|持续).*(?:搜索|查询|监控|分析|汇总|研究|跟踪)|(?:搜索|查询|监控|分析|汇总|研究|跟踪).*(?:每天|每日|每晚|每周|每月|定期|持续))/;
@@ -47,18 +48,39 @@ export function parseIntentDate(text, baseDate = new Date()) {
   return null;
 }
 
+function intentTimeCandidates(text) {
+  const candidates = [];
+  const pattern = /(上午|早上|中午|下午|晚上)?\s*(\d{1,2})(?::(\d{2})|点(?:(\d{1,2})分)?)/g;
+  for (const match of String(text || "").matchAll(pattern)) {
+    let hour = Number(match[2]);
+    const minute = Number(match[3] || match[4] || 0);
+    const period = match[1] || "";
+    if ((period.includes("下午") || period.includes("晚上")) && hour < 12) hour += 12;
+    if (period.includes("中午") && hour < 11) hour += 12;
+    if (hour > 23 || minute > 59) continue;
+    const index = match.index || 0;
+    const prefix = String(text).slice(Math.max(0, index - 10), index);
+    const suffix = String(text).slice(index + match[0].length).trimStart();
+    candidates.push({
+      value: `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`,
+      isReminderClock: /^(?:提醒(?:我)?|通知(?:我)?|叫我)/.test(suffix),
+      isDeadlineClock: /^(?:之前|以前|前(?:把|完成|发送)?|截止)/.test(suffix)
+        || /(?:截止(?:时间)?(?:到|为)?|最晚)\s*$/.test(prefix),
+    });
+  }
+  return candidates;
+}
+
 export function parseIntentTime(text) {
-  const colon = text.match(/(?:上午|早上|中午|下午|晚上)?\s*(\d{1,2}):(\d{2})/);
-  const point = text.match(/(上午|早上|中午|下午|晚上)?\s*(\d{1,2})点(?:(\d{1,2})分)?/);
-  const match = colon || point;
-  if (!match) return null;
-  const period = point ? match[1] || "" : text.slice(Math.max(0, match.index - 2), match.index);
-  let hour = Number(point ? match[2] : match[1]);
-  const minute = Number(point ? match[3] || 0 : match[2]);
-  if ((period.includes("下午") || period.includes("晚上")) && hour < 12) hour += 12;
-  if (period.includes("中午") && hour < 11) hour += 12;
-  if (hour > 23 || minute > 59) return null;
-  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+  const candidates = intentTimeCandidates(text);
+  const selected = candidates.find((candidate) => !candidate.isReminderClock && !candidate.isDeadlineClock)
+    || candidates.find((candidate) => !candidate.isReminderClock)
+    || candidates[0];
+  return selected?.value || null;
+}
+
+export function parseIntentDeadlineTime(text) {
+  return intentTimeCandidates(text).find((candidate) => candidate.isDeadlineClock)?.value || null;
 }
 
 export function parseIntentDuration(text, fallback = 30) {
@@ -76,11 +98,13 @@ function parsePriority(text) {
 }
 
 function cleanTitle(text) {
-  return String(text)
+  return String(text).split(/[。\n]/)[0]
     .replace(/20\d{2}[-年]\d{1,2}[-月]\d{1,2}[日号]?/g, "")
     .replace(/\d{1,2}月\d{1,2}[日号]?/g, "")
     .replace(/(?:今天|明天|后天|本周|这周|下周末|下周[一二三四五六日天]?|周[一二三四五六日天]|星期[一二三四五六日天])/g, "")
     .replace(/(?:上午|早上|中午|下午|晚上)?\s*\d{1,2}(?::\d{2}|点(?:\d{1,2}分)?)/g, "")
+    .replace(/[，,]\s*(?:(?:早点|提前.{0,12})?提醒(?:我)?|通知(?:我)?|叫我).*$/g, "")
+    .replace(/^(?:之前|以前|截止前?|最晚)\s*/, "")
     .replace(/^(?:请|麻烦)?(?:提醒我|记得)/, "")
     .replace(/[，,。.!！?？]+$/g, "")
     .trim();
@@ -218,17 +242,20 @@ function calendarPayload(text, dueDate, time) {
   };
 }
 
-function taskPayload(text, dueDate, time) {
-  const deadline = dueDate && /(?:之前|以前|截止|最晚|前把|前完成)/.test(text) ? dueDate : null;
-  const requestedDate = deadline ? null : dueDate;
+function taskPayload(text, dueDate, time, deadlineTime = null) {
+  const deadline = dueDate && (deadlineTime || /(?:之前|以前|截止|最晚|前把|前完成)/.test(text)) ? dueDate : null;
+  const hasDistinctExecutionTime = Boolean(deadline && time && deadlineTime && time !== deadlineTime);
+  const requestedDate = deadline && !hasDistinctExecutionTime ? null : dueDate;
+  const defaultDuration = /(?:会议|开会|面谈|见面|会面|聊天|拜访)/.test(text) ? 60 : 30;
   return {
     title: cleanTitle(text) || text.trim(),
     notes: "",
-    dueDate,
+    dueDate: requestedDate,
     requestedDate,
-    requestedTime: time,
+    requestedTime: deadline && !hasDistinctExecutionTime ? null : time,
     deadline,
-    estimatedDuration: parseIntentDuration(text),
+    deadlineTime: deadline ? deadlineTime || time : null,
+    estimatedDuration: parseIntentDuration(text, defaultDuration),
     priority: parsePriority(text),
     fixedTime: Boolean(requestedDate && time),
     schedulingSource: requestedDate || time ? "explicit_user" : "gpt_inferred",
@@ -244,8 +271,23 @@ export function classifyAction(input, options = {}) {
   const text = String(input || "").trim();
   if (!text) throw new Error("input is required");
   const baseDate = options.baseDate ? new Date(options.baseDate) : new Date();
-  const dueDate = parseIntentDate(text, baseDate);
   const time = parseIntentTime(text);
+  const deadlineTime = parseIntentDeadlineTime(text);
+  const dueDate = parseIntentDate(text, baseDate) || (time ? dateWithOffset(baseDate, 0) : null);
+
+  if (detectFollowUpIntent(text)) {
+    const followUpDate = parseIntentDate(followUpTimingText(text), baseDate) || dueDate;
+    return {
+      type: "task",
+      confidence: 0.99,
+      payload: {
+        ...taskPayload(text, followUpDate, time, deadlineTime),
+        title: ensureFollowUpTitle(suggestedFollowUpTitle(text), 2),
+        taskType: "follow_up",
+        followUpSequence: 2,
+      },
+    };
+  }
 
   if (GPT_JOB_PATTERNS.test(text)) {
     return { type: "gpt_job", confidence: 0.98, payload: contentPayload(text) };
@@ -259,17 +301,20 @@ export function classifyAction(input, options = {}) {
   if (KNOWLEDGE_PATTERNS.test(text)) {
     return { type: "knowledge", confidence: 0.9, payload: contentPayload(text) };
   }
-  if (dueDate && /(?:之前|以前|截止|最晚|前把|前完成)/.test(text) && TASK_VERBS.test(text)) {
-    return { type: "task", confidence: 0.98, payload: taskPayload(text, dueDate, time) };
+  if (dueDate && (deadlineTime || /(?:之前|以前|截止|最晚|前把|前完成)/.test(text)) && TASK_VERBS.test(text)) {
+    return { type: "task", confidence: 0.98, payload: taskPayload(text, dueDate, time, deadlineTime) };
   }
-  if (CALENDAR_NOUNS.test(text) && (time || dueDate)) {
+  if (CALENDAR_ONLY_PATTERNS.test(text) && (time || dueDate)) {
     return { type: "calendar_event", confidence: time ? 0.99 : 0.9, payload: calendarPayload(text, dueDate, time) };
   }
+  if (CALENDAR_NOUNS.test(text) && (time || dueDate)) {
+    return { type: "task", confidence: time ? 0.99 : 0.9, payload: taskPayload(text, dueDate, time, deadlineTime) };
+  }
   if (time && !TASK_VERBS.test(text)) {
-    return { type: "calendar_event", confidence: 0.86, payload: calendarPayload(text, dueDate, time) };
+    return { type: "task", confidence: 0.9, payload: taskPayload(text, dueDate, time, deadlineTime) };
   }
   if (dueDate && TASK_VERBS.test(text)) {
-    return { type: "task", confidence: 0.97, payload: taskPayload(text, dueDate, time) };
+    return { type: "task", confidence: 0.97, payload: taskPayload(text, dueDate, time, deadlineTime) };
   }
   if (FINANCIAL_ITEM_PATTERNS.test(text) && !TASK_VERBS.test(text)) {
     return { type: "financial_item", confidence: 0.98, payload: financialPayload(text) };
@@ -284,7 +329,13 @@ export function classifyAction(input, options = {}) {
     return { type: "long_term_item", confidence: 0.9, payload: longTermPayload(text, "long_term_item", baseDate) };
   }
   if (TASK_VERBS.test(text)) {
-    return { type: "task", confidence: dueDate ? 0.97 : 0.9, payload: taskPayload(text, dueDate, time) };
+    return { type: "task", confidence: dueDate ? 0.97 : 0.9, payload: taskPayload(text, dueDate, time, deadlineTime) };
   }
   return { type: "knowledge", confidence: 0.62, payload: contentPayload(text) };
 }
+import {
+  detectFollowUpIntent,
+  ensureFollowUpTitle,
+  followUpTimingText,
+  suggestedFollowUpTitle,
+} from "./task-lifecycle-core.js";

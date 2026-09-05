@@ -59,6 +59,7 @@ export function toTaskModel(task, taskListId = "") {
     customerId: null,
     originalIntent: parsedNotes.originalIntent,
     priority: "medium",
+    parent_task_id: task.parent || null,
     metadata: {},
     date: dueDate || "",
     time: "",

@@ -1,11 +1,11 @@
 import {
-  canonicalIntake,
   goalPlanDispatchPayload,
   normalizeIntake,
   taskDispatchPayload,
 } from "../_shared/personal-os-intake.js";
 import { findExistingGoalMatch, mergeGoalPlanUpdate } from "../_shared/goal-operations.js";
 import { resolveServiceApiKey, serviceApiHeaders } from "../_shared/supabase-api-keys.js";
+import { prepareAutonomousIntake, verifyTaskWrite, intakeConfirmation } from "../_shared/autonomy-runtime.js";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const USE_NEW_API_KEYS = Deno.env.get("SUPABASE_USE_NEW_API_KEYS") === "true";
@@ -57,6 +57,12 @@ async function responsePayload(response: Response) {
 async function sha256(value: string) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function stableRequest(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableRequest).join(",")}]`;
+  if (value && typeof value === "object") return `{${Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => `${JSON.stringify(key)}:${stableRequest(item)}`).join(",")}}`;
+  return JSON.stringify(value);
 }
 
 async function rest(path: string, init: RequestInit = {}) {
@@ -123,47 +129,64 @@ async function updateAudit(id: string, changes: Record<string, unknown>) {
   });
 }
 
-async function dispatchTask(intake: Record<string, unknown>) {
+async function taskService(input: Record<string, unknown>) {
   const response = await fetch(`${SUPABASE_URL}/functions/v1/task-status`, {
     method: "POST",
     headers: { Authorization: `Bearer ${WRITE_TOKEN}`, "Content-Type": "application/json" },
-    body: JSON.stringify(taskDispatchPayload(intake)),
-    signal: AbortSignal.timeout(15_000),
+    body: JSON.stringify(input),
+    signal: AbortSignal.timeout(20_000),
   });
   const result = await responsePayload(response);
-  if (!response.ok || !result?.task?.id) {
-    throw new IntakeError(result?.error || "Google Tasks write failed", response.status || 503, result?.code || "TASK_WRITE_FAILED");
-  }
-  let goalLinked = false;
-  let goalLinkError = "";
-  if (intake.goal_plan_id) {
+  if (!response.ok) throw new IntakeError(result?.error || "Task service unavailable", response.status, result?.code || "TASK_SERVICE_ERROR");
+  return result;
+}
+
+async function resolveAutonomyContext(input: Record<string, unknown>) {
+  const supplied = (input.context || {}) as Record<string, any>;
+  const travel = /旅行|旅游|入住|酒店|亚朵|出差/.test(String(input.raw_text || ""));
+  const currentId = input.existing_task_id || supplied.current_task?.id;
+  const context = await taskService({ action: "autonomy_context", task_id: currentId || null, travel });
+  let travelPlans: Record<string, unknown>[] = [];
+  if (travel) {
     try {
-      const linked = await rest("task_context_links?on_conflict=owner_id%2Cgoogle_task_id&select=id,goal_plan_id,project_id", {
-        method: "POST",
-        headers: { Prefer: "resolution=merge-duplicates,return=representation" },
-        body: JSON.stringify({
-          owner_id: OWNER_USER_ID,
-          google_task_id: result.task.id,
-          goal_plan_id: intake.goal_plan_id,
-          project_id: null,
-        }),
-      });
-      goalLinked = linked?.[0]?.goal_plan_id === intake.goal_plan_id;
-    } catch (error) {
-      goalLinkError = error instanceof Error ? error.message : "Task created but Goal link failed";
-    }
+      const query = new URLSearchParams({ owner_id: `eq.${OWNER_USER_ID}`, category: "eq.Travel", status: "not.in.(Completed,Dropped,Archived)", select: "id,title,start_date,target_date,deadline", order: "updated_at.desc", limit: "100" });
+      travelPlans = (await rest(`goals_plans?${query}`)).map((goal: Record<string, unknown>) => ({ ...goal, start_date: goal.start_date || goal.target_date, end_date: goal.deadline || goal.target_date }));
+    } catch { context.context_warnings.push("Travel Plans context unavailable"); }
   }
+  return { ...supplied, ...context, conversation_trips: supplied.conversation_trips || [], travel_plans: travelPlans };
+}
+
+async function dispatchTask(intake: Record<string, unknown>, auditId: string, idempotencyKey: string) {
+  const result = await taskService(intake.existing_task_id ? {
+    action: "update_task", task_id: intake.existing_task_id, changes: intake.update_patch || {},
+  } : { ...taskDispatchPayload(intake), intake_audit_id: auditId, resolution_idempotency_key: idempotencyKey });
+  let verified;
+  try { verified = await verifyTaskWrite(result, (id: string) => taskService({ action: "read_task", task_id: id })); }
+  catch {
+    return { success: false, write_success: result.write_success === true, verified: false, id: result?.task?.id || null, task_snapshot: result?.task || null, expected_schedule: result.expected_schedule || {}, destination: "google_tasks", code: "WRITE_UNVERIFIED", error: "Google Tasks 写入结果尚未核实，请回读原任务，勿重复创建。" };
+  }
+  const linkedGoalId = result.goal_link?.goal_id || intake.goal_plan_id || null;
+  const linkedProjectId = result.context_link?.project_id || intake.project_id || null;
   return {
-    success: true,
+    success: verified.write_success || result.deduplicated === true,
+    write_success: verified.write_success,
+    verified: true,
     destination: "google_tasks",
     id: result.task.id,
     title: result.task.title,
     due: result.task.dueDate || null,
     deduplicated: result.deduplicated === true,
+    operation: result.resolution?.decision === "UPDATE" || result.resolution?.decision === "MERGE"
+      ? "updated"
+      : result.deduplicated ? "reused" : "created",
+    resolution: result.resolution || null,
+    relationships: result.relationships || [],
     schedule: result.schedule || null,
-    goal_plan_id: intake.goal_plan_id || null,
-    goal_linked: goalLinked,
-    ...(goalLinkError ? { goal_link_error: goalLinkError } : {}),
+    projection_error: result.projection_error || null,
+    goal_plan_id: linkedGoalId,
+    goal_linked: Boolean(linkedGoalId),
+    project_id: linkedProjectId,
+    context_linked: Boolean(linkedGoalId || linkedProjectId),
   };
 }
 
@@ -200,8 +223,14 @@ async function dispatchGoalPlan(intake: Record<string, unknown>) {
     });
   const item = rows?.[0];
   if (!item?.id) throw new IntakeError("Goals & Plans write failed", 503, "GOAL_WRITE_FAILED");
+  const readback = await rest(`goals_plans?id=eq.${encodeURIComponent(item.id)}&owner_id=eq.${OWNER_USER_ID}&select=id,title,description`);
+  if (readback?.[0]?.id !== item.id || readback[0].title !== item.title || readback[0].description !== item.description) {
+    throw new IntakeError("Goals & Plans readback failed", 503, "GOAL_READBACK_FAILED");
+  }
   return {
     success: true,
+    write_success: true,
+    verified: true,
     destination: "goals_plans",
     classification: intake.type,
     id: item.id,
@@ -236,12 +265,34 @@ Deno.serve(async (request) => {
     if (idempotencyKey.length < 8 || idempotencyKey.length > 200) {
       throw new IntakeError("idempotency_key must contain 8-200 characters", 400, "INVALID_IDEMPOTENCY_KEY");
     }
-    const intake = normalizeIntake(input);
-    const requestHash = await sha256(canonicalIntake(intake));
+    const policy = await prepareAutonomousIntake(input, { resolveContext: resolveAutonomyContext });
+    if (policy.decision !== "execute") {
+      const result = { success: false, write_success: false, verified: false, intent: policy.intent, decision: policy.decision, risk_level: policy.risk_level, question: policy.question, code: policy.decision === "ask" ? "CLARIFICATION_REQUIRED" : "INFORMATION_ONLY" };
+      return json({ ...result, message: intakeConfirmation(result) });
+    }
+    const intake = { ...normalizeIntake(policy.input), existing_task_id: policy.input.existing_task_id, update_patch: policy.input.update_patch };
+    const requestHash = await sha256(stableRequest(input));
     const reservation = await reserveAudit(intake, idempotencyKey, requestHash);
     auditId = reservation.row.id;
     if (reservation.replayed) {
-      return json({ ...reservation.row.response, replayed: true }, reservation.row.response_status || 200);
+      const saved = { ...reservation.row.response, replayed: true };
+      if (saved.code === "WRITE_UNVERIFIED" && saved.task_snapshot?.id) {
+        try {
+          const checked = await verifyTaskWrite({ task: saved.task_snapshot, write_success: saved.write_success, expected_schedule: saved.expected_schedule }, (id: string) => taskService({ action: "read_task", task_id: id }));
+          Object.assign(saved, { success: true, verified: checked.verified, code: null, error: null });
+          if (policy.intent === "mixed" && policy.preference_text) saved.partial = true;
+        } catch { return json(saved); }
+      }
+      if (saved.partial && policy.intent === "mixed" && policy.preference_text && saved.verified) {
+        try {
+          saved.preference = await dispatchGoalPlan(normalizeIntake({ raw_text: policy.preference_text, type: "plan", title: policy.preference_text, horizon: "long" }));
+          saved.partial = false;
+          saved.success = true;
+        } catch { return json(saved); }
+      }
+      saved.message = intakeConfirmation(saved);
+      await updateAudit(auditId, { status: saved.success ? "succeeded" : "failed", response: saved, response_status: 200 });
+      return json(saved, reservation.row.response_status || 200);
     }
 
     const isGoalPlan = ["goal", "plan", "long_term_item", "financial_item"].includes(intake.type);
@@ -258,9 +309,21 @@ Deno.serve(async (request) => {
       return json(unsupported, 501);
     }
 
-    const dispatched = intake.type === "task" ? await dispatchTask(intake) : await dispatchGoalPlan(intake);
-    const result = { ...dispatched, idempotency_key: idempotencyKey, replayed: false };
-    await updateAudit(auditId, { status: "succeeded", object_id: result.id, response_status: 200, response: result });
+    const dispatched = intake.type === "task"
+      ? await dispatchTask(intake, auditId, idempotencyKey)
+      : await dispatchGoalPlan(intake);
+    let preference = null;
+    let partial = false;
+    if (policy.intent === "mixed" && policy.preference_text && dispatched.success) {
+      try {
+        preference = await dispatchGoalPlan(normalizeIntake({ raw_text: policy.preference_text, type: "plan", title: policy.preference_text, horizon: "long" }));
+      } catch { partial = true; }
+    }
+    const result = { ...dispatched, success: dispatched.success && !partial, partial, preference, risk_level: policy.risk_level, idempotency_key: idempotencyKey, replayed: false, message: "" };
+    result.message = intakeConfirmation(result);
+    if ("projection_error" in dispatched && dispatched.projection_error) result.message += " Calendar 投影待同步。";
+    try { await updateAudit(auditId, { status: result.success ? "succeeded" : "failed", object_id: result.id, response_status: 200, response: result }); }
+    catch { Object.assign(result, { audit_warning: "Write result verified but audit finalization failed; retain object id for recovery" }); }
     console.info("Personal OS intake succeeded", { auditId, destination: result.destination, objectId: result.id });
     return json(result);
   } catch (error) {
@@ -268,7 +331,9 @@ Deno.serve(async (request) => {
     const intakeError = error instanceof IntakeError
       ? error
       : new IntakeError(timedOut ? "Personal OS intake timed out" : "Personal OS intake failed", 503, timedOut ? "INTAKE_TIMEOUT" : "INTAKE_FAILED");
-    const failure = { success: false, code: intakeError.code, error: intakeError.message };
+    const failure = { success: false, write_success: false, verified: false, code: intakeError.code, error: intakeError.message,
+      ...(intakeError.code === "TASK_TARGET_AMBIGUOUS" ? { decision: "ask", question: "有多个匹配任务，要修改哪一个？" } : {}), message: "" };
+    failure.message = intakeConfirmation(failure);
     if (auditId) {
       try { await updateAudit(auditId, { status: "failed", error: intakeError.message, response_status: intakeError.status, response: failure }); }
       catch (auditError) { console.error("Personal OS audit update failed", auditError instanceof Error ? auditError.message : "unknown"); }

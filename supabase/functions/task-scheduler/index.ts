@@ -1,9 +1,12 @@
 import {
+  applyTaskSchedulePatch,
   buildCalendarEvent,
+  calendarProjectionWindow,
   normalizeScheduleInput,
   planTaskSlots,
   stableCalendarEventId,
 } from "../_shared/schedule-core.js";
+import { mergeReminderPolicyUpdate, reminderProjectionFields } from "../_shared/reminder-policy-core.js";
 import { toTaskModel } from "../_shared/google-tasks-core.js";
 import { shanghaiDate, shiftDate } from "../task-status/status-core.js";
 import {
@@ -174,16 +177,17 @@ async function listTasks(google: { accessToken: string; taskListId: string }) {
   return tasks;
 }
 
-async function schedules(ownerId: string, taskId = "") {
+async function schedules(ownerId: string, taskId = "", includeDeleted = false) {
   const query = new URLSearchParams({ select: "*", owner_id: `eq.${ownerId}`, order: "scheduled_date.asc,scheduled_start.asc" });
   if (taskId) query.set("google_task_id", `eq.${taskId}`);
+  if (!includeDeleted) query.set("deleted_at", "is.null");
   return rest(`task_schedule_metadata?${query}`);
 }
 
 async function writeSchedule(ownerId: string, taskId: string, input: Record<string, unknown>) {
   const normalized = normalizeScheduleInput(input);
   const current = (await schedules(ownerId, taskId))?.[0] || null;
-  const calendarEventId = normalized.scheduled_start ? await stableCalendarEventId(taskId) : null;
+  const calendarEventId = calendarProjectionWindow(normalized) ? await stableCalendarEventId(taskId) : null;
   const rescheduled = Boolean(current?.scheduled_date && normalized.scheduled_date && current.scheduled_date !== normalized.scheduled_date);
   const cancelled = normalized.scheduling_status === "cancelled";
   const rows = await rest("task_schedule_metadata?on_conflict=owner_id%2Cgoogle_task_id&select=*", {
@@ -199,9 +203,12 @@ async function writeSchedule(ownerId: string, taskId: string, input: Record<stri
       previous_scheduled_date: rescheduled ? current.scheduled_date : current?.previous_scheduled_date || null,
       rescheduled_at: rescheduled ? new Date().toISOString() : current?.rescheduled_at || null,
       cancelled_at: cancelled ? new Date().toISOString() : current?.cancelled_at || null,
+      deleted_at: null,
+      deleted_by: null,
     }),
   });
-  return rows?.[0];
+  if (!rows?.[0]) throw new ApiError("Schedule upsert returned no row", 503, "SCHEDULE_STORE_ERROR");
+  return rows[0];
 }
 
 async function markSynced(ownerId: string, taskId: string, changes: Record<string, unknown>) {
@@ -214,10 +221,16 @@ async function markSynced(ownerId: string, taskId: string, changes: Record<strin
 }
 
 async function projectTask(ownerId: string, google: { accessToken: string; taskListId: string }, task: Record<string, unknown>, schedule: Record<string, unknown>) {
-  if (!schedule.scheduled_start) return { projected: false, reason: "NO_TIME" };
+  const normalized = normalizeScheduleInput({
+    ...schedule,
+    raw_text: task.originalIntent || task.original_intent,
+    title: task.title,
+    notes: task.notes,
+  });
+  if (!calendarProjectionWindow(normalized)) return { projected: false, reason: "NO_TIME", calendar_event_id: null };
   const eventId = String(schedule.calendar_event_id || await stableCalendarEventId(task.id));
-  const calendarId = String(schedule.calendar_id || "primary");
-  const event = buildCalendarEvent(task, schedule, eventId);
+  const calendarId = String(normalized.calendar_id || "primary");
+  const event = buildCalendarEvent(task, normalized, eventId);
   const patchBody = { ...event };
   delete (patchBody as Record<string, unknown>).id;
   try {
@@ -227,7 +240,7 @@ async function projectTask(ownerId: string, google: { accessToken: string; taskL
     });
   } catch (error) {
     if (!(error instanceof ApiError) || error.status !== 404) {
-      await markSynced(ownerId, String(task.id), { sync_required: true, last_sync_error: error instanceof Error ? error.message : "Calendar sync failed" });
+      await markSynced(ownerId, String(task.id), { sync_required: true, notification_status: "projection_failed", last_sync_error: error instanceof Error ? error.message : "Calendar sync failed" });
       throw error;
     }
     try {
@@ -237,27 +250,143 @@ async function projectTask(ownerId: string, google: { accessToken: string; taskL
       });
     } catch (insertError) {
       if (insertError instanceof ApiError && insertError.status === 409) {
-        await googleRequest(google.accessToken, CALENDAR_BASE, `/calendars/${encodeURIComponent(calendarId)}/events/${eventId}`, {
-          method: "PATCH",
-          body: JSON.stringify(patchBody),
-        });
+        try {
+          await googleRequest(google.accessToken, CALENDAR_BASE, `/calendars/${encodeURIComponent(calendarId)}/events/${eventId}`, {
+            method: "PATCH",
+            body: JSON.stringify(patchBody),
+          });
+        } catch (retryError) {
+          await markSynced(ownerId, String(task.id), { sync_required: true, notification_status: "projection_failed", last_sync_error: retryError instanceof Error ? retryError.message : "Calendar sync failed" });
+          throw retryError;
+        }
       } else {
-        await markSynced(ownerId, String(task.id), { sync_required: true, last_sync_error: insertError instanceof Error ? insertError.message : "Calendar sync failed" });
+        await markSynced(ownerId, String(task.id), { sync_required: true, notification_status: "projection_failed", last_sync_error: insertError instanceof Error ? insertError.message : "Calendar sync failed" });
         throw insertError;
       }
     }
   }
-  await markSynced(ownerId, String(task.id), { calendar_event_id: eventId, sync_required: false, last_sync_error: null, last_synced_at: new Date().toISOString() });
-  return { projected: true, calendar_id: calendarId, calendar_event_id: eventId, summary: event.summary };
+  const notificationStatus = normalized.scheduling_status === "cancelled" || task.status === "completed" || task.status === "done"
+    ? "disabled"
+    : normalized.reminders.length ? "projected" : "not_required";
+  const projectedReminderFields = reminderProjectionFields({ ...normalized, notification_status: notificationStatus });
+  await markSynced(ownerId, String(task.id), {
+    calendar_event_id: eventId,
+    ...projectedReminderFields,
+    sync_required: false,
+    last_sync_error: null,
+    last_synced_at: new Date().toISOString(),
+  });
+  return {
+    projected: true,
+    calendar_id: calendarId,
+    calendar_event_id: eventId,
+    summary: event.summary,
+    ...projectedReminderFields,
+  };
+}
+
+function scheduleAfterProjection(schedule: Record<string, unknown>, projection: object) {
+  const result = projection as Record<string, unknown>;
+  if (result.projected !== true) return schedule;
+  return {
+    ...schedule,
+    ...reminderProjectionFields(result),
+    sync_required: false,
+    last_sync_error: null,
+  };
+}
+
+async function removeCalendarProjection(google: { accessToken: string; taskListId: string }, schedule: Record<string, unknown>) {
+  if (!schedule?.calendar_event_id) return false;
+  try {
+    await googleRequest(
+      google.accessToken,
+      CALENDAR_BASE,
+      `/calendars/${encodeURIComponent(String(schedule.calendar_id || "primary"))}/events/${encodeURIComponent(String(schedule.calendar_event_id))}`,
+      { method: "DELETE" },
+    );
+  } catch (error) {
+    if (!(error instanceof ApiError) || error.status !== 404) throw error;
+  }
+  return true;
 }
 
 async function scheduleTask(ownerId: string, taskId: string, input: Record<string, unknown>) {
   if (!taskId) throw new ApiError("task_id is required", 400, "INVALID_TASK");
   const google = await googleContext(ownerId);
   const task = await getTask(google, taskId);
-  const schedule = await writeSchedule(ownerId, taskId, input);
+  const current = (await schedules(ownerId, taskId))?.[0] || {};
+  const reminderState = Object.fromEntries([
+    "reminder_policy",
+    "reminder_policy_source",
+    "reminder_reason",
+    "reminder_at",
+    "reminder_offset_minutes",
+    "reminder_type",
+    "reminders",
+    "reminder_context",
+    "notification_channel",
+  ].filter((key) => Object.hasOwn(current, key)).map((key) => [key, current[key]]));
+  const schedule = await writeSchedule(ownerId, taskId, {
+    ...reminderState,
+    ...input,
+    raw_text: input.raw_text || task.originalIntent,
+    title: task.title,
+    notes: task.notes,
+  });
   const projection = await projectTask(ownerId, google, task, schedule);
-  return { task_id: taskId, schedule, projection };
+  return { task_id: taskId, schedule: scheduleAfterProjection(schedule, projection), projection };
+}
+
+async function updateTaskReminder(ownerId: string, taskId: string, input: Record<string, unknown>) {
+  if (!taskId) throw new ApiError("task_id is required", 400, "INVALID_TASK");
+  const current = (await schedules(ownerId, taskId))?.[0] || null;
+  const google = await googleContext(ownerId);
+  const task = await getTask(google, taskId);
+  const reminderInput = input.reminder && typeof input.reminder === "object" && !Array.isArray(input.reminder)
+    ? input.reminder as Record<string, unknown>
+    : input;
+  const suppliesScheduledTime = Object.hasOwn(reminderInput, "scheduled_start") || Object.hasOwn(reminderInput, "scheduledStart");
+  const merged = {
+    ...mergeReminderPolicyUpdate(current || {}, reminderInput),
+    ...(suppliesScheduledTime ? {
+      scheduling_source: "explicit_user",
+      fixed_time: Object.hasOwn(reminderInput, "fixed_time")
+        ? reminderInput.fixed_time
+        : Object.hasOwn(reminderInput, "fixedTime") ? reminderInput.fixedTime : true,
+    } : {}),
+    raw_text: reminderInput.raw_text || task.originalIntent,
+    title: task.title,
+    notes: task.notes,
+  };
+  const preview = normalizeScheduleInput(merged);
+  if (!calendarProjectionWindow(preview)) {
+    throw new ApiError("Reminder requires an existing scheduled time or an exact deadline time", 409, "REMINDER_REQUIRES_TIME");
+  }
+  const expectedEventId = await stableCalendarEventId(taskId);
+  if (current?.calendar_event_id && current.calendar_event_id !== expectedEventId) {
+    throw new ApiError("Existing Calendar Event identity is not canonical", 409, "CALENDAR_EVENT_IDENTITY_CHANGED");
+  }
+  const schedule = await writeSchedule(ownerId, taskId, merged);
+  if (current?.id && schedule?.id !== current.id) {
+    throw new ApiError("Schedule identity changed during reminder update", 500, "SCHEDULE_IDENTITY_CHANGED");
+  }
+  if (current?.calendar_event_id && schedule?.calendar_event_id !== current.calendar_event_id) {
+    throw new ApiError("Calendar Event identity changed during reminder update", 500, "CALENDAR_EVENT_IDENTITY_CHANGED");
+  }
+  const projection = await projectTask(ownerId, google, task, schedule);
+  const projectedSchedule = scheduleAfterProjection(schedule, projection);
+  return {
+    task_id: taskId,
+    schedule_id: schedule.id,
+    calendar_event_id: projection.calendar_event_id,
+    task_id_unchanged: true,
+    schedule_id_unchanged: !current?.id || schedule.id === current.id,
+    calendar_event_id_unchanged: !current?.calendar_event_id || projection.calendar_event_id === current.calendar_event_id,
+    google_tasks_count_delta: 0,
+    schedule: projectedSchedule,
+    projection,
+  };
 }
 
 async function syncTask(ownerId: string, taskId: string) {
@@ -268,23 +397,72 @@ async function syncTask(ownerId: string, taskId: string) {
   return { task_id: taskId, ...(await projectTask(ownerId, google, task, schedule)) };
 }
 
+async function updateTaskSchedule(ownerId: string, taskId: string, changes: Record<string, unknown>) {
+  if (!taskId) throw new ApiError("task_id is required", 400, "INVALID_TASK");
+  const google = await googleContext(ownerId);
+  const task = await getTask(google, taskId);
+  const current = (await schedules(ownerId, taskId))?.[0] || null;
+  const patched = applyTaskSchedulePatch(current, changes, task.dueDate || null);
+  if (!patched.touched) return syncTask(ownerId, taskId);
+
+  const next = patched.schedule;
+  if (!next) throw new ApiError("Schedule patch produced no metadata", 500, "INVALID_SCHEDULE_PATCH");
+  if (current?.calendar_event_id && (!calendarProjectionWindow(next) || current.calendar_id !== next.calendar_id)) {
+    await removeCalendarProjection(google, current);
+  }
+  const schedule = await writeSchedule(ownerId, taskId, next);
+  if (!calendarProjectionWindow(schedule)) {
+    await markSynced(ownerId, taskId, {
+      calendar_event_id: null,
+      sync_required: false,
+      last_sync_error: null,
+      last_synced_at: new Date().toISOString(),
+    });
+    return {
+      task_id: taskId,
+      schedule: { ...schedule, calendar_event_id: null, sync_required: false },
+      projection: { projected: false, removed: Boolean(current?.calendar_event_id), reason: "NO_TIME" },
+    };
+  }
+  return { task_id: taskId, schedule, projection: await projectTask(ownerId, google, task, schedule) };
+}
+
+async function deleteTaskArtifacts(ownerId: string, taskId: string, deletedBy = "chatgpt") {
+  if (!taskId) throw new ApiError("task_id is required", 400, "INVALID_TASK");
+  const current = (await schedules(ownerId, taskId))?.[0] || null;
+  if (!current) return { task_id: taskId, schedule_removed: false, calendar_projection_removed: false };
+  const google = await googleContext(ownerId);
+  const calendarProjectionRemoved = await removeCalendarProjection(google, current);
+  await markSynced(ownerId, taskId, {
+    scheduling_status: "cancelled",
+    calendar_event_id: null,
+    sync_required: false,
+    last_sync_error: null,
+    last_synced_at: new Date().toISOString(),
+    cancelled_at: new Date().toISOString(),
+    deleted_at: new Date().toISOString(),
+    deleted_by: String(deletedBy || "chatgpt").slice(0, 80),
+  });
+  return { task_id: taskId, schedule_removed: true, calendar_projection_removed: calendarProjectionRemoved };
+}
+
 async function cancelProjection(ownerId: string, taskId: string, title = "已取消任务") {
   const schedule = (await schedules(ownerId, taskId))?.[0];
   if (!schedule) return { task_id: taskId, projected: false, reason: "NOT_SCHEDULED" };
   schedule.scheduling_status = "cancelled";
-  await writeSchedule(ownerId, taskId, schedule);
-  if (!schedule.scheduled_start) return { task_id: taskId, projected: false, reason: "NO_TIME" };
+  const cancelledSchedule = await writeSchedule(ownerId, taskId, schedule);
+  if (!calendarProjectionWindow(cancelledSchedule)) return { task_id: taskId, projected: false, reason: "NO_TIME" };
   const google = await googleContext(ownerId);
-  return { task_id: taskId, ...(await projectTask(ownerId, google, { id: taskId, title, status: "open" }, schedule)) };
+  return { task_id: taskId, ...(await projectTask(ownerId, google, { id: taskId, title, status: "open" }, cancelledSchedule)) };
 }
 
 async function unscheduleTask(ownerId: string, taskId: string, input: Record<string, unknown>) {
   const current = (await schedules(ownerId, taskId))?.[0];
   if (!current) return { task_id: taskId, unscheduled: true, projection_removed: false };
-  if (current.calendar_event_id) {
-    const google = await googleContext(ownerId);
+  const google = current.calendar_event_id || current.deadline_time ? await googleContext(ownerId) : null;
+  if (current.calendar_event_id && !current.deadline_time) {
     try {
-      await googleRequest(google.accessToken, CALENDAR_BASE, `/calendars/${encodeURIComponent(current.calendar_id || "primary")}/events/${current.calendar_event_id}`, { method: "DELETE" });
+      await googleRequest(google!.accessToken, CALENDAR_BASE, `/calendars/${encodeURIComponent(current.calendar_id || "primary")}/events/${current.calendar_event_id}`, { method: "DELETE" });
     } catch (error) {
       if (!(error instanceof ApiError) || error.status !== 404) throw error;
     }
@@ -297,6 +475,18 @@ async function unscheduleTask(ownerId: string, taskId: string, input: Record<str
     scheduling_status: input.scheduled_date ? "unscheduled" : "backlog",
     scheduling_source: "rescheduled",
   });
+  if (schedule.deadline_time && google) {
+    const task = await getTask(google, taskId);
+    const projection = await projectTask(ownerId, google, task, schedule);
+    return {
+      task_id: taskId,
+      unscheduled: true,
+      projection_removed: false,
+      projection_rebased: "deadline",
+      schedule: scheduleAfterProjection(schedule, projection),
+      projection,
+    };
+  }
   await markSynced(ownerId, taskId, { calendar_event_id: null, sync_required: false, last_sync_error: null, last_synced_at: new Date().toISOString() });
   return { task_id: taskId, unscheduled: true, projection_removed: Boolean(current.calendar_event_id), schedule };
 }
@@ -331,7 +521,7 @@ async function runMorningScheduler(ownerId: string, targetDate: string) {
 
   let synced = 0;
   const syncErrors = [];
-  for (const schedule of existingSchedules.filter((item: Record<string, unknown>) => item.scheduled_start)) {
+  for (const schedule of existingSchedules.filter((item: Record<string, unknown>) => calendarProjectionWindow(item))) {
     const task = tasks.find((item) => item.id === schedule.google_task_id);
     if (!task) continue;
     try { await projectTask(ownerId, google, task, schedule); synced += 1; }
@@ -343,12 +533,24 @@ async function runMorningScheduler(ownerId: string, targetDate: string) {
   for (const item of plan.plans) {
     const task = tasks.find((candidate) => candidate.id === item.google_task_id);
     if (!task) continue;
-    const schedule = await writeSchedule(ownerId, task.id, item);
+    const schedule = await writeSchedule(ownerId, task.id, {
+      ...item,
+      raw_text: task.originalIntent || task.original_intent,
+      title: task.title,
+      notes: task.notes,
+    });
     projected.push(await projectTask(ownerId, google, task, schedule));
   }
   for (const taskId of plan.backlog) {
     if (!existingSchedules.some((item: Record<string, unknown>) => item.google_task_id === taskId)) {
-      await writeSchedule(ownerId, taskId, { scheduling_status: "backlog", scheduling_source: "gpt_inferred" });
+      const task = tasks.find((candidate) => candidate.id === taskId);
+      await writeSchedule(ownerId, taskId, {
+        scheduling_status: "backlog",
+        scheduling_source: "gpt_inferred",
+        raw_text: task?.originalIntent || task?.original_intent,
+        title: task?.title,
+        notes: task?.notes,
+      });
     }
   }
   return { date: targetDate, synced, scheduled: projected.length, backlog: plan.backlog.length, sync_errors: syncErrors };
@@ -368,7 +570,12 @@ Deno.serve(async (request) => {
     if (action === "schedule" || action === "reschedule") {
       return json({ success: true, ...(await scheduleTask(ownerId, String(input.task_id || ""), input.schedule || input)) });
     }
+    if (action === "update_reminder") {
+      return json({ success: true, ...(await updateTaskReminder(ownerId, String(input.task_id || ""), input.reminder || input)) });
+    }
     if (action === "sync_task") return json({ success: true, ...(await syncTask(ownerId, String(input.task_id || ""))) });
+    if (action === "update_task") return json({ success: true, ...(await updateTaskSchedule(ownerId, String(input.task_id || ""), input.changes || {})) });
+    if (action === "delete_task") return json({ success: true, ...(await deleteTaskArtifacts(ownerId, String(input.task_id || ""), String(input.deleted_by || "chatgpt"))) });
     if (action === "cancel_task") return json({ success: true, ...(await cancelProjection(ownerId, String(input.task_id || ""), String(input.title || "已取消任务"))) });
     if (action === "unschedule") return json({ success: true, ...(await unscheduleTask(ownerId, String(input.task_id || ""), input.schedule || input)) });
     if (action === "run") {

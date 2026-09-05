@@ -1,5 +1,12 @@
-import { classifyAction, parseIntentDate, parseIntentDuration, parseIntentTime } from "./action-router.js";
+import {
+  classifyAction,
+  parseIntentDate,
+  parseIntentDeadlineTime,
+  parseIntentDuration,
+  parseIntentTime,
+} from "./action-router.js";
 import { normalizeScheduleInput, validScheduleTime } from "./schedule-core.js";
+import { detectFollowUpIntent, ensureFollowUpTitle, followUpTimingText } from "./task-lifecycle-core.js";
 
 export const INTAKE_TYPES = Object.freeze([
   "task",
@@ -45,6 +52,11 @@ const GOAL_TYPE_BY_INTAKE = Object.freeze({
 
 function cleanString(value, maxLength = 10_000) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
+function cleanStringArray(value, maxItems = 100, maxLength = 200) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.map((item) => cleanString(String(item), maxLength)).filter(Boolean))].slice(0, maxItems);
 }
 
 function validDate(value) {
@@ -93,35 +105,63 @@ export function normalizeIntake(input, options = {}) {
   const type = route.type === "note" ? "knowledge" : route.type;
   if (!TYPE_SET.has(type)) throw new Error(`Unsupported intake type: ${type}`);
 
-  const due = cleanString(input.due || input.dueDate || route.payload?.dueDate, 10);
-  if (due && !validDate(due)) throw new Error("due must be YYYY-MM-DD");
-  const title = cleanString(input.title || route.payload?.title || rawText, 200);
+  const taskType = input.task_type || (detectFollowUpIntent(rawText) ? "follow_up" : "task");
+  if (!["task", "follow_up"].includes(taskType)) throw new Error("task_type must be task or follow_up");
+  const followUpSequence = Number(input.follow_up_sequence ?? (taskType === "follow_up" ? 2 : 1));
+  const parentTaskId = cleanString(input.parent_task_id, 1024) || null;
+  const followUpOf = cleanString(input.follow_up_of, 1024) || parentTaskId;
+  const rawTitle = cleanString(input.title || route.payload?.title || rawText, 200);
+  const title = type === "task" && taskType === "follow_up" ? ensureFollowUpTitle(rawTitle, followUpSequence) : rawTitle;
   if ((type === "task" || GOAL_INTAKE_TYPES.has(type)) && !title) throw new Error("title is required for task and goal intake");
 
-  const parsedDate = parseIntentDate(rawText, input.baseDate || options.baseDate ? new Date(input.baseDate || options.baseDate) : new Date());
+  const baseDate = input.baseDate || options.baseDate ? new Date(input.baseDate || options.baseDate) : new Date();
+  const parsedDate = parseIntentDate(taskType === "follow_up" ? followUpTimingText(rawText) : rawText, baseDate);
   const parsedTime = parseIntentTime(rawText);
-  const deadline = cleanString(input.deadline || route.payload?.deadline, 10) || null;
+  const parsedDeadlineTime = parseIntentDeadlineTime(rawText);
+  const nestedSchedule = input.schedule && typeof input.schedule === "object" && !Array.isArray(input.schedule) ? input.schedule : {};
+  const inferredDeadline = parsedDate && (parsedDeadlineTime || /(?:之前|以前|截止|最晚|前把|前完成)/.test(rawText)) ? parsedDate : null;
+  const deadline = cleanString(input.deadline || nestedSchedule.deadline || route.payload?.deadline || inferredDeadline, 10) || null;
   if (deadline && !validDate(deadline)) throw new Error("deadline must be YYYY-MM-DD");
-  const requestedDate = cleanString(input.requested_date || input.requestedDate || route.payload?.requestedDate || (!deadline ? due || parsedDate : ""), 10) || null;
+  const deadlineTime = cleanString(input.deadline_time || input.deadlineTime || nestedSchedule.deadline_time || nestedSchedule.deadlineTime || route.payload?.deadlineTime || (deadline ? parsedDeadlineTime : ""), 5) || null;
+  if (deadlineTime && !validScheduleTime(deadlineTime)) throw new Error("deadline_time must be HH:MM");
+  const inferredTimedDate = parsedDate || (parsedTime ? parseIntentDate("今天", baseDate) : null);
+  const dueCandidate = cleanString(taskType === "follow_up"
+    ? parsedDate || input.due || input.dueDate || route.payload?.dueDate || ""
+    : input.due || input.dueDate || route.payload?.dueDate || (!deadline ? inferredTimedDate : ""), 10);
+  if (dueCandidate && !validDate(dueCandidate)) throw new Error("due must be YYYY-MM-DD");
+  const inferredExecutionDate = !deadline || (parsedTime && deadlineTime && parsedTime !== deadlineTime) ? inferredTimedDate : null;
+  const requestedDate = cleanString(input.requested_date || input.requestedDate || nestedSchedule.scheduled_date || nestedSchedule.scheduledDate || route.payload?.requestedDate || (!deadline ? dueCandidate : "") || inferredExecutionDate, 10) || null;
   if (requestedDate && !validDate(requestedDate)) throw new Error("requested_date must be YYYY-MM-DD");
-  const requestedTime = cleanString(input.requested_time || input.requestedTime || route.payload?.requestedTime || parsedTime, 5) || null;
+  const inferredExecutionTime = !deadline || (parsedTime && deadlineTime && parsedTime !== deadlineTime) ? parsedTime : null;
+  const requestedTime = cleanString(input.requested_time || input.requestedTime || nestedSchedule.scheduled_start || nestedSchedule.scheduledStart || route.payload?.requestedTime || inferredExecutionTime, 5) || null;
   if (requestedTime && !validScheduleTime(requestedTime)) throw new Error("requested_time must be HH:MM");
-  const estimatedDuration = Number(input.estimated_duration || input.estimatedDuration || route.payload?.estimatedDuration || parseIntentDuration(rawText));
+  const due = requestedDate || (!deadline ? dueCandidate : "");
+  const defaultDuration = /(?:会议|开会|面谈|见面|会面|聊天|拜访)/.test(rawText) ? 60 : 30;
+  const estimatedDuration = Number(input.estimated_duration || input.estimatedDuration || route.payload?.estimatedDuration || parseIntentDuration(rawText, defaultDuration));
   const priority = cleanString(input.priority || route.payload?.priority, 20) || "medium";
-  const fixedTime = input.fixed_time === true || input.fixedTime === true || route.payload?.fixedTime === true;
+  const fixedTime = input.fixed_time === true || input.fixedTime === true || route.payload?.fixedTime === true || Boolean(requestedDate && requestedTime);
   const schedulingSource = cleanString(input.scheduling_source || input.schedulingSource || route.payload?.schedulingSource, 30)
     || (requestedDate || requestedTime ? "explicit_user" : "gpt_inferred");
-  const schedule = type === "task" && (requestedDate || requestedTime || deadline || input.schedule)
+  const schedule = type === "task" && (requestedDate || requestedTime || deadline || deadlineTime || input.schedule || input.reminder_policy || input.reminder_at || input.reminders || taskType === "follow_up")
     ? normalizeScheduleInput({
-      ...(input.schedule || {}),
+      ...input,
+      ...nestedSchedule,
+      task_type: taskType,
+      parent_task_id: parentTaskId,
+      follow_up_of: followUpOf,
+      follow_up_sequence: followUpSequence,
       scheduled_date: requestedDate,
       scheduled_start: requestedTime,
       duration_minutes: estimatedDuration,
       deadline,
+      deadline_time: deadlineTime,
       priority,
       fixed_time: fixedTime,
       scheduling_source: schedulingSource,
       timezone: cleanString(input.timezone, 80) || "Asia/Shanghai",
+      raw_text: rawText,
+      title,
+      notes: cleanString(input.notes || route.payload?.notes),
     })
     : null;
 
@@ -158,6 +198,9 @@ export function normalizeIntake(input, options = {}) {
   const goalPlanId = type === "task"
     ? optionalUuid(input.goal_plan_id || input.goalPlanId || input.goal_id || input.goalId, "goal_plan_id")
     : null;
+  const projectId = type === "task"
+    ? optionalUuid(input.project_id || input.projectId, "project_id")
+    : null;
   const existingGoalId = GOAL_INTAKE_TYPES.has(type)
     ? optionalUuid(input.existing_goal_id || input.existingGoalId || input.goal_id || input.goalId, "existing_goal_id")
     : null;
@@ -173,6 +216,10 @@ export function normalizeIntake(input, options = {}) {
 
   return {
     source: cleanString(input.source, 80) || "chatgpt",
+    task_type: taskType,
+    parent_task_id: parentTaskId,
+    follow_up_of: followUpOf,
+    follow_up_sequence: followUpSequence,
     raw_text: rawText,
     type,
     confidence: route.confidence,
@@ -182,6 +229,7 @@ export function normalizeIntake(input, options = {}) {
     due: due || null,
     timezone: cleanString(input.timezone, 80) || "Asia/Shanghai",
     deadline,
+    deadline_time: deadlineTime,
     requested_date: requestedDate,
     requested_time: requestedTime,
     estimated_duration: estimatedDuration,
@@ -211,6 +259,12 @@ export function normalizeIntake(input, options = {}) {
     contact_id: cleanString(input.contact_id || input.contactId, 36) || null,
     company_id: cleanString(input.company_id || input.companyId, 36) || null,
     goal_plan_id: goalPlanId,
+    project_id: projectId,
+    resources: cleanStringArray(input.resources || input.shared_resources || input.sharedResources),
+    read_resources: cleanStringArray(input.read_resources || input.readResources || input.reads),
+    write_resources: cleanStringArray(input.write_resources || input.writeResources || input.writes),
+    resource_fields: cleanStringArray(input.resource_fields || input.resourceFields || input.fields),
+    depends_on_task_ids: cleanStringArray(input.depends_on_task_ids || input.dependsOnTaskIds, 100, 1_024),
     existing_goal_id: existingGoalId,
     explicit_fields: explicitFields,
     payload: route.payload || {},
@@ -220,6 +274,10 @@ export function normalizeIntake(input, options = {}) {
 export function canonicalIntake(intake) {
   return JSON.stringify({
     source: intake.source,
+    task_type: intake.task_type,
+    parent_task_id: intake.parent_task_id,
+    follow_up_of: intake.follow_up_of,
+    follow_up_sequence: intake.follow_up_sequence,
     raw_text: intake.raw_text,
     type: intake.type,
     title: intake.title,
@@ -227,12 +285,14 @@ export function canonicalIntake(intake) {
     due: intake.due,
     timezone: intake.timezone,
     deadline: intake.deadline,
+    deadline_time: intake.deadline_time,
     requested_date: intake.requested_date,
     requested_time: intake.requested_time,
     estimated_duration: intake.estimated_duration,
     priority: intake.priority,
     fixed_time: intake.fixed_time,
     scheduling_source: intake.scheduling_source,
+    schedule: intake.schedule,
     goal_type: intake.goal_type,
     category: intake.category,
     goal_status: intake.goal_status,
@@ -255,6 +315,12 @@ export function canonicalIntake(intake) {
     contact_id: intake.contact_id,
     company_id: intake.company_id,
     goal_plan_id: intake.goal_plan_id,
+    project_id: intake.project_id,
+    resources: intake.resources,
+    read_resources: intake.read_resources,
+    write_resources: intake.write_resources,
+    resource_fields: intake.resource_fields,
+    depends_on_task_ids: intake.depends_on_task_ids,
     existing_goal_id: intake.existing_goal_id,
   });
 }
@@ -262,11 +328,22 @@ export function canonicalIntake(intake) {
 export function taskDispatchPayload(intake) {
   if (intake.type !== "task") throw new Error("Only task intake can be dispatched to Google Tasks");
   return {
+    task_type: intake.task_type,
+    parent_task_id: intake.parent_task_id,
+    follow_up_of: intake.follow_up_of,
+    follow_up_sequence: intake.follow_up_sequence,
     title: intake.title,
     notes: intake.notes,
     dueDate: intake.due,
     originalIntent: intake.raw_text,
     source: intake.source,
+    ...(intake.goal_plan_id ? { goal_plan_id: intake.goal_plan_id } : {}),
+    ...(intake.project_id ? { project_id: intake.project_id } : {}),
+    ...(intake.resources?.length ? { resources: intake.resources } : {}),
+    ...(intake.read_resources?.length ? { read_resources: intake.read_resources } : {}),
+    ...(intake.write_resources?.length ? { write_resources: intake.write_resources } : {}),
+    ...(intake.resource_fields?.length ? { resource_fields: intake.resource_fields } : {}),
+    ...(intake.depends_on_task_ids?.length ? { depends_on_task_ids: intake.depends_on_task_ids } : {}),
     ...(intake.schedule ? { schedule: intake.schedule } : {}),
   };
 }

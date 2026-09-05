@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { completeGoalPatch, filterGoalsForRead, isPersistedObjectResult, mergeGoalText } from "../_shared/goal-operations.js";
 import { resolvePublishableApiKey } from "../_shared/supabase-api-keys.js";
+import { intakeConfirmation } from "../_shared/autonomy-runtime.js";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const USE_NEW_API_KEYS = Deno.env.get("SUPABASE_USE_NEW_API_KEYS") === "true";
@@ -18,25 +19,66 @@ const MCP_RESOURCE = `${FUNCTION_ROOT}/mcp`;
 const RESOURCE_METADATA = `${FUNCTION_ROOT}/.well-known/oauth-protected-resource`;
 const AUTHORIZATION_SERVER = `${SUPABASE_URL}/auth/v1`;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const REMINDER_AT_PATTERN = /^(?:(?:20\d{2}-\d{2}-\d{2})T)?(?:[01]\d|2[0-3]):[0-5]\d$/;
+const ReminderSpecInput = z.object({
+  type: z.enum(["preparation", "departure", "event"]),
+  at: z.string().regex(REMINDER_AT_PATTERN).optional(),
+  offset_minutes: z.number().int().min(0).max(40_320).optional(),
+}).refine((value) => value.at !== undefined || value.offset_minutes !== undefined, {
+  message: "Each reminder requires at or offset_minutes",
+});
+const REMINDER_ZOD_FIELDS = {
+  reminder_policy: z.enum(["none", "smart", "custom"]).optional(),
+  reminder_policy_source: z.enum(["user_explicit", "ai_inferred", "system_default"]).optional(),
+  reminder_reason: z.string().max(2_000).optional(),
+  reminder_at: z.string().regex(REMINDER_AT_PATTERN).nullable().optional(),
+  reminder_offset_minutes: z.number().int().min(0).max(40_320).nullable().optional(),
+  reminder_type: z.enum(["preparation", "departure", "event"]).optional(),
+  reminders: z.array(ReminderSpecInput).max(3).optional(),
+  need_preparation: z.boolean().optional(),
+  need_travel: z.boolean().optional(),
+  preparation_minutes: z.number().int().min(0).max(1_440).optional(),
+  travel_minutes: z.number().int().min(0).max(1_440).optional(),
+  safety_buffer_minutes: z.number().int().min(0).max(1_440).optional(),
+  transportation: z.string().min(1).max(40).optional(),
+  pre_event_actions: z.array(z.string().min(1).max(100)).max(20).optional(),
+  notification_channel: z.enum(["google_calendar_popup", "google_calendar_email"]).optional(),
+};
 
 const TaskInput = z.object({
+  context: z.record(z.string(), z.unknown()).optional().describe("Known conversation context: conversation_trips and current_task.id. Server re-reads the task before updates."),
+  existing_task_id: z.string().min(1).max(1024).optional(),
   raw_text: z.string().min(1).max(10_000).describe("The user's original wording, preserved for audit."),
   title: z.string().min(1).max(200).describe("A concise actionable task title."),
   notes: z.string().max(10_000).optional().describe("Helpful task details without secrets."),
   due: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional().describe("Due date in YYYY-MM-DD, or null when no date was requested."),
   deadline: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional().describe("Hard deadline date, or null when none was stated."),
+  deadline_time: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/).nullable().optional().describe("Exact hard-deadline time, distinct from requested execution time."),
   requested_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional().describe("The execution date explicitly requested by the user."),
   requested_time: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/).nullable().optional().describe("The execution time explicitly requested by the user. Never invent this when only a date was stated."),
-  estimated_duration: z.number().int().min(5).max(720).default(30).describe("Estimated duration in minutes."),
+  estimated_duration: z.number().int().min(5).max(720).optional().describe("Estimated duration in minutes. Omit when unknown so Personal OS can apply its semantic default."),
   priority: z.enum(["low", "medium", "high", "urgent"]).default("medium"),
   fixed_time: z.boolean().default(false).describe("True when the user explicitly gave the execution time; the automatic scheduler must not move it."),
   goal_id: z.string().regex(UUID_PATTERN).nullable().optional().describe("Existing Goal id when this Task is an explicit next action for that Goal."),
+  project_id: z.string().regex(UUID_PATTERN).nullable().optional().describe("Existing Project id when known."),
+  resources: z.array(z.string().min(1).max(200)).max(100).default([]).describe("Shared data or system resources used by this Task."),
+  read_resources: z.array(z.string().min(1).max(200)).max(100).default([]),
+  write_resources: z.array(z.string().min(1).max(200)).max(100).default([]),
+  resource_fields: z.array(z.string().min(1).max(200)).max(100).default([]),
+  depends_on_task_ids: z.array(z.string().min(1).max(1024)).max(100).default([]).describe("Known prerequisite Google Task ids."),
+  ...REMINDER_ZOD_FIELDS,
   timezone: z.string().default("Asia/Shanghai").describe("IANA timezone used to interpret the request."),
   idempotency_key: z.string().min(8).max(200).describe("A unique key for this user intent. Reuse exactly the same key only when retrying the same request."),
 });
 
 const TaskOutput = z.object({
   success: z.boolean(),
+  write_success: z.boolean().optional(),
+  verified: z.boolean().optional(),
+  message: z.string().optional(),
+  decision: z.string().optional(),
+  question: z.string().optional(),
+  intent: z.string().optional(),
   destination: z.string().optional(),
   id: z.string().optional(),
   title: z.string().optional(),
@@ -48,11 +90,29 @@ const TaskOutput = z.object({
   goal_plan_id: z.string().nullable().optional(),
   goal_linked: z.boolean().optional(),
   goal_link_error: z.string().optional(),
+  project_id: z.string().nullable().optional(),
+  context_linked: z.boolean().optional(),
+  operation: z.string().optional(),
+  resolution: z.record(z.string(), z.unknown()).nullable().optional(),
+  relationships: z.array(z.record(z.string(), z.unknown())).optional(),
   code: z.string().optional(),
   error: z.string().optional(),
 });
 
+const LifecycleIdInput = z.object({ task_id: z.string().min(1).max(1024) });
+const LifecycleMutationInput = LifecycleIdInput.extend({
+  title: z.string().min(1).max(200).optional(), notes: z.string().max(10_000).nullable().optional(),
+  due: z.string().nullable().optional(), deadline: z.string().nullable().optional(), requested_date: z.string().nullable().optional(), requested_time: z.string().nullable().optional(),
+  priority: z.enum(["low", "medium", "high", "urgent"]).optional(), estimated_duration: z.number().int().min(5).max(720).optional(), fixed_time: z.boolean().optional(), timezone: z.string().max(80).optional(),
+  task_type: z.enum(["task", "follow_up"]).optional(), parent_task_id: z.string().nullable().optional(), follow_up_of: z.string().nullable().optional(), follow_up_sequence: z.number().int().min(2).max(99).optional(),
+  clear_fields: z.array(z.enum(["notes", "due", "deadline", "requested_date", "requested_time", "parent_task_id", "follow_up_of"])).optional(), raw_text: z.string().max(10_000).optional(), request_id: z.string().max(200).optional(), idempotency_key: z.string().min(8).max(200),
+});
+const LifecycleStateInput = LifecycleIdInput.extend({ raw_text: z.string().max(10_000).optional(), request_id: z.string().max(200).optional(), idempotency_key: z.string().min(8).max(200), reason: z.string().max(1_000).optional() });
+const SearchTasksInput = z.object({ query: z.string().max(500).optional(), task_id: z.string().max(1024).optional(), status: z.enum(["open", "completed", "all"]).default("open"), priority: z.enum(["low", "medium", "high", "urgent"]).optional(), task_type: z.enum(["task", "follow_up"]).optional(), date_from: z.string().optional(), date_to: z.string().optional(), deadline_from: z.string().optional(), deadline_to: z.string().optional(), created_from: z.string().max(40).optional(), created_to: z.string().max(40).optional(), updated_from: z.string().max(40).optional(), updated_to: z.string().max(40).optional(), limit: z.number().int().min(1).max(100).default(20) });
+
 const UnifiedIntakeInput = z.object({
+  context: z.record(z.string(), z.unknown()).optional(),
+  existing_task_id: z.string().min(1).max(1024).optional(),
   raw_text: z.string().min(1).max(10_000).describe("The user's exact original wording. Personal OS preserves it."),
   type: z.enum(["task", "goal", "plan", "long_term_item", "financial_item"]).optional()
     .describe("Leave unset to let Personal OS classify. Set only when the user's intent is explicit."),
@@ -67,6 +127,12 @@ const UnifiedIntakeInput = z.object({
     .describe("Use the id returned by get_goals when this message develops an existing Goal."),
   goal_plan_id: z.string().regex(UUID_PATTERN).nullable().optional()
     .describe("For a Task classification, link the resulting Google Task to this existing Goal."),
+  project_id: z.string().regex(UUID_PATTERN).nullable().optional(),
+  resources: z.array(z.string().min(1).max(200)).max(100).default([]),
+  read_resources: z.array(z.string().min(1).max(200)).max(100).default([]),
+  write_resources: z.array(z.string().min(1).max(200)).max(100).default([]),
+  resource_fields: z.array(z.string().min(1).max(200)).max(100).default([]),
+  depends_on_task_ids: z.array(z.string().min(1).max(1024)).max(100).default([]),
   priority: z.enum(["low", "medium", "high", "urgent"]).default("medium"),
   target_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   target_month: z.string().regex(/^20\d{2}-(?:0[1-9]|1[0-2])$/).nullable().optional(),
@@ -74,6 +140,7 @@ const UnifiedIntakeInput = z.object({
   start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   review_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   deadline: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  deadline_time: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/).nullable().optional(),
   progress_percent: z.number().int().min(0).max(100).default(0),
   amount_total: z.number().nonnegative().nullable().optional(),
   amount_completed: z.number().nonnegative().default(0),
@@ -84,8 +151,9 @@ const UnifiedIntakeInput = z.object({
   due: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   requested_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   requested_time: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/).nullable().optional(),
-  estimated_duration: z.number().int().min(5).max(720).default(30),
+  estimated_duration: z.number().int().min(5).max(720).optional(),
   fixed_time: z.boolean().default(false),
+  ...REMINDER_ZOD_FIELDS,
   timezone: z.string().default("Asia/Shanghai"),
   idempotency_key: z.string().min(8).max(200),
 });
@@ -112,26 +180,94 @@ const GoalUpdateInput = z.object({
 
 const GoalCompleteInput = z.object({ goal_id: z.string().regex(UUID_PATTERN) });
 
+const UpdateTaskReminderInput = z.object({
+  task_id: z.string().min(1).max(1024),
+  raw_text: z.string().max(10_000).optional(),
+  scheduled_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  scheduled_start: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/).optional(),
+  scheduled_end: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/).optional(),
+  duration_minutes: z.number().int().min(5).max(720).optional(),
+  fixed_time: z.boolean().optional(),
+  deadline: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  deadline_time: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/).optional(),
+  timezone: z.string().optional(),
+  ...REMINDER_ZOD_FIELDS,
+}).refine((value) => Object.keys(value).some((key) => key !== "task_id"), {
+  message: "At least one schedule or reminder field is required",
+});
+
+const TaskResolutionPreviewInput = TaskInput.omit({ idempotency_key: true }).extend({
+  idempotency_key: z.string().min(8).max(200).optional(),
+});
+const TaskGraphInput = z.object({});
+const ResolutionExplainInput = z.object({
+  audit_id: z.string().regex(UUID_PATTERN).optional(),
+  task_id: z.string().min(1).max(1024).optional(),
+  limit: z.number().int().min(1).max(50).default(10),
+});
+
 const AUTH_SCHEMES = [{ type: "oauth2", scopes: ["openid", "email", "profile"] }];
+const REMINDER_TOOL_PROPERTIES = {
+  reminder_policy: { type: "string", enum: ["none", "smart", "custom"], description: "Use custom for an exact user instruction, smart for inferred timing, and none only when the user explicitly opts out or no reminder is needed." },
+  reminder_policy_source: { type: "string", enum: ["user_explicit", "ai_inferred", "system_default"], description: "User-explicit timing always has highest priority." },
+  reminder_reason: { type: "string", maxLength: 2_000, description: "Short explanation of the preparation, travel, or deadline factors used." },
+  reminder_at: { anyOf: [{ type: "string", pattern: "^(?:(?:20\\d{2}-\\d{2}-\\d{2})T)?(?:[01]\\d|2[0-3]):[0-5]\\d$" }, { type: "null" }], description: "Exact user-requested local reminder time as HH:MM or YYYY-MM-DDTHH:MM." },
+  reminder_offset_minutes: { anyOf: [{ type: "integer", minimum: 0, maximum: 40_320 }, { type: "null" }], description: "Minutes before the Event anchor. Do not use a fixed universal offset." },
+  reminder_type: { type: "string", enum: ["preparation", "departure", "event"] },
+  reminders: {
+    type: "array",
+    maxItems: 3,
+    description: "Minimum necessary reminder overrides. Never turn these into Tasks or Events.",
+    items: {
+      type: "object",
+      properties: {
+        type: { type: "string", enum: ["preparation", "departure", "event"] },
+        at: { type: "string", pattern: "^(?:(?:20\\d{2}-\\d{2}-\\d{2})T)?(?:[01]\\d|2[0-3]):[0-5]\\d$" },
+        offset_minutes: { type: "integer", minimum: 0, maximum: 40_320 },
+      },
+      anyOf: [{ required: ["at"] }, { required: ["offset_minutes"] }],
+      required: ["type"],
+      additionalProperties: false,
+    },
+  },
+  need_preparation: { type: "boolean" },
+  need_travel: { type: "boolean" },
+  preparation_minutes: { type: "integer", minimum: 0, maximum: 1_440 },
+  travel_minutes: { type: "integer", minimum: 0, maximum: 1_440 },
+  safety_buffer_minutes: { type: "integer", minimum: 0, maximum: 1_440 },
+  transportation: { type: "string", minLength: 1, maxLength: 40, description: "Known mode such as metro, drive, taxi, walk, train, or airport." },
+  pre_event_actions: { type: "array", maxItems: 20, items: { type: "string", minLength: 1, maxLength: 100 } },
+  notification_channel: { type: "string", enum: ["google_calendar_popup", "google_calendar_email"], default: "google_calendar_popup" },
+};
 
 const CREATE_TASK_TOOL = {
   name: "create_task",
   title: "Create a Personal OS task",
-  description: "Create an ordinary reminder, todo, or action item in the user's Personal OS Google Tasks list. When the user explicitly states an execution time, also pass requested_date/requested_time so Personal OS creates one linked Google Calendar projection. Do not use it for meetings, flights, appointments, recurring web research, analysis jobs, project facts, or durable knowledge. Report success only when this tool returns success=true.",
+  description: "Execute clear low-risk actions immediately without asking for optional date, hotel, repetition or confirmation. One action is one Google Task. Infer reasonable Date from conversation, Calendar or Travel Plan; never invent Deadline. Search and update existing tasks before creating. Pass context.current_task.id for short corrections such as 改成四点; the server reads current truth. Information questions do not create tasks. High-risk transactions require key parameters and confirmation and are never executed by this task tool. Report persistence only with write_success=true and verified=true; use returned message. Calendar is the same task's projection. GPT automation is only for future GPT work, not ordinary reminders.",
   inputSchema: {
     type: "object",
     properties: {
+      context: { type: "object", additionalProperties: true, description: "Known context: conversation_trips [{title,start_date,end_date}], current_task {id}. Server refreshes provider state." },
+      existing_task_id: { type: "string", minLength: 1, maxLength: 1024 },
       raw_text: { type: "string", minLength: 1, maxLength: 10_000, description: "The user's original wording, preserved for audit." },
       title: { type: "string", minLength: 1, maxLength: 200, description: "A concise actionable task title." },
       notes: { type: "string", maxLength: 10_000, description: "Helpful task details without secrets." },
       due: { anyOf: [{ type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" }, { type: "null" }], description: "Due date in YYYY-MM-DD, or null when no date was requested." },
       deadline: { anyOf: [{ type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" }, { type: "null" }], description: "Hard deadline date, or null." },
+      deadline_time: { anyOf: [{ type: "string", pattern: "^(?:[01]\\d|2[0-3]):[0-5]\\d$" }, { type: "null" }], description: "Exact deadline time. Keep this separate from requested_time." },
       requested_date: { anyOf: [{ type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" }, { type: "null" }], description: "Explicit execution date." },
       requested_time: { anyOf: [{ type: "string", pattern: "^(?:[01]\\d|2[0-3]):[0-5]\\d$" }, { type: "null" }], description: "Explicit execution time; never invent it for a date-only request." },
-      estimated_duration: { type: "integer", minimum: 5, maximum: 720, default: 30, description: "Estimated duration in minutes." },
+      estimated_duration: { type: "integer", minimum: 5, maximum: 720, description: "Estimated duration in minutes. Omit when unknown; Personal OS applies a semantic default such as 60 minutes for a meeting." },
       priority: { type: "string", enum: ["low", "medium", "high", "urgent"], default: "medium" },
       fixed_time: { type: "boolean", default: false, description: "True only when the user explicitly gave the execution time." },
       goal_id: { anyOf: [{ type: "string", pattern: "^[0-9a-fA-F-]{36}$" }, { type: "null" }], description: "Existing Goal id when this Task is its concrete next action." },
+      project_id: { anyOf: [{ type: "string", pattern: "^[0-9a-fA-F-]{36}$" }, { type: "null" }], description: "Existing Project id when known." },
+      resources: { type: "array", items: { type: "string", maxLength: 200 }, maxItems: 100, default: [], description: "Shared data or system resources used by this Task." },
+      read_resources: { type: "array", items: { type: "string", maxLength: 200 }, maxItems: 100, default: [] },
+      write_resources: { type: "array", items: { type: "string", maxLength: 200 }, maxItems: 100, default: [] },
+      resource_fields: { type: "array", items: { type: "string", maxLength: 200 }, maxItems: 100, default: [] },
+      depends_on_task_ids: { type: "array", items: { type: "string", maxLength: 1024 }, maxItems: 100, default: [], description: "Known prerequisite Google Task ids." },
+      ...REMINDER_TOOL_PROPERTIES,
       timezone: { type: "string", default: "Asia/Shanghai", description: "IANA timezone used to interpret the request." },
       idempotency_key: { type: "string", minLength: 8, maxLength: 200, description: "A unique key for this user intent. Reuse exactly the same key only when retrying the same request." },
     },
@@ -153,6 +289,11 @@ const CREATE_TASK_TOOL = {
       goal_plan_id: { anyOf: [{ type: "string" }, { type: "null" }] },
       goal_linked: { type: "boolean" },
       goal_link_error: { type: "string" },
+      project_id: { anyOf: [{ type: "string" }, { type: "null" }] },
+      context_linked: { type: "boolean" },
+      operation: { type: "string" },
+      resolution: { anyOf: [{ type: "object", additionalProperties: true }, { type: "null" }] },
+      relationships: { type: "array", items: { type: "object", additionalProperties: true } },
       code: { type: "string" },
       error: { type: "string" },
     },
@@ -174,13 +315,161 @@ const CREATE_TASK_TOOL = {
   },
 };
 
-const CAPTURE_ITEM_TOOL = {
-  name: "capture_personal_os_item",
-  title: "Capture a Personal OS item",
-  description: "Classify and persist the user's natural-language input in the correct Personal OS layer. Explicit requests such as 'put this in my medium-term goals' should be written directly without asking for confirmation. A concrete action goes to Google Tasks; a durable direction or state goes to Goals & Plans. Writes are update-first: use existing_goal_id from get_goals when context identifies an existing Goal, otherwise the intake gateway performs conservative matching. Do not invent a deadline, target precision, amount, motivation, or next action. Preserve raw_text exactly and report success only when success=true.",
+const UPDATE_TASK_REMINDER_TOOL = {
+  name: "update_task_reminder",
+  title: "Update a Task's Smart Reminder",
+  description: "Update reminder policy on an existing Google Task and its existing Schedule/Calendar projection. This tool never creates a Google Task or a second Calendar Event. Use the task_id from Personal OS, preserve exact user timing, and use smart inference only when the user did not specify an exact reminder. A scheduled time or exact deadline time must already exist, unless supplied here for a Task that has no Schedule yet.",
   inputSchema: {
     type: "object",
     properties: {
+      task_id: { type: "string", minLength: 1, maxLength: 1024, description: "Existing canonical Google Task id." },
+      raw_text: { type: "string", maxLength: 10_000, description: "Current user wording or additional pre-event context." },
+      scheduled_date: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
+      scheduled_start: { type: "string", pattern: "^(?:[01]\\d|2[0-3]):[0-5]\\d$" },
+      scheduled_end: { type: "string", pattern: "^(?:[01]\\d|2[0-3]):[0-5]\\d$" },
+      duration_minutes: { type: "integer", minimum: 5, maximum: 720 },
+      fixed_time: { type: "boolean" },
+      deadline: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" },
+      deadline_time: { type: "string", pattern: "^(?:[01]\\d|2[0-3]):[0-5]\\d$" },
+      timezone: { type: "string" },
+      ...REMINDER_TOOL_PROPERTIES,
+    },
+    required: ["task_id"],
+    anyOf: [
+      { required: ["raw_text"] },
+      { required: ["scheduled_date"] },
+      { required: ["scheduled_start"] },
+      { required: ["scheduled_end"] },
+      { required: ["duration_minutes"] },
+      { required: ["fixed_time"] },
+      { required: ["deadline"] },
+      { required: ["deadline_time"] },
+      { required: ["timezone"] },
+      { required: ["reminder_policy"] },
+      { required: ["reminder_policy_source"] },
+      { required: ["reminder_reason"] },
+      { required: ["reminder_at"] },
+      { required: ["reminder_offset_minutes"] },
+      { required: ["reminder_type"] },
+      { required: ["reminders"] },
+      { required: ["need_preparation"] },
+      { required: ["need_travel"] },
+      { required: ["preparation_minutes"] },
+      { required: ["travel_minutes"] },
+      { required: ["safety_buffer_minutes"] },
+      { required: ["transportation"] },
+      { required: ["pre_event_actions"] },
+      { required: ["notification_channel"] },
+    ],
+    additionalProperties: false,
+  },
+  outputSchema: {
+    type: "object",
+    properties: {
+      success: { type: "boolean" },
+      task_id: { type: "string" },
+      schedule_id: { type: "string" },
+      calendar_event_id: { type: "string" },
+      task_id_unchanged: { type: "boolean" },
+      schedule_id_unchanged: { type: "boolean" },
+      calendar_event_id_unchanged: { type: "boolean" },
+      google_tasks_count_delta: { type: "integer" },
+      schedule: { type: "object", additionalProperties: true },
+      projection: { type: "object", additionalProperties: true },
+      code: { type: "string" },
+      error: { type: "string" },
+    },
+    required: ["success"],
+    additionalProperties: false,
+  },
+  securitySchemes: AUTH_SCHEMES,
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  _meta: {
+    securitySchemes: AUTH_SCHEMES,
+    "openai/visibility": "public",
+    "openai/toolInvocation/invoking": "正在更新智能提醒",
+    "openai/toolInvocation/invoked": "智能提醒已处理",
+  },
+};
+
+const RESOLVE_TASK_INTENT_TOOL = {
+  name: "resolve_task_intent",
+  title: "Preview Task relationship resolution",
+  description: "Read provider truth and preview how Personal OS would classify a new Task intent before writing: NEW, DUPLICATE, UPDATE, MERGE, RELATED, DEPENDENCY, PARENT_CHILD, GOAL_LINK, or CONFLICT. This tool never persists a Task.",
+  inputSchema: {
+    ...CREATE_TASK_TOOL.inputSchema,
+    required: ["raw_text", "title"],
+  },
+  outputSchema: {
+    type: "object",
+    properties: {
+      success: { type: "boolean" },
+      resolution: { type: "object", additionalProperties: true },
+      code: { type: "string" },
+      error: { type: "string" },
+    },
+    required: ["success"],
+    additionalProperties: false,
+  },
+  securitySchemes: AUTH_SCHEMES,
+  annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  _meta: {
+    securitySchemes: AUTH_SCHEMES,
+    "openai/visibility": "public",
+    "openai/toolInvocation/invoking": "正在解析任务关系",
+    "openai/toolInvocation/invoked": "任务关系解析完成",
+  },
+};
+
+const GET_TASK_GRAPH_TOOL = {
+  name: "get_task_graph",
+  title: "Read the Personal OS Task graph",
+  description: "Read the current Google Tasks execution graph with dependencies, parents and children, related/conflicting Tasks, READY/BLOCKED/WAITING states, topological layers, and safe parallel groups.",
+  inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  outputSchema: { type: "object", additionalProperties: true },
+  securitySchemes: AUTH_SCHEMES,
+  annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  _meta: {
+    securitySchemes: AUTH_SCHEMES,
+    "openai/visibility": "public",
+    "openai/toolInvocation/invoking": "正在读取 Task Graph",
+    "openai/toolInvocation/invoked": "Task Graph 读取完成",
+  },
+};
+
+const EXPLAIN_TASK_RESOLUTION_TOOL = {
+  name: "explain_task_resolution",
+  title: "Explain a Task resolution",
+  description: "Read the durable audit trail for a resolution decision, including original intent, candidates, confidence, reason, before/after state, and affected Task ids.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      audit_id: { type: "string", pattern: "^[0-9a-fA-F-]{36}$", description: "Exact resolution audit id when known." },
+      task_id: { type: "string", minLength: 1, maxLength: 1024, description: "Canonical Google Task id when the audit id is unknown." },
+      limit: { type: "integer", minimum: 1, maximum: 50, default: 10 },
+    },
+    additionalProperties: false,
+  },
+  outputSchema: { type: "object", additionalProperties: true },
+  securitySchemes: AUTH_SCHEMES,
+  annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  _meta: {
+    securitySchemes: AUTH_SCHEMES,
+    "openai/visibility": "public",
+    "openai/toolInvocation/invoking": "正在读取解析审计",
+    "openai/toolInvocation/invoked": "解析审计读取完成",
+  },
+};
+
+const CAPTURE_ITEM_TOOL = {
+  name: "capture_personal_os_item",
+  title: "Capture a Personal OS item",
+  description: "Infer → Execute → Verify → Report. Clear reversible life/work actions go directly to Google Tasks without optional-field questions or reconfirmation. Information questions create nothing; lasting preferences go to Goals & Plans; a lasting rule plus current action is saved in both existing layers. Preserve raw_text and known conversation context. Semantic search precedes create, short corrections update context.current_task.id, and partial cancellation keeps unrelated arrangements. Ask only about outcome-changing ambiguity or high-risk acts. Use returned message; never claim persistence without write_success=true and verified=true.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      context: { type: "object", additionalProperties: true, description: "Known conversation_trips [{title,start_date,end_date}], current_task {id}; readback refreshes the current Task." },
+      existing_task_id: { type: "string", minLength: 1, maxLength: 1024 },
       raw_text: { type: "string", minLength: 1, maxLength: 10_000, description: "The user's exact original wording." },
       type: { type: "string", enum: ["task", "goal", "plan", "long_term_item", "financial_item"], description: "Optional explicit classification; omit for automatic classification." },
       title: { type: "string", minLength: 1, maxLength: 200 },
@@ -192,6 +481,12 @@ const CAPTURE_ITEM_TOOL = {
       horizon: { type: "string", enum: ["short", "medium", "long"], description: "Semantic horizon. Explicit user wording takes priority over date arithmetic." },
       existing_goal_id: { anyOf: [{ type: "string", pattern: "^[0-9a-fA-F-]{36}$" }, { type: "null" }], description: "Existing Goal id returned by get_goals when this message develops that Goal." },
       goal_plan_id: { anyOf: [{ type: "string", pattern: "^[0-9a-fA-F-]{36}$" }, { type: "null" }], description: "For Task classification, link the new Task to this Goal." },
+      project_id: { anyOf: [{ type: "string", pattern: "^[0-9a-fA-F-]{36}$" }, { type: "null" }] },
+      resources: { type: "array", items: { type: "string", maxLength: 200 }, maxItems: 100, default: [] },
+      read_resources: { type: "array", items: { type: "string", maxLength: 200 }, maxItems: 100, default: [] },
+      write_resources: { type: "array", items: { type: "string", maxLength: 200 }, maxItems: 100, default: [] },
+      resource_fields: { type: "array", items: { type: "string", maxLength: 200 }, maxItems: 100, default: [] },
+      depends_on_task_ids: { type: "array", items: { type: "string", maxLength: 1024 }, maxItems: 100, default: [] },
       priority: { type: "string", enum: ["low", "medium", "high", "urgent"], default: "medium" },
       target_date: { anyOf: [{ type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" }, { type: "null" }] },
       target_month: { anyOf: [{ type: "string", pattern: "^20\\d{2}-(?:0[1-9]|1[0-2])$" }, { type: "null" }] },
@@ -199,6 +494,7 @@ const CAPTURE_ITEM_TOOL = {
       start_date: { anyOf: [{ type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" }, { type: "null" }] },
       review_date: { anyOf: [{ type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" }, { type: "null" }] },
       deadline: { anyOf: [{ type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" }, { type: "null" }] },
+      deadline_time: { anyOf: [{ type: "string", pattern: "^(?:[01]\\d|2[0-3]):[0-5]\\d$" }, { type: "null" }] },
       progress_percent: { type: "integer", minimum: 0, maximum: 100, default: 0 },
       amount_total: { anyOf: [{ type: "number", minimum: 0 }, { type: "null" }] },
       amount_completed: { type: "number", minimum: 0, default: 0 },
@@ -209,8 +505,9 @@ const CAPTURE_ITEM_TOOL = {
       due: { anyOf: [{ type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" }, { type: "null" }] },
       requested_date: { anyOf: [{ type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" }, { type: "null" }] },
       requested_time: { anyOf: [{ type: "string", pattern: "^(?:[01]\\d|2[0-3]):[0-5]\\d$" }, { type: "null" }] },
-      estimated_duration: { type: "integer", minimum: 5, maximum: 720, default: 30 },
+      estimated_duration: { type: "integer", minimum: 5, maximum: 720 },
       fixed_time: { type: "boolean", default: false },
+      ...REMINDER_TOOL_PROPERTIES,
       timezone: { type: "string", default: "Asia/Shanghai" },
       idempotency_key: { type: "string", minLength: 8, maxLength: 200, description: "Reuse only when retrying this exact intent." },
     },
@@ -237,6 +534,8 @@ const CAPTURE_ITEM_TOOL = {
       goal_plan_id: { anyOf: [{ type: "string" }, { type: "null" }] },
       goal_linked: { type: "boolean" },
       goal_link_error: { type: "string" },
+      resolution: { anyOf: [{ type: "object", additionalProperties: true }, { type: "null" }] },
+      relationships: { type: "array", items: { type: "object", additionalProperties: true } },
       target_date: { anyOf: [{ type: "string" }, { type: "null" }] },
       target_month: { anyOf: [{ type: "string" }, { type: "null" }] },
       target_year: { anyOf: [{ type: "integer" }, { type: "null" }] },
@@ -375,6 +674,28 @@ const COMPLETE_GOAL_TOOL = {
   },
 };
 
+function reminderArguments(args: object) {
+  const record = args as Record<string, unknown>;
+  const keys = [
+    "reminder_policy",
+    "reminder_policy_source",
+    "reminder_reason",
+    "reminder_at",
+    "reminder_offset_minutes",
+    "reminder_type",
+    "reminders",
+    "need_preparation",
+    "need_travel",
+    "preparation_minutes",
+    "travel_minutes",
+    "safety_buffer_minutes",
+    "transportation",
+    "pre_event_actions",
+    "notification_channel",
+  ];
+  return Object.fromEntries(keys.filter((key) => Object.hasOwn(record, key)).map((key) => [key, record[key]]));
+}
+
 async function createTask(args: z.infer<typeof TaskInput>) {
   let response: Response;
   try {
@@ -387,18 +708,28 @@ async function createTask(args: z.infer<typeof TaskInput>) {
       },
       body: JSON.stringify({
         source: "chatgpt",
+        context: args.context,
+        existing_task_id: args.existing_task_id,
         raw_text: args.raw_text,
         type: "task",
         title: args.title,
         notes: args.notes || "",
         due: args.due || null,
         deadline: args.deadline || null,
+        deadline_time: args.deadline_time || null,
         requested_date: args.requested_date || null,
         requested_time: args.requested_time || null,
         estimated_duration: args.estimated_duration,
         priority: args.priority,
         fixed_time: args.fixed_time,
         goal_plan_id: args.goal_id || null,
+        project_id: args.project_id || null,
+        resources: args.resources,
+        read_resources: args.read_resources,
+        write_resources: args.write_resources,
+        resource_fields: args.resource_fields,
+        depends_on_task_ids: args.depends_on_task_ids,
+        ...reminderArguments(args),
         scheduling_source: args.requested_date || args.requested_time ? "explicit_user" : "gpt_inferred",
         timezone: args.timezone,
         idempotency_key: args.idempotency_key,
@@ -414,22 +745,126 @@ async function createTask(args: z.infer<typeof TaskInput>) {
   let result: z.infer<typeof TaskOutput>;
   try { result = text ? JSON.parse(text) : { success: false }; }
   catch { result = { success: false, code: "INVALID_GATEWAY_RESPONSE", error: "Personal OS returned an invalid response" }; }
-  const succeeded = isPersistedObjectResult(response.ok, result);
-  const relationSuffix = args.goal_id
-    ? result.goal_linked
-      ? "，并已关联现有 Goal"
-      : `；Task 已创建，但 Goal 关联未完成${result.goal_link_error ? `（${result.goal_link_error}）` : ""}`
-    : "";
+  const succeeded = response.ok && result.success === true && result.verified === true;
   return {
     isError: !succeeded,
     content: [{
       type: "text",
-      text: succeeded
-        ? `已真实写入 Google Tasks${args.requested_time ? " 并建立 Calendar 时间投影" : ""}：${result.title}${result.due ? `（到期 ${result.due}）` : ""}${relationSuffix}`
-        : `任务未写入：${result.error || `Personal OS returned ${response.status}`}`,
+      text: result.message || intakeConfirmation(result),
     }],
     structuredContent: result,
   };
+}
+
+async function updateTaskReminder(args: z.infer<typeof UpdateTaskReminderInput>) {
+  try {
+    const { task_id: taskId, ...reminder } = args;
+    const response = await fetch(`${SUPABASE_URL}/functions/v1/task-scheduler`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${WRITE_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "update_reminder", task_id: taskId, reminder }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    const text = await response.text();
+    let result: Record<string, unknown>;
+    try { result = text ? JSON.parse(text) : { success: false }; }
+    catch { result = { success: false, code: "INVALID_GATEWAY_RESPONSE", error: "Personal OS returned an invalid response" }; }
+    const succeeded = response.ok && result.success === true;
+    return {
+      isError: !succeeded,
+      content: [{
+        type: "text",
+        text: succeeded
+          ? `已在原 Task / Schedule / Calendar Event 上更新提醒；Task=${result.task_id}，Schedule ID 与 Event ID 均保持稳定，Google Tasks 数量变化 0。`
+          : `智能提醒未更新：${result.error || `Personal OS returned ${response.status}`}`,
+      }],
+      structuredContent: result,
+    };
+  } catch (error) {
+    const result = { success: false, code: "REMINDER_UPDATE_UNREACHABLE", error: error instanceof Error ? error.message : "Reminder service unavailable" };
+    return { isError: true, content: [{ type: "text", text: `智能提醒未更新：${result.error}` }], structuredContent: result };
+  }
+}
+
+async function taskResolutionService(path: string, init: RequestInit = {}) {
+  const response = await fetch(`${SUPABASE_URL}/functions/v1/task-status${path}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${WRITE_TOKEN}`,
+      "Content-Type": "application/json",
+      ...(init.headers || {}),
+    },
+    signal: init.signal || AbortSignal.timeout(20_000),
+  });
+  const text = await response.text();
+  let result: Record<string, unknown>;
+  try { result = text ? JSON.parse(text) : { success: response.ok }; }
+  catch { result = { success: false, code: "INVALID_GATEWAY_RESPONSE", error: "Personal OS returned an invalid response" }; }
+  return { response, result };
+}
+
+async function previewTaskIntent(args: z.infer<typeof TaskResolutionPreviewInput>) {
+  try {
+    const { response, result } = await taskResolutionService("", {
+      method: "POST",
+      body: JSON.stringify({ action: "preview_resolution", task: args }),
+    });
+    const succeeded = response.ok && result.success === true;
+    const resolution = result.resolution as Record<string, unknown> | undefined;
+    return {
+      isError: !succeeded,
+      content: [{
+        type: "text",
+        text: succeeded
+          ? `解析结果：${resolution?.decision || "UNKNOWN"}（置信度 ${resolution?.confidence ?? "unknown"}）。未写入任何 Task。`
+          : `任务关系解析失败：${result.error || `Personal OS returned ${response.status}`}`,
+      }],
+      structuredContent: result,
+    };
+  } catch (error) {
+    return toolFailure("任务关系解析", error);
+  }
+}
+
+async function getTaskGraph() {
+  try {
+    const { response, result } = await taskResolutionService("?resource=graph");
+    const succeeded = response.ok && result.success === true;
+    return {
+      isError: !succeeded,
+      content: [{
+        type: "text",
+        text: succeeded
+          ? `Task Graph 已读取：${Array.isArray(result.ready_task_ids) ? result.ready_task_ids.length : 0} 个 READY，${Array.isArray(result.blocked_task_ids) ? result.blocked_task_ids.length : 0} 个 BLOCKED。`
+          : `Task Graph 读取失败：${result.error || `Personal OS returned ${response.status}`}`,
+      }],
+      structuredContent: result,
+    };
+  } catch (error) {
+    return toolFailure("Task Graph 读取", error);
+  }
+}
+
+async function explainTaskResolution(args: z.infer<typeof ResolutionExplainInput>) {
+  try {
+    const query = new URLSearchParams({ resource: "resolution", limit: String(args.limit) });
+    if (args.audit_id) query.set("audit_id", args.audit_id);
+    if (args.task_id) query.set("task_id", args.task_id);
+    const { response, result } = await taskResolutionService(`?${query}`);
+    const succeeded = response.ok && result.success === true;
+    return {
+      isError: !succeeded,
+      content: [{
+        type: "text",
+        text: succeeded
+          ? `已读取 ${result.count || 0} 条 Task Resolution 审计记录。`
+          : `解析审计读取失败：${result.error || `Personal OS returned ${response.status}`}`,
+      }],
+      structuredContent: result,
+    };
+  } catch (error) {
+    return toolFailure("解析审计读取", error);
+  }
 }
 
 async function captureItem(args: z.infer<typeof UnifiedIntakeInput>) {
@@ -454,21 +889,12 @@ async function captureItem(args: z.infer<typeof UnifiedIntakeInput>) {
   let result: Record<string, unknown>;
   try { result = text ? JSON.parse(text) : { success: false }; }
   catch { result = { success: false, code: "INVALID_GATEWAY_RESPONSE", error: "Personal OS returned an invalid response" }; }
-  const succeeded = isPersistedObjectResult(response.ok, result);
-  const classification = String(result.classification || args.type || "item");
-  const destination = String(result.destination || "");
-  const horizon = { short: "短期", medium: "中期", long: "长期" }[String(result.horizon || args.horizon || "medium")] || "中期";
+  const succeeded = response.ok && result.success === true && result.verified === true;
   return {
     isError: !succeeded,
     content: [{
       type: "text",
-      text: succeeded
-        ? destination === "google_tasks"
-          ? `已归类为 Task 并真实写入 Google Tasks：${result.title}`
-          : result.operation === "updated"
-            ? `已更新现有 Goal「${result.title}」。`
-            : `已加入 Personal OS → ${horizon} Goal & Plan「${result.title}」。`
-        : `未写入 Personal OS：${result.error || `Personal OS returned ${response.status}`}`,
+      text: String(result.message || intakeConfirmation(result)),
     }],
     structuredContent: result,
   };
@@ -593,6 +1019,36 @@ async function completeGoal(request: Request, args: z.infer<typeof GoalCompleteI
   }
 }
 
+function lifecycleTool(name: string, title: string, inputSchema: Record<string, unknown>, readOnly = false, destructive = false) {
+  return { name, title, description: `${title} through the canonical Google Tasks lifecycle API.`, inputSchema, outputSchema: { type: "object", properties: { success: { type: "boolean" }, task: { type: "object", additionalProperties: true }, tasks: { type: "array", items: { type: "object", additionalProperties: true } }, code: { type: "string" }, error: { type: "string" } }, required: ["success"], additionalProperties: true }, securitySchemes: AUTH_SCHEMES, annotations: { readOnlyHint: readOnly, destructiveHint: destructive, idempotentHint: true, openWorldHint: true }, _meta: { securitySchemes: AUTH_SCHEMES, "openai/visibility": "public" } };
+}
+const ID_FIELD = { type: "string", minLength: 1, maxLength: 1024 };
+const IDEMPOTENCY_FIELD = { type: "string", minLength: 8, maxLength: 200 };
+const DATE_FIELD = { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" };
+const TIME_FIELD = { type: "string", pattern: "^(?:[01]\\d|2[0-3]):[0-5]\\d$" };
+const SEARCH_TASKS_TOOL = lifecycleTool("search_tasks", "Search Personal OS tasks", { type: "object", properties: { query: { type: "string", maxLength: 500 }, task_id: ID_FIELD, status: { type: "string", enum: ["open", "completed", "all"], default: "open" }, priority: { type: "string", enum: ["low", "medium", "high", "urgent"] }, task_type: { type: "string", enum: ["task", "follow_up"] }, date_from: DATE_FIELD, date_to: DATE_FIELD, deadline_from: DATE_FIELD, deadline_to: DATE_FIELD, created_from: { type: "string", maxLength: 40 }, created_to: { type: "string", maxLength: 40 }, updated_from: { type: "string", maxLength: 40 }, updated_to: { type: "string", maxLength: 40 }, limit: { type: "integer", minimum: 1, maximum: 100, default: 20 } }, additionalProperties: false }, true);
+const GET_TASK_TOOL = lifecycleTool("get_task", "Read a Personal OS task", { type: "object", properties: { task_id: ID_FIELD }, required: ["task_id"], additionalProperties: false }, true);
+const UPDATE_TASK_TOOL = lifecycleTool("update_task", "Update a Personal OS task", { type: "object", properties: { task_id: ID_FIELD, title: { type: "string", minLength: 1, maxLength: 200 }, notes: { anyOf: [{ type: "string", maxLength: 10_000 }, { type: "null" }] }, due: { anyOf: [DATE_FIELD, { type: "null" }] }, deadline: { anyOf: [DATE_FIELD, { type: "null" }] }, requested_date: { anyOf: [DATE_FIELD, { type: "null" }] }, requested_time: { anyOf: [TIME_FIELD, { type: "null" }] }, priority: { type: "string", enum: ["low", "medium", "high", "urgent"] }, estimated_duration: { type: "integer", minimum: 5, maximum: 720 }, fixed_time: { type: "boolean" }, timezone: { type: "string", minLength: 1, maxLength: 80 }, task_type: { type: "string", enum: ["task", "follow_up"] }, parent_task_id: { anyOf: [ID_FIELD, { type: "null" }] }, follow_up_of: { anyOf: [ID_FIELD, { type: "null" }] }, follow_up_sequence: { type: "integer", minimum: 2, maximum: 99 }, clear_fields: { type: "array", items: { type: "string", enum: ["notes", "due", "deadline", "requested_date", "requested_time", "parent_task_id", "follow_up_of"] } }, raw_text: { type: "string", maxLength: 10_000 }, request_id: { type: "string", maxLength: 200 }, idempotency_key: IDEMPOTENCY_FIELD }, required: ["task_id", "idempotency_key"], additionalProperties: false });
+const STATE_SCHEMA = { type: "object", properties: { task_id: ID_FIELD, raw_text: { type: "string", maxLength: 10_000 }, request_id: { type: "string", maxLength: 200 }, idempotency_key: IDEMPOTENCY_FIELD }, required: ["task_id", "idempotency_key"], additionalProperties: false };
+const COMPLETE_TASK_TOOL = lifecycleTool("complete_task", "Complete a Personal OS task", STATE_SCHEMA);
+const REOPEN_TASK_TOOL = lifecycleTool("reopen_task", "Reopen a Personal OS task", STATE_SCHEMA);
+const DELETE_TASK_TOOL = lifecycleTool("delete_task", "Delete a Personal OS task", { ...STATE_SCHEMA, properties: { ...STATE_SCHEMA.properties, reason: { type: "string", maxLength: 1_000 } } }, false, true);
+
+async function lifecycleApi(request: Request, method: string, query: Record<string, unknown> = {}, body: Record<string, unknown> | null = null) {
+  const url = new URL(`${SUPABASE_URL}/functions/v1/google-tasks`);
+  for (const [key, value] of Object.entries(query)) if (value !== undefined && value !== null && value !== "") url.searchParams.set(key, String(value));
+  return fetch(url, { method, headers: { apikey: SUPABASE_PUBLIC_KEY, Authorization: request.headers.get("authorization") || "", "Content-Type": "application/json", ...(body?.idempotency_key ? { "Idempotency-Key": String(body.idempotency_key) } : {}) }, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(30_000) });
+}
+
+async function lifecycleResult(request: Request, method: string, query: Record<string, unknown> = {}, body: Record<string, unknown> | null = null) {
+  const response = await lifecycleApi(request, method, query, body);
+  const text = await response.text();
+  let result: Record<string, unknown>;
+  try { result = text ? JSON.parse(text) : {}; } catch { result = { success: false, code: "INVALID_GATEWAY_RESPONSE", error: "Google Tasks returned invalid JSON" }; }
+  const succeeded = response.ok && result.success === true;
+  return { isError: !succeeded, content: [{ type: "text", text: succeeded ? "任务操作已核实。" : `任务操作未完成：${result.error || response.status}` }], structuredContent: result };
+}
+
 function rpcResult(id: unknown, result: unknown) {
   return Response.json({ jsonrpc: "2.0", id: id ?? null, result });
 }
@@ -629,17 +1085,43 @@ async function handleMcp(request: Request) {
     const requestedVersion = typeof params.protocolVersion === "string" ? params.protocolVersion : "2025-06-18";
     return rpcResult(id, {
       protocolVersion: requestedVersion,
-      serverInfo: { name: "personal-os", title: "Personal OS", version: "1.2.1" },
+      serverInfo: { name: "personal-os", title: "Personal OS", version: "1.5.0" },
       capabilities: { tools: { listChanged: false } },
-      instructions: "Personal OS is the source of truth. Use get_goals, never memory alone, when the user asks about goals or before changing an unknown goal. If the user explicitly asks to put something in Goal & Plan, call capture_personal_os_item directly without asking again. Writes are update-first: pass existing_goal_id when known. Use update_goal for a known existing goal and complete_goal for completion. Use create_task only for a concrete next action; for a Goal plus action, persist the Goal first and pass its id as goal_id to create_task. A Goal time window is not a Task deadline. Never claim persistence unless the tool returns success=true.",
+      instructions: "Google Tasks is Task status truth. Clear low-risk reversible actions are authorized by natural-language intent: infer missing optional fields and execute without asking for date, hotel name, repetition or reconfirmation. Resolve Before Create and update first. Questions create nothing; durable preferences use Goals & Plans; mixed rules and current actions save both. Pass known conversation_trips and current_task.id for short corrections; re-read provider state before changing it. Infer Date from explicit wording, conversation, Calendar, Travel Plan, current context, then a reasonable default. Never invent Deadline. One action is one Task; unfinished tasks remain visible through Today/Overdue, not duplicate daily inserts. L2 asks only about outcome-changing ambiguity; L3 transactions require critical parameters and confirmation and cannot execute through these Task tools. For timed actions perform Smart Reminder reasoning, attach reminders to the same Schedule and stable Calendar Event, and use update_task_reminder for existing reminders. Ordinary reminders go to Google Tasks; automation is for future GPT search, analysis or generated content. Only write_success=true plus verified=true permits 已经写进去了. Prefer the returned short message and report Calendar projection failures separately; projection is not phone delivery.",
     });
   }
   if (method === "ping") return rpcResult(id, {});
-  if (method === "tools/list") return rpcResult(id, { tools: [CREATE_TASK_TOOL, CAPTURE_ITEM_TOOL, GET_GOALS_TOOL, UPDATE_GOAL_TOOL, COMPLETE_GOAL_TOOL] });
+  if (method === "tools/list") return rpcResult(id, { tools: [
+    CREATE_TASK_TOOL,
+    SEARCH_TASKS_TOOL,
+    GET_TASK_TOOL,
+    UPDATE_TASK_TOOL,
+    COMPLETE_TASK_TOOL,
+    REOPEN_TASK_TOOL,
+    DELETE_TASK_TOOL,
+    UPDATE_TASK_REMINDER_TOOL,
+    RESOLVE_TASK_INTENT_TOOL,
+    GET_TASK_GRAPH_TOOL,
+    EXPLAIN_TASK_RESOLUTION_TOOL,
+    CAPTURE_ITEM_TOOL,
+    GET_GOALS_TOOL,
+    UPDATE_GOAL_TOOL,
+    COMPLETE_GOAL_TOOL,
+  ] });
   if (method === "tools/call") {
     const params = rpc.params && typeof rpc.params === "object" ? rpc.params as Record<string, unknown> : {};
     const schemas: Record<string, z.ZodTypeAny> = {
       create_task: TaskInput,
+      search_tasks: SearchTasksInput,
+      get_task: LifecycleIdInput,
+      update_task: LifecycleMutationInput,
+      complete_task: LifecycleStateInput,
+      reopen_task: LifecycleStateInput,
+      delete_task: LifecycleStateInput,
+      update_task_reminder: UpdateTaskReminderInput,
+      resolve_task_intent: TaskResolutionPreviewInput,
+      get_task_graph: TaskGraphInput,
+      explain_task_resolution: ResolutionExplainInput,
       capture_personal_os_item: UnifiedIntakeInput,
       get_goals: GoalQueryInput,
       update_goal: GoalUpdateInput,
@@ -657,6 +1139,18 @@ async function handleMcp(request: Request) {
       });
     }
     if (name === "create_task") return rpcResult(id, await createTask(parsed.data as z.infer<typeof TaskInput>));
+    if (name === "search_tasks") return rpcResult(id, await lifecycleResult(request, "GET", { action: "search", ...(parsed.data as z.infer<typeof SearchTasksInput>) }));
+    if (name === "get_task") return rpcResult(id, await lifecycleResult(request, "GET", { action: "get", task_id: (parsed.data as z.infer<typeof LifecycleIdInput>).task_id }));
+    if (name === "update_task") {
+      const { task_id, clear_fields, raw_text, request_id, idempotency_key, ...changes } = parsed.data as z.infer<typeof LifecycleMutationInput>;
+      return rpcResult(id, await lifecycleResult(request, "PATCH", {}, { action: "update", task_id, changes, clear_fields: clear_fields || [], raw_text, request_id, source: "chatgpt", idempotency_key }));
+    }
+    if (name === "complete_task" || name === "reopen_task") return rpcResult(id, await lifecycleResult(request, "PATCH", {}, { action: name === "complete_task" ? "complete" : "reopen", ...(parsed.data as z.infer<typeof LifecycleStateInput>), source: "chatgpt" }));
+    if (name === "delete_task") return rpcResult(id, await lifecycleResult(request, "DELETE", {}, { action: "delete", ...(parsed.data as z.infer<typeof LifecycleStateInput>), source: "chatgpt" }));
+    if (name === "update_task_reminder") return rpcResult(id, await updateTaskReminder(parsed.data as z.infer<typeof UpdateTaskReminderInput>));
+    if (name === "resolve_task_intent") return rpcResult(id, await previewTaskIntent(parsed.data as z.infer<typeof TaskResolutionPreviewInput>));
+    if (name === "get_task_graph") return rpcResult(id, await getTaskGraph());
+    if (name === "explain_task_resolution") return rpcResult(id, await explainTaskResolution(parsed.data as z.infer<typeof ResolutionExplainInput>));
     if (name === "capture_personal_os_item") return rpcResult(id, await captureItem(parsed.data as z.infer<typeof UnifiedIntakeInput>));
     if (name === "get_goals") return rpcResult(id, await getGoals(request, parsed.data as z.infer<typeof GoalQueryInput>));
     if (name === "update_goal") return rpcResult(id, await updateGoal(request, parsed.data as z.infer<typeof GoalUpdateInput>));
@@ -691,7 +1185,7 @@ async function authorize(request: Request) {
 const app = new Hono();
 const functionApp = new Hono();
 
-functionApp.get("/", (context) => context.json({ name: "personal-os", version: "1.2.1", mcp: "/mcp" }));
+functionApp.get("/", (context) => context.json({ name: "personal-os", version: "1.4.0", mcp: "/mcp" }));
 functionApp.get("/.well-known/oauth-protected-resource", (context) => context.json({
   resource: MCP_RESOURCE,
   authorization_servers: [AUTHORIZATION_SERVER],

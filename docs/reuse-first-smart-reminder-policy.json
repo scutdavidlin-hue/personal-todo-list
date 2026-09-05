@@ -1,0 +1,305 @@
+{
+  "schema_version": "1.0",
+  "task": {
+    "id": "personal-os-smart-reminder-policy-v1",
+    "summary": "Add a context-aware reminder policy to the canonical Google Task, Schedule, and stable Google Calendar projection chain.",
+    "generalizable": true,
+    "reason": "Reminder reasoning and projection will apply to every current and future Personal OS task intake surface."
+  },
+  "discovery": {
+    "internal": {
+      "status": "checked",
+      "queries": [
+        "local capability registry: smart reminder policy Google Tasks Calendar Personal OS",
+        "Personal OS repositories: task_schedule_metadata stableCalendarEventId Calendar projection intake MCP",
+        "current repository: reminder notification scheduled_start requested_time deadline"
+      ],
+      "evidence": [
+        {
+          "source": "/Users/davidlin/.codex/capability-registry/registry.json",
+          "checked_at": "2026-09-05",
+          "summary": "No registered Smart Reminder Policy capability was found."
+        },
+        {
+          "source": "codex/task-resolution-layer at be56a8c",
+          "checked_at": "2026-09-05",
+          "summary": "The latest Personal OS baseline already has one Google Task to one task_schedule_metadata row to one deterministic Calendar Event, plus update-first task resolution and shared Intake/MCP entry points."
+        },
+        {
+          "source": "supabase/functions/_shared/schedule-core.js and supabase/functions/task-scheduler/index.ts",
+          "checked_at": "2026-09-05",
+          "summary": "Calendar projection already PATCHes or inserts the deterministic Event id and is the narrowest place to attach event reminder overrides without changing Task identity."
+        }
+      ]
+    },
+    "installed_skills": {
+      "status": "checked",
+      "queries": [
+        "installed Skills, plugins, MCPs, and callable tools for Google Tasks, Calendar reminders, and notification policy",
+        "existing Personal OS ChatGPT MCP task tools and Codex automation capability"
+      ],
+      "evidence": [
+        {
+          "source": "Installed Skills and callable tool inventory",
+          "checked_at": "2026-09-05",
+          "summary": "personal-systems and reuse-first govern the work, while the repository's existing Personal OS MCP remains the canonical conversational entry point. No installed capability owns per-Task Calendar reminder policy, and Codex heartbeat automation would create a parallel reminder path."
+        }
+      ]
+    },
+    "official": {
+      "status": "checked",
+      "queries": [
+        "Google Calendar API reminders overrides useDefault popup minutes",
+        "Google Calendar Events update reminders valid range",
+        "Google Tasks REST task due date time discarded",
+        "Supabase Cron scheduled jobs"
+      ],
+      "evidence": [
+        {
+          "source": "https://developers.google.com/workspace/calendar/api/concepts/reminders",
+          "checked_at": "2026-09-05",
+          "summary": "Google Calendar supports user-specific per-event reminder overrides. Setting useDefault=false with popup overrides projects reminder offsets to web and mobile clients."
+        },
+        {
+          "source": "https://developers.google.com/workspace/calendar/api/v3/reference/events/update",
+          "checked_at": "2026-09-05",
+          "summary": "Event reminders are writable on update, and each offset is expressed as 0 through 40320 minutes before Event start, so reminder changes can preserve the Event id."
+        },
+        {
+          "source": "https://developers.google.com/tasks/reference/rest/v1/tasks",
+          "checked_at": "2026-09-05",
+          "summary": "Google Tasks discards the time portion of due. It cannot be the exact-time reminder projection layer."
+        },
+        {
+          "source": "https://supabase.com/docs/guides/cron",
+          "checked_at": "2026-09-05",
+          "summary": "Supabase Cron can schedule server jobs, but native phone delivery would still require a separate push application, device tokens, and notification lifecycle."
+        }
+      ]
+    },
+    "github": {
+      "status": "checked",
+      "queries": [
+        "googleapis google-api-nodejs-client Calendar event reminders overrides",
+        "supabase repository pg_cron scheduled jobs",
+        "Google Calendar reminder JavaScript library"
+      ],
+      "evidence": [
+        {
+          "source": "https://github.com/googleapis/google-api-nodejs-client",
+          "checked_at": "2026-09-05",
+          "summary": "Google's supported Node client models Event reminders and overrides, but the current Deno Edge code already calls the same REST API safely without this dependency."
+        },
+        {
+          "source": "https://github.com/supabase/supabase",
+          "checked_at": "2026-09-05",
+          "summary": "Supabase documents and ships Cron integration, but it does not provide the user's iPhone notification channel or Personal OS semantic reminder policy."
+        }
+      ]
+    },
+    "mcp_cli_library": {
+      "status": "checked",
+      "queries": [
+        "current package.json Calendar reminder libraries and scheduler dependencies",
+        "callable MCP inventory for Google Calendar event reminder updates",
+        "Google APIs Node client versus existing dependency-free Deno REST integration"
+      ],
+      "evidence": [
+        {
+          "source": "package.json, configured MCP inventory, and existing Deno Edge functions",
+          "checked_at": "2026-09-05",
+          "summary": "The project is dependency-free and already owns Google OAuth, Calendar event upsert, and task scheduling. No callable MCP exposes the required provider write, and adding a library would wrap rather than replace the existing REST call."
+        }
+      ]
+    }
+  },
+  "candidates": [
+    {
+      "id": "existing-calendar-projection-overrides",
+      "name": "Existing Personal OS Calendar projection with per-event reminder overrides",
+      "source_type": "internal_and_official_api",
+      "source_url": "https://developers.google.com/workspace/calendar/api/concepts/reminders",
+      "last_checked": "2026-09-05",
+      "license": "Repository-owned code; Google Calendar API terms apply",
+      "scores": {
+        "popularity": 75,
+        "recency": 100,
+        "maintenance": 95,
+        "issue_pr_health": 90,
+        "documentation": 95,
+        "adoption": 95,
+        "license": 100,
+        "compatibility": 100
+      },
+      "quality_score": 92.3,
+      "viable": true,
+      "rejection_reason": "",
+      "admission": {
+        "required": false,
+        "status": "not_required",
+        "reason": "This extends the user's existing deployed code and already-authorized Calendar API; no third-party package is installed or executed."
+      }
+    },
+    {
+      "id": "google-calendar-default-reminders",
+      "name": "Google Calendar calendar-level default reminders",
+      "source_type": "official_api",
+      "source_url": "https://developers.google.com/workspace/calendar/api/concepts/reminders",
+      "last_checked": "2026-09-05",
+      "license": "Google Calendar API terms",
+      "scores": {
+        "popularity": 95,
+        "recency": 100,
+        "maintenance": 100,
+        "issue_pr_health": 95,
+        "documentation": 98,
+        "adoption": 98,
+        "license": 100,
+        "compatibility": 45
+      },
+      "quality_score": 92.6,
+      "viable": false,
+      "rejection_reason": "Calendar-wide defaults cannot dynamically distinguish an ordinary Todo, a commuting meeting, and a flight, so they violate the semantic and minimum-necessary rules.",
+      "admission": {
+        "required": false,
+        "status": "not_required",
+        "reason": "Reference-only official capability; it is not selected or newly installed."
+      }
+    },
+    {
+      "id": "google-tasks-due-notifications",
+      "name": "Google Tasks due-date notifications",
+      "source_type": "official_api",
+      "source_url": "https://developers.google.com/tasks/reference/rest/v1/tasks",
+      "last_checked": "2026-09-05",
+      "license": "Google Tasks API terms",
+      "scores": {
+        "popularity": 95,
+        "recency": 90,
+        "maintenance": 95,
+        "issue_pr_health": 90,
+        "documentation": 95,
+        "adoption": 98,
+        "license": 100,
+        "compatibility": 15
+      },
+      "quality_score": 86.1,
+      "viable": false,
+      "rejection_reason": "The Tasks API discards due time and does not expose the required exact per-Task reminder overrides; forcing reminders into Tasks would also threaten the one-Task invariant.",
+      "admission": {
+        "required": false,
+        "status": "not_required",
+        "reason": "Reference-only official capability; no additional code is installed or executed."
+      }
+    },
+    {
+      "id": "supabase-cron-custom-push",
+      "name": "Supabase Cron plus a custom APNs push service",
+      "source_type": "official_service_composition",
+      "source_url": "https://supabase.com/docs/guides/cron",
+      "last_checked": "2026-09-05",
+      "license": "Supabase service terms; Apple developer terms would apply",
+      "scores": {
+        "popularity": 90,
+        "recency": 100,
+        "maintenance": 95,
+        "issue_pr_health": 90,
+        "documentation": 95,
+        "adoption": 92,
+        "license": 100,
+        "compatibility": 35
+      },
+      "quality_score": 88.5,
+      "viable": false,
+      "rejection_reason": "It needs an iOS app, APNs credentials, device-token storage, delivery retries, and a second scheduling path even though the authorized Google Calendar mobile channel already satisfies V1.",
+      "admission": {
+        "required": false,
+        "status": "not_required",
+        "reason": "Reference-only comparison; no service, credential, package, or push application is added."
+      }
+    },
+    {
+      "id": "googleapis-node-client",
+      "name": "Google APIs Node.js client library",
+      "source_type": "official_github_library",
+      "source_url": "https://github.com/googleapis/google-api-nodejs-client",
+      "last_checked": "2026-09-05",
+      "license": "Apache-2.0",
+      "scores": {
+        "popularity": 90,
+        "recency": 95,
+        "maintenance": 98,
+        "issue_pr_health": 85,
+        "documentation": 92,
+        "adoption": 98,
+        "license": 100,
+        "compatibility": 55
+      },
+      "quality_score": 89.7,
+      "viable": false,
+      "rejection_reason": "It would add a Node-oriented dependency to Deno Edge Functions while calling the same API already covered by the repository's tested REST wrapper; it does not provide reminder reasoning.",
+      "admission": {
+        "required": false,
+        "status": "not_required",
+        "reason": "Reference-only research; the package is not installed or executed."
+      }
+    }
+  ],
+  "comparison": {
+    "shortlist": [
+      "existing-calendar-projection-overrides"
+    ],
+    "recommended": [
+      "existing-calendar-projection-overrides"
+    ],
+    "reason": "The existing deterministic Calendar Event is the only candidate that satisfies dynamic per-task timing, current OAuth and iPhone delivery, stable ids, no duplicate Task/Event, and no parallel notification source of truth.",
+    "fewer_than_three_waiver": "Only one candidate meets all hard constraints. Calendar defaults are not semantic, Google Tasks cannot retain an exact reminder time, and custom push would introduce a new application and delivery system."
+  },
+  "decision": {
+    "type": "EXTEND",
+    "selected": [
+      "existing-calendar-projection-overrides"
+    ],
+    "reason": "Extend task_schedule_metadata, the shared schedule projection core, unified Intake/MCP schemas, and the existing Calendar PATCH/upsert path. Keep Google Tasks as Task truth and store reminder policy only as attached Schedule metadata.",
+    "why_build": "",
+    "better_mature_solution_ruled_out": false
+  },
+  "implementation": {
+    "status": "validated",
+    "test_evidence": [
+      "npm run verify: 191 tests passed, 0 failed; static verification passed with 57 required files and 95 repository files scanned.",
+      "Reminder regression covers explicit timing priority, airport preparation/departure, ordinary Todo spam protection, the Xianghui scenario, exact deadlines, stable Task/Schedule/Event identities, zero Google Task inserts, and Calendar popup payloads.",
+      "Node --experimental-strip-types --check passed for all six affected Edge Function entrypoints.",
+      "git diff --no-index --check against codex/task-resolution-layer at be56a8c passed with no whitespace errors.",
+      "Git ancestry verification confirmed task-crud-follow-up at a4cca3a is already an ancestor of the task-resolution-layer baseline at be56a8c; no compatibility merge remains pending.",
+      "Supabase CLI 2.116.0 remote dry-run was attempted but could not authenticate because this isolated workspace has no CLI access token; no migration or production write was performed. Migration behavior is covered by static SQL assertions and remains a deployment checkpoint."
+    ]
+  },
+  "registry_entry": {
+    "capability_id": "personal-os-smart-reminder-policy-engine",
+    "name": "Personal OS Smart Reminder Policy Engine",
+    "category": "personal-os-execution",
+    "source": "internal extension",
+    "github_url": "https://github.com/scutdavidlin-hue/personal-todo-list",
+    "stars": null,
+    "license": "Repository-owned code; Google Calendar API terms apply",
+    "version": "1.0.0",
+    "last_checked": "2026-09-05",
+    "use_case": "Infer or honor the minimum necessary reminders for a canonical Task and project them onto its one stable Calendar Event.",
+    "integration_method": "Existing Schedule metadata and Calendar Event upsert extended with an explainable policy core, context fields, per-event popup overrides, and update-only reminder tooling.",
+    "dependencies": [
+      "Existing Personal OS Supabase project",
+      "Existing Google Tasks and Google Calendar OAuth",
+      "Google Calendar Events reminder overrides"
+    ],
+    "status": "validated",
+    "quality_score": 92.3,
+    "tags": [
+      "smart-reminder",
+      "calendar-projection",
+      "update-first",
+      "notification-spam-protection",
+      "action-execution"
+    ]
+  }
+}

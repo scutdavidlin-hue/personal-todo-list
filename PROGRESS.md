@@ -1,6 +1,16 @@
 # 开发进度
 
-最后更新：2026-09-04
+最后更新：2026-09-05
+
+## V1.2｜自然语言自主落库与低风险自主执行
+
+- [x] 正式 GitHub `main` 已先快进至包含治理文件的 `c1b109f`，再按文件级补丁整合自主 Intake、语义去重、失败恢复和 Smart Reminder；未用旧工作副本覆盖 `PERSONAL_AI_CONSTITUTION.md` 或 `AGENTS.md`。
+- [x] 普通低风险行动可由现有 Personal OS Intake 直接进入 Google Tasks；信息查询零写入，长期偏好进入 Goal/Plan，高风险资金、房产、合同或关键删除在写入前停止并请求必要确认。
+- [x] 写入仅在 Google Task 与排程回读一致时返回“已经写进去了”；日期、Deadline、Calendar 投影与失败恢复分别保留。
+- [x] 新增任务全生命周期、语义解析、关系图、提醒策略和恢复测试；`npm run verify` 为 256/256，通过六个 Edge Function 的缓存 Deno 类型检查。
+- [ ] 生产 Supabase 发布尚未执行：本机 CLI 缺少官方登录令牌。登录后先执行 remote dry-run，再只发布本包的必要 migration 与六个 Functions，并以可清理验收项回读验证。
+
+## 已完成
 
 ## 已完成
 

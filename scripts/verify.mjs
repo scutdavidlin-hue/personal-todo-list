@@ -28,12 +28,29 @@ const requiredFiles = [
   "supabase/migrations/202609040002_task_scheduling_v1_1.sql",
   "supabase/migrations/202609040003_goals_plans_v1_2.sql",
   "supabase/migrations/202609050001_goal_conversation_bridge_v1.sql",
+  "supabase/migrations/202609050002_task_resolution_layer_v1.sql",
+  "supabase/migrations/202609050003_smart_reminder_policy_v1.sql",
   "supabase/functions/google-tasks/index.ts",
   "supabase/functions/_shared/google-tasks-core.js",
   "supabase/functions/_shared/action-router.js",
   "supabase/functions/_shared/goal-operations.js",
   "supabase/functions/_shared/personal-os-intake.js",
+  "supabase/functions/_shared/autonomy-policy.js",
+  "supabase/functions/_shared/autonomy-runtime.js",
+  "supabase/functions/_shared/task-lifecycle-core.js",
+  "supabase/migrations/202609040004_task_lifecycle_v1_2.sql",
+  "test/autonomy-policy.test.js",
+  "test/autonomy-runtime.test.js",
+  "test/autonomy-intake-integration.test.js",
+  "test/autonomy-resolution.test.js",
+  "test/autonomy-schedule.test.js",
+  "PRD_AUTONOMOUS_INTAKE_V1.md",
   "supabase/functions/_shared/schedule-core.js",
+  "supabase/functions/_shared/reminder-policy-core.js",
+  "supabase/functions/_shared/task-resolution-engine.js",
+  "supabase/functions/_shared/task-resolution-executor.js",
+  "supabase/functions/_shared/task-resolution-runtime.js",
+  "supabase/functions/_shared/task-graph-core.js",
   "supabase/functions/action-router/index.ts",
   "supabase/functions/task-status/index.ts",
   "supabase/functions/task-status/status-core.js",
@@ -41,6 +58,20 @@ const requiredFiles = [
   "supabase/functions/personal-os-mcp/index.ts",
   "supabase/functions/task-scheduler/index.ts",
   "test/goal-conversation-flow.test.js",
+  "test/task-resolution-engine.test.js",
+  "test/task-resolution-executor.test.js",
+  "test/task-resolution-runtime.test.js",
+  "test/task-resolution-integration.test.js",
+  "test/task-resolution-migration.test.js",
+  "test/reminder-policy-core.test.js",
+  "test/reminder-policy-migration.test.js",
+  "PERSONAL_OS_ARCHITECTURE_PRINCIPLES.md",
+  "ARCHITECTURE_TASK_RESOLUTION_V1.md",
+  "PRD_TASK_RESOLUTION_V1.md",
+  "PRD_SMART_REMINDER_POLICY_V1.md",
+  "ARCHITECTURE_SMART_REMINDER_POLICY_V1.md",
+  "docs/reuse-first-task-resolution.json",
+  "docs/reuse-first-smart-reminder-policy.json",
 ];
 
 const contents = new Map();
@@ -78,8 +109,12 @@ assert.match(contents.get("supabase/functions/google-tasks/index.ts"), /tasks\.g
 assert.match(contents.get("supabase/functions/google-tasks/index.ts"), /oauth2\.googleapis\.com\/token/);
 assert.match(contents.get("supabase/functions/google-tasks/index.ts"), /DEFAULT_TASK_LIST_TITLE/);
 assert.match(contents.get("supabase/functions/action-router/index.ts"), /classifyAction/);
+assert.match(contents.get("supabase/functions/action-router/index.ts"), /functions\/v1\/personal-os-intake/);
+assert.match(contents.get("supabase/functions/action-router/index.ts"), /"Idempotency-Key": idempotencyKey/);
+assert.doesNotMatch(contents.get("supabase/functions/action-router/index.ts"), /functions\/v1\/task-status/);
 assert.match(contents.get("supabase/functions/_shared/action-router.js"), /gpt_job/);
 assert.match(contents.get("supabase/functions/_shared/action-router.js"), /knowledge/);
+assert.match(contents.get("supabase/functions/_shared/action-router.js"), /parseIntentDeadlineTime/);
 assert.match(contents.get("supabase/functions/personal-os-intake/index.ts"), /idempotency-key/i);
 assert.match(contents.get("supabase/functions/personal-os-intake/index.ts"), /personal_os_intake_audit/);
 assert.match(contents.get("supabase/functions/personal-os-mcp/index.ts"), /tools\/list/);
@@ -89,6 +124,9 @@ assert.match(contents.get("supabase/functions/personal-os-mcp/index.ts"), /captu
 assert.match(contents.get("supabase/functions/personal-os-mcp/index.ts"), /get_goals/);
 assert.match(contents.get("supabase/functions/personal-os-mcp/index.ts"), /update_goal/);
 assert.match(contents.get("supabase/functions/personal-os-mcp/index.ts"), /complete_goal/);
+assert.match(contents.get("supabase/functions/personal-os-mcp/index.ts"), /resolve_task_intent/);
+assert.match(contents.get("supabase/functions/personal-os-mcp/index.ts"), /get_task_graph/);
+assert.match(contents.get("supabase/functions/personal-os-mcp/index.ts"), /explain_task_resolution/);
 assert.match(contents.get("supabase/functions/_shared/personal-os-intake.js"), /goalPlanDispatchPayload/);
 assert.match(contents.get("supabase/functions/_shared/goal-operations.js"), /findExistingGoalMatch/);
 assert.match(contents.get("supabase/migrations/202609040001_personal_os_intake.sql"), /unique \(owner_id, idempotency_key\)/i);
@@ -100,8 +138,32 @@ assert.match(contents.get("supabase/migrations/202609040003_goals_plans_v1_2.sql
 assert.match(contents.get("supabase/migrations/202609040003_goals_plans_v1_2.sql"), /enable row level security/i);
 assert.match(contents.get("supabase/migrations/202609050001_goal_conversation_bridge_v1.sql"), /add column if not exists horizon/i);
 assert.doesNotMatch(contents.get("supabase/migrations/202609050001_goal_conversation_bridge_v1.sql"), /create table/i);
+assert.match(contents.get("supabase/migrations/202609050002_task_resolution_layer_v1.sql"), /create extension if not exists pg_trgm/i);
+assert.match(contents.get("supabase/migrations/202609050002_task_resolution_layer_v1.sql"), /create table if not exists public\.task_resolution_audit/i);
+assert.match(contents.get("supabase/migrations/202609050002_task_resolution_layer_v1.sql"), /create table if not exists public\.task_relationships/i);
+assert.match(contents.get("supabase/migrations/202609050002_task_resolution_layer_v1.sql"), /with recursive dependency_path/i);
+assert.match(contents.get("supabase/functions/_shared/task-resolution-engine.js"), /resolveTaskIntent/);
+assert.match(contents.get("supabase/functions/_shared/task-resolution-runtime.js"), /resolveAndExecuteTask/);
+assert.match(contents.get("supabase/functions/_shared/task-graph-core.js"), /buildTaskExecutionGraph/);
+assert.match(contents.get("supabase/migrations/202609050003_smart_reminder_policy_v1.sql"), /alter table public\.task_schedule_metadata/i);
+assert.match(contents.get("supabase/migrations/202609050003_smart_reminder_policy_v1.sql"), /reminder_policy_source/i);
+assert.match(contents.get("supabase/migrations/202609050003_smart_reminder_policy_v1.sql"), /jsonb_array_length\(reminders\) <= 3/i);
+assert.doesNotMatch(contents.get("supabase/migrations/202609050003_smart_reminder_policy_v1.sql"), /create table(?: if not exists)? public\.(?:tasks|reminders|notifications)/i);
+assert.match(contents.get("supabase/functions/_shared/reminder-policy-core.js"), /resolveReminderPolicy/);
+assert.match(contents.get("supabase/functions/_shared/reminder-policy-core.js"), /calendarReminderOverrides/);
+assert.match(contents.get("supabase/functions/_shared/reminder-policy-core.js"), /mergeReminderPolicyUpdate/);
+assert.match(contents.get("supabase/functions/_shared/reminder-policy-core.js"), /MAX_REMINDERS = 3/);
+assert.match(contents.get("supabase/functions/google-tasks/index.ts"), /resolveAndExecuteTask/);
+assert.match(contents.get("supabase/functions/task-status/index.ts"), /resolveAndExecuteTask/);
+assert.doesNotMatch(contents.get("supabase/functions/google-tasks/index.ts"), /findDuplicateTask/);
+assert.doesNotMatch(contents.get("supabase/functions/task-status/index.ts"), /findDuplicateTask/);
 assert.match(contents.get("supabase/functions/task-scheduler/index.ts"), /stableCalendarEventId/);
+assert.match(contents.get("supabase/functions/task-scheduler/index.ts"), /updateTaskReminder/);
+assert.match(contents.get("supabase/functions/task-scheduler/index.ts"), /google_tasks_count_delta: 0/);
 assert.match(contents.get("supabase/functions/_shared/schedule-core.js"), /personalOsProjection/);
+assert.match(contents.get("supabase/functions/_shared/schedule-core.js"), /useDefault: false/);
+assert.match(contents.get("supabase/functions/personal-os-mcp/index.ts"), /update_task_reminder/);
+assert.match(contents.get("supabase/functions/personal-os-mcp/index.ts"), /Smart Reminder reasoning/);
 assert.match(contents.get("oauth/consent/app.js"), /approveAuthorization/);
 assert.match(contents.get("supabase/functions/task-status/index.ts"), /AUTOMATION_READ_TOKEN/);
 assert.match(contents.get("supabase/functions/task-status/index.ts"), /AUTOMATION_WRITE_TOKEN/);

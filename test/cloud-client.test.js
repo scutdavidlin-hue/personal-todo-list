@@ -132,7 +132,7 @@ test("canonical CRUD methods use the Google Tasks Edge Function", async () => {
     storage: sessionStorage(),
     fetch: async (url, init) => {
       const body = init.body ? JSON.parse(init.body) : null;
-      calls.push({ url, method: init.method, body });
+      calls.push({ url, method: init.method, body, headers: init.headers });
       if (init.method === "DELETE") return response({ deleted: true });
       return response({ task: { id: body.id || "created", title: body.task?.title || "A", date: body.task?.date || body.changes?.date || "2026-09-03", status: body.completed === false ? "open" : "done" } }, init.method === "POST" ? 201 : 200);
     },
@@ -145,6 +145,7 @@ test("canonical CRUD methods use the Google Tasks Edge Function", async () => {
   assert.deepEqual(calls.map((call) => call.method), ["POST", "PATCH", "PATCH", "PATCH", "DELETE"]);
   assert.deepEqual(calls.map((call) => call.body.action), ["create", "complete", "reopen", "update", undefined]);
   assert.equal(calls[4].body.id, "created");
+  assert.ok(calls.every((call) => /^\w+:[0-9a-z-]+$/i.test(call.headers["Idempotency-Key"])));
 });
 
 test("failed checkbox write throws and does not mutate caller task", async () => {
@@ -196,11 +197,15 @@ test("schedule and reschedule use the dedicated projection service", async () =>
   });
   await client.scheduleTask("task-1", { scheduled_date: "2026-09-05", scheduled_start: "15:00" });
   await client.rescheduleTask("task-1", { scheduled_date: "2026-09-05", scheduled_start: "16:00" });
+  await client.updateTaskReminder("task-1", { reminder_at: "12:00", reminder_type: "preparation" });
   await client.unscheduleTask("task-1", { scheduled_date: "2026-09-05" });
   assert.match(calls[0].url, /\/functions\/v1\/task-scheduler$/);
   assert.equal(calls[0].body.action, "schedule");
   assert.equal(calls[1].body.schedule.scheduling_status, "rescheduled");
-  assert.equal(calls[2].body.action, "unschedule");
+  assert.equal(calls[2].body.action, "update_reminder");
+  assert.equal(calls[2].body.task_id, "task-1");
+  assert.equal(calls[2].body.reminder.reminder_at, "12:00");
+  assert.equal(calls[3].body.action, "unschedule");
 });
 
 test("goals, projects, and Google Task context use Supabase without copying task status", async () => {

@@ -3,7 +3,6 @@ import {
   chooseTaskList,
   createGoogleTaskPayload,
   filterTaskModels,
-  findDuplicateTask,
   toTaskModel,
   updateGoogleTaskPayload,
 } from "../_shared/google-tasks-core.js";
@@ -12,6 +11,12 @@ import {
   resolveServiceApiKey,
   serviceApiHeaders,
 } from "../_shared/supabase-api-keys.js";
+import {
+  createTaskResolutionAdapter,
+  loadTaskResolutionContext,
+  resolveAndExecuteTask,
+} from "../_shared/task-resolution-runtime.js";
+import { canonicalTaskMutation, googleTaskChanges, hasScheduleChanges, normalizeTaskPatch, searchTaskViews, taskView } from "../_shared/task-lifecycle-core.js";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const USE_NEW_API_KEYS = Deno.env.get("SUPABASE_USE_NEW_API_KEYS") === "true";
@@ -35,7 +40,7 @@ const REQUEST_TIMEOUT_MS = 10_000;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, apikey, content-type, idempotency-key",
   "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
 };
 
@@ -88,6 +93,122 @@ async function rpc(name: string, body: Record<string, unknown>) {
   const payload = await parseJson(response);
   if (!response.ok) throw new ApiError(payload?.message || "凭证存储不可用", 503, "CREDENTIAL_STORE_ERROR");
   return payload;
+}
+
+async function serviceRest(path: string, init: RequestInit = {}) {
+  const response = await requestWithTimeout(`${SUPABASE_URL}/rest/v1/${path}`, {
+    ...init,
+    headers: {
+      ...serviceApiHeaders(SERVICE_API_KEY),
+      "Content-Type": "application/json",
+      ...(init.headers || {}),
+    },
+  });
+  const payload = await parseJson(response);
+  if (!response.ok) throw new ApiError(payload?.message || "Task resolution store unavailable", 503, "TASK_RESOLUTION_STORE_ERROR");
+  return payload;
+}
+
+function sortObject(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortObject);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.keys(value as Record<string, unknown>).sort()
+    .map((key) => [key, sortObject((value as Record<string, unknown>)[key])]));
+}
+
+async function sha256(value: string) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function updateCreateAudit(ownerId: string, auditId: string, changes: Record<string, unknown>) {
+  const query = new URLSearchParams({ id: `eq.${auditId}`, owner_id: `eq.${ownerId}` });
+  await serviceRest(`personal_os_intake_audit?${query}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify(changes),
+  });
+}
+
+async function updateActivity(ownerId: string, id: string, changes: Record<string, unknown>) {
+  await serviceRest(`task_activity_log?${new URLSearchParams({ id: `eq.${id}`, owner_id: `eq.${ownerId}` })}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify(changes) });
+}
+
+async function reserveActivity(request: Request, ownerId: string, action: string, taskId: string, input: Record<string, unknown>) {
+  if (!taskId) throw new ApiError("task_id is required", 400, "INVALID_TASK");
+  const idempotencyKey = String(request.headers.get("idempotency-key") || input.idempotency_key || "").trim() || `legacy:${crypto.randomUUID()}`;
+  if (idempotencyKey.length < 8 || idempotencyKey.length > 200) throw new ApiError("idempotency_key must contain 8-200 characters", 400, "INVALID_IDEMPOTENCY_KEY");
+  const requestHash = await sha256(canonicalTaskMutation(action, taskId, input));
+  const inserted = await serviceRest("task_activity_log?on_conflict=owner_id%2Cidempotency_key", { method: "POST", headers: { Prefer: "resolution=ignore-duplicates,return=representation" }, body: JSON.stringify({ owner_id: ownerId, task_id: taskId, google_task_id: taskId, action, idempotency_key: idempotencyKey, request_hash: requestHash, source: input.source || "personal_os", request_id: input.request_id || null, status: "processing" }) });
+  if (inserted?.[0]) return { row: inserted[0], idempotencyKey, replayed: false };
+  const rows = await serviceRest(`task_activity_log?${new URLSearchParams({ select: "*", owner_id: `eq.${ownerId}`, idempotency_key: `eq.${idempotencyKey}`, limit: "1" })}`);
+  const existing = rows?.[0];
+  if (!existing) throw new ApiError("Idempotency record unavailable", 503, "IDEMPOTENCY_UNAVAILABLE");
+  if (existing.request_hash !== requestHash) throw new ApiError("Idempotency key was already used for a different request", 409, "IDEMPOTENCY_CONFLICT");
+  if (existing.status === "succeeded" && existing.response) return { row: existing, idempotencyKey, replayed: true };
+  await updateActivity(ownerId, existing.id, { status: "processing", error: null, response: null, response_status: null });
+  return { row: existing, idempotencyKey, replayed: false };
+}
+
+async function schedulesFor(ownerId: string, taskId = "") {
+  const query = new URLSearchParams({ select: "*", owner_id: `eq.${ownerId}`, deleted_at: "is.null", order: "updated_at.desc" });
+  if (taskId) query.set("google_task_id", `eq.${taskId}`);
+  return serviceRest(`task_schedule_metadata?${query}`);
+}
+
+async function reserveCreateAudit(request: Request, ownerId: string, input: Record<string, unknown>) {
+  const task = input.task && typeof input.task === "object" && !Array.isArray(input.task)
+    ? input.task as Record<string, unknown>
+    : {};
+  const suppliedKey = String(request.headers.get("idempotency-key") || input.idempotency_key || task.idempotency_key || "").trim();
+  const idempotencyKey = suppliedKey || `legacy:${crypto.randomUUID()}`;
+  if (idempotencyKey.length < 8 || idempotencyKey.length > 200) {
+    throw new ApiError("idempotency_key must contain 8-200 characters", 400, "INVALID_IDEMPOTENCY_KEY");
+  }
+  const requestHash = await sha256(JSON.stringify(sortObject({ action: "create", task })));
+  const rawText = String(task.raw_text || task.originalIntent || task.title || "Create Task").trim().slice(0, 10_000) || "Create Task";
+  const source = String(task.source || input.source || "personal_os_app").trim().slice(0, 80) || "personal_os_app";
+  const inserted = await serviceRest("personal_os_intake_audit?on_conflict=owner_id%2Cidempotency_key", {
+    method: "POST",
+    headers: { Prefer: "resolution=ignore-duplicates,return=representation" },
+    body: JSON.stringify({
+      owner_id: ownerId,
+      idempotency_key: idempotencyKey,
+      request_hash: requestHash,
+      source,
+      raw_text: rawText,
+      classification: "task",
+      destination: "google_tasks",
+      status: "processing",
+    }),
+  });
+  if (inserted?.[0]) return { row: inserted[0], idempotencyKey, replayed: false };
+
+  const query = new URLSearchParams({
+    owner_id: `eq.${ownerId}`,
+    idempotency_key: `eq.${idempotencyKey}`,
+    select: "*",
+    limit: "1",
+  });
+  const existing = (await serviceRest(`personal_os_intake_audit?${query}`))?.[0];
+  if (!existing) throw new ApiError("Idempotency record unavailable", 503, "IDEMPOTENCY_UNAVAILABLE");
+  if (existing.request_hash !== requestHash) {
+    throw new ApiError("Idempotency key was already used for a different request", 409, "IDEMPOTENCY_CONFLICT");
+  }
+  if (existing.status === "succeeded" && existing.response) {
+    return { row: existing, idempotencyKey, replayed: true };
+  }
+  const updatedAt = Date.parse(existing.updated_at || "");
+  if (existing.status === "processing" && Number.isFinite(updatedAt) && Date.now() - updatedAt < 120_000) {
+    throw new ApiError("An identical Task creation is still processing", 409, "IDEMPOTENCY_IN_PROGRESS");
+  }
+  await updateCreateAudit(ownerId, existing.id, {
+    status: "processing",
+    error: null,
+    response: null,
+    response_status: null,
+  });
+  return { row: existing, idempotencyKey, replayed: false };
 }
 
 async function storedCredentials(userId: string) {
@@ -210,29 +331,44 @@ async function context(userId: string) {
   return { ...credentials, accessToken };
 }
 
-async function listTasksWithContext(accessToken: string, taskListId: string, showCompleted: boolean) {
+async function listTasksWithContext(
+  accessToken: string,
+  taskListId: string,
+  showCompleted: boolean,
+  options: Record<string, unknown> = {},
+) {
   const tasks = [];
   let pageToken = "";
+  const maxTasks = Math.max(1, Math.min(5_000, Number(options.maxTasks || 5_000)));
   do {
     const params = new URLSearchParams({
-      maxResults: "100",
+      maxResults: String(Math.min(100, maxTasks - tasks.length)),
       showCompleted: String(showCompleted),
       showHidden: String(showCompleted),
       showDeleted: "false",
     });
+    if (options.completedMin) params.set("completedMin", String(options.completedMin));
+    if (options.updatedMin) params.set("updatedMin", String(options.updatedMin));
     if (pageToken) params.set("pageToken", pageToken);
     const page = await googleRequest(accessToken, `${taskPath(taskListId)}?${params}`);
     tasks.push(...(page?.items || [])
       .filter((task: Record<string, unknown>) => !task.deleted)
       .map((task: Record<string, unknown>) => toTaskModel(task, taskListId)));
     pageToken = page?.nextPageToken || "";
-  } while (pageToken);
+  } while (pageToken && tasks.length < maxTasks);
   return tasks;
 }
 
 async function listTasks(userId: string, showCompleted: boolean) {
   const google = await context(userId);
   return listTasksWithContext(google.accessToken, google.tasklist_id, showCompleted);
+}
+
+async function getTaskView(userId: string, id: string) {
+  if (!id) throw new ApiError("task_id is required", 400, "INVALID_TASK");
+  const google = await context(userId);
+  const [raw, schedules] = await Promise.all([googleRequest(google.accessToken, taskPath(google.tasklist_id, id)), schedulesFor(userId, id)]);
+  return taskView(toTaskModel(raw, google.tasklist_id), schedules?.[0] || null);
 }
 
 async function patchTaskWithContext(accessToken: string, taskListId: string, id: string, changes: Record<string, unknown>) {
@@ -255,28 +391,140 @@ async function patchTaskWithContext(accessToken: string, taskListId: string, id:
 }
 
 async function createTask(userId: string, input: Record<string, unknown>) {
+  if (!String(input.title || "").trim()) throw new ApiError("title is required", 400, "INVALID_TASK");
   const google = await context(userId);
   const taskListId = String(input.taskListId || google.tasklist_id);
-  let payload;
-  try { payload = createGoogleTaskPayload(input); }
-  catch (error) { throw new ApiError(error instanceof Error ? error.message : "任务参数无效", 400, "INVALID_TASK"); }
-  const duplicate = findDuplicateTask(input, await listTasksWithContext(google.accessToken, taskListId, false));
-  if (duplicate) {
-    const changes: Record<string, unknown> = {};
-    const dueDate = String(input.dueDate || input.due || input.date || "");
-    if (dueDate && dueDate !== duplicate.dueDate) changes.dueDate = dueDate;
-    if (input.notes && input.notes !== duplicate.notes) changes.notes = input.notes;
-    if (input.originalIntent && input.originalIntent !== duplicate.originalIntent) changes.originalIntent = input.originalIntent;
-    const task = Object.keys(changes).length
-      ? await patchTaskWithContext(google.accessToken, taskListId, duplicate.id, changes)
-      : duplicate;
-    console.info("Task Deduplicated", { taskId: task.id, taskListId });
-    return { task: { ...task, metadata: { ...task.metadata, deduplicated: true } }, deduplicated: true };
+  const taskInput = {
+    ...input,
+    raw_text: input.raw_text || input.originalIntent || input.title,
+    goal_plan_id: input.goal_plan_id || input.goal_id || null,
+  };
+  const completedMin = new Date(Date.now() - 90 * 86_400_000).toISOString();
+  const candidates = await listTasksWithContext(google.accessToken, taskListId, true, { completedMin, maxTasks: 500 });
+  const resolutionContext = await loadTaskResolutionContext({
+    serviceRest,
+    ownerId: userId,
+    incoming: taskInput,
+    providerTasks: candidates,
+    providerGetTask: async (id: string) => toTaskModel(
+      await googleRequest(google.accessToken, taskPath(taskListId, id)),
+      taskListId,
+    ),
+  } as any);
+  const adapter = createTaskResolutionAdapter({
+    ownerId: userId,
+    taskListId,
+    intakeAuditId: String(input.intake_audit_id || "") || null,
+    resolutionIdempotencyKey: String(input.resolution_idempotency_key || "") || null,
+    createdFrom: String(input.source || "personal_os_app"),
+    projectId: input.project_id || null,
+    projectGoalId: resolutionContext.project_goal_id || null,
+    serviceRest,
+    provider: {
+      getTask: async (id: string) => toTaskModel(
+        await googleRequest(google.accessToken, taskPath(taskListId, id)),
+        taskListId,
+      ),
+      createTask: async (taskInput: Record<string, unknown>, metadata: Record<string, unknown> = {}) => {
+        let taskBody;
+        try { taskBody = createGoogleTaskPayload(taskInput); }
+        catch (error) { throw new ApiError(error instanceof Error ? error.message : "任务参数无效", 400, "INVALID_TASK"); }
+        const params = new URLSearchParams();
+        if (metadata.parent_task_id) params.set("parent", String(metadata.parent_task_id));
+        const query = params.toString();
+        const path = `${taskPath(taskListId)}${query ? `?${query}` : ""}`;
+        return toTaskModel(await googleRequest(google.accessToken, path, {
+          method: "POST",
+          body: JSON.stringify(taskBody),
+        }), taskListId);
+      },
+      updateTask: async (id: string, changes: Record<string, unknown>) => patchTaskWithContext(
+        google.accessToken,
+        taskListId,
+        id,
+        changes,
+      ),
+    },
+  });
+  const result = await resolveAndExecuteTask(taskInput, resolutionContext, adapter);
+  const deduplicated = result.resolution.decision === "DUPLICATE";
+  console.info("Task Resolved", {
+    taskId: result.task.id,
+    taskListId,
+    decision: result.resolution.decision,
+    auditId: result.resolution.audit_id,
+  });
+  return {
+    task: deduplicated
+      ? { ...result.task, metadata: { ...result.task.metadata, deduplicated: true } }
+      : result.task,
+    tasks: result.tasks,
+    deduplicated,
+    resolution: result.resolution,
+    relationships: result.relationships,
+    goal_link: result.goal_link,
+    context_link: result.context_link,
+    created: result.created,
+  };
+}
+
+async function runAuditedCreate(request: Request, ownerId: string, input: Record<string, unknown>) {
+  const taskInput = input.task && typeof input.task === "object" && !Array.isArray(input.task)
+    ? input.task as Record<string, unknown>
+    : {};
+  if (!String(taskInput.title || "").trim()) throw new ApiError("title is required", 400, "INVALID_TASK");
+  const reservation = await reserveCreateAudit(request, ownerId, input);
+  if (reservation.replayed) {
+    return json({ ...reservation.row.response, replayed: true }, reservation.row.response_status || 200);
   }
-  const task = await googleRequest(google.accessToken, taskPath(taskListId), { method: "POST", body: JSON.stringify(payload) });
-  const model = toTaskModel(task, taskListId);
-  console.info("Task Created", { taskId: model.id, taskListId });
-  return { task: model, deduplicated: false };
+  try {
+    const result = await createTask(ownerId, { ...taskInput, intake_audit_id: reservation.row.id });
+    const schedule = taskInput.schedule as Record<string, unknown> | undefined;
+    const projection = schedule ? await schedulerSync("schedule", result.task.id, {
+      schedule: {
+        ...schedule,
+        raw_text: taskInput.raw_text || taskInput.originalIntent || result.task.originalIntent,
+        title: result.task.title,
+        notes: result.task.notes,
+      },
+    }) : null;
+    const currentSchedule = (await schedulesFor(ownerId, result.task.id))?.[0] || null;
+    const task = taskView(result.task, currentSchedule);
+    const responseStatus = result.created ? 201 : 200;
+    const response = {
+      success: true,
+      ...result,
+      task,
+      id: task.id,
+      task_id: task.task_id,
+      google_task_id: task.google_task_id,
+      schedule_id: task.schedule_id,
+      calendar_event_id: task.calendar_event_id,
+      projection,
+      projection_error: projection?.success === false ? projection : null,
+      idempotency_key: reservation.idempotencyKey,
+      replayed: false,
+    };
+    await updateCreateAudit(ownerId, reservation.row.id, {
+      status: "succeeded",
+      object_id: result.task.id,
+      response_status: responseStatus,
+      response,
+      error: null,
+    });
+    return json(response, responseStatus);
+  } catch (error) {
+    try {
+      await updateCreateAudit(ownerId, reservation.row.id, {
+        status: "failed",
+        response_status: error instanceof ApiError ? error.status : 503,
+        error: error instanceof Error ? error.message : "Task creation failed",
+      });
+    } catch (auditError) {
+      console.error("Task creation audit update failed", auditError instanceof Error ? auditError.message : "unknown");
+    }
+    throw error;
+  }
 }
 
 async function patchTask(userId: string, id: string, changes: Record<string, unknown>) {
@@ -302,6 +550,27 @@ async function schedulerSync(action: string, taskId: string, extra: Record<strin
   }
 }
 
+function requireSchedulerSync(result: Record<string, unknown>) {
+  if (result?.success === true) return result;
+  throw new ApiError(String(result?.error || "Task changed, but Calendar/Schedule reconciliation is still required"), 503, String(result?.code || "CALENDAR_SYNC_FAILED"));
+}
+
+async function runAuditedMutation(request: Request, ownerId: string, action: string, taskId: string, input: Record<string, unknown>, work: (activity: Record<string, unknown>, recordOld: (value: unknown) => Promise<void>) => Promise<Record<string, unknown>>) {
+  const reservation = await reserveActivity(request, ownerId, action, taskId, input);
+  if (reservation.replayed) return json({ ...reservation.row.response, replayed: true }, reservation.row.response_status || 200);
+  const recordOld = async (value: unknown) => updateActivity(ownerId, reservation.row.id, { old_value: value });
+  try {
+    const outcome = await work(reservation.row, recordOld);
+    const { audit_new, ...publicOutcome } = outcome;
+    const response = { success: true, ...publicOutcome, task_id: taskId, google_task_id: taskId, activity_id: reservation.row.id, idempotency_key: reservation.idempotencyKey, replayed: false };
+    await updateActivity(ownerId, reservation.row.id, { status: "succeeded", new_value: audit_new ?? outcome.task ?? null, response_status: 200, response, error: null });
+    return json(response);
+  } catch (error) {
+    await updateActivity(ownerId, reservation.row.id, { status: "failed", error: error instanceof Error ? error.message : "Task mutation failed", response_status: error instanceof ApiError ? error.status : 503 });
+    throw error;
+  }
+}
+
 async function deleteTask(userId: string, id: string) {
   if (!id) throw new ApiError("id is required", 400, "INVALID_TASK");
   const google = await context(userId);
@@ -314,6 +583,19 @@ async function getTaskBeforeDelete(userId: string, id: string) {
   const google = await context(userId);
   const task = await googleRequest(google.accessToken, taskPath(google.tasklist_id, id));
   return toTaskModel(task, google.tasklist_id);
+}
+
+function verifyLifecycleStatus(task: Record<string, unknown>, expected: string) {
+  if (task.status !== expected) throw new ApiError("Google Tasks readback did not match the requested status", 503, "WRITE_UNVERIFIED");
+}
+
+function verifyProviderPatch(task: Record<string, unknown>, changes: Record<string, unknown>) {
+  for (const key of ["title", "notes", "due"]) {
+    if (!Object.hasOwn(changes, key)) continue;
+    const expected = key === "notes" ? String(changes[key] || "") : (changes[key] ?? null);
+    const actual = key === "notes" ? String(task.notes || "") : (task[key] ?? null);
+    if (actual !== expected) throw new ApiError(`Google Tasks readback did not match ${key}`, 503, "WRITE_UNVERIFIED");
+  }
 }
 
 Deno.serve(async (request) => {
@@ -329,6 +611,16 @@ Deno.serve(async (request) => {
         const google = await context(user.id);
         return json({ taskLists: await listTaskLists(google.accessToken), selectedTaskListId: google.tasklist_id });
       }
+      const action = String(url.searchParams.get("action") || "");
+      const taskId = String(url.searchParams.get("task_id") || url.searchParams.get("id") || "");
+      if (action === "get" || taskId) return json({ success: true, task: await getTaskView(user.id, taskId) });
+      if (action === "search") {
+        const google = await context(user.id);
+        const status = String(url.searchParams.get("status") || "open");
+        const [tasks, schedules] = await Promise.all([listTasksWithContext(google.accessToken, google.tasklist_id, status !== "open"), schedulesFor(user.id)]);
+        const matches = searchTaskViews(tasks, schedules, { query: url.searchParams.get("query") || "", task_id: taskId, status, priority: url.searchParams.get("priority") || "", task_type: url.searchParams.get("task_type") || "", date_from: url.searchParams.get("date_from") || "", date_to: url.searchParams.get("date_to") || "", deadline_from: url.searchParams.get("deadline_from") || "", deadline_to: url.searchParams.get("deadline_to") || "", created_from: url.searchParams.get("created_from") || "", created_to: url.searchParams.get("created_to") || "", updated_from: url.searchParams.get("updated_from") || "", updated_to: url.searchParams.get("updated_to") || "", limit: Number(url.searchParams.get("limit") || 20) });
+        return json({ success: true, tasks: matches, count: matches.length, unique_match: matches.length === 1 });
+      }
       const showCompleted = url.searchParams.get("showCompleted") === "true";
       const filter = url.searchParams.get("filter") || (showCompleted ? "all" : "open");
       const date = url.searchParams.get("date") || new Date().toISOString().slice(0, 10);
@@ -339,29 +631,20 @@ Deno.serve(async (request) => {
     try { input = await request.json(); } catch { throw new ApiError("请求正文必须是 JSON", 400, "INVALID_JSON"); }
     if (request.method === "POST" && input.action === "connect") return json(await connect(user.id, input));
     if (request.method === "POST" && input.action === "create") {
-      const result = await createTask(user.id, (input.task || {}) as Record<string, unknown>);
-      const schedule = (input.task as Record<string, unknown> | undefined)?.schedule as Record<string, unknown> | undefined;
-      const projection = schedule ? await schedulerSync("schedule", result.task.id, { schedule }) : null;
-      return json({ ...result, projection }, result.deduplicated ? 200 : 201);
+      return await runAuditedCreate(request, user.id, input);
     }
-    if (request.method === "PATCH" && input.action === "complete") {
-      const task = await patchTask(user.id, String(input.id || ""), { status: input.completed === false ? "open" : "completed" });
-      return json({ task, projection: await schedulerSync("sync_task", task.id) });
-    }
-    if (request.method === "PATCH" && input.action === "reopen") {
-      const task = await patchTask(user.id, String(input.id || ""), { status: "open" });
-      return json({ task, projection: await schedulerSync("sync_task", task.id) });
+    if (request.method === "PATCH" && (input.action === "complete" || input.action === "reopen")) {
+      const id = String(input.task_id || input.id || ""); const action = input.action === "complete" ? "complete" : "reopen";
+      return runAuditedMutation(request, user.id, action, id, input, async (activity, recordOld) => { const expectedStatus = action === "complete" ? "completed" : "open"; const oldTask = await getTaskView(user.id, id); if (!activity.old_value) await recordOld(oldTask); if (oldTask.status !== expectedStatus) await patchTask(user.id, id, { status: expectedStatus }); const task = await getTaskView(user.id, id); verifyLifecycleStatus(task, expectedStatus); const projection = await schedulerSync("sync_task", id); return { task, projection, projection_error: projection.success === true ? null : projection, changed: oldTask.status !== expectedStatus }; });
     }
     if (request.method === "PATCH" && input.action === "update") {
-      const task = await patchTask(user.id, String(input.id || ""), (input.changes || {}) as Record<string, unknown>);
-      return json({ task, projection: await schedulerSync("sync_task", task.id) });
+      const id = String(input.task_id || input.id || ""); let changes: Record<string, unknown>;
+      try { changes = normalizeTaskPatch({ changes: input.changes || {}, clear_fields: input.clear_fields || [] }) as unknown as Record<string, unknown>; } catch (error) { throw new ApiError(error instanceof Error ? error.message : "Invalid Task patch", 400, "INVALID_TASK_PATCH"); }
+      return runAuditedMutation(request, user.id, "update", id, { ...input, changes }, async (activity, recordOld) => { const oldTask = await getTaskView(user.id, id); if (!activity.old_value) await recordOld(oldTask); const providerChanges = googleTaskChanges(changes) as Record<string, unknown>; if (Object.keys(providerChanges).length) await patchTask(user.id, id, providerChanges); const task = await getTaskView(user.id, id); verifyProviderPatch(task, providerChanges); const projection = await schedulerSync(hasScheduleChanges(changes) ? "update_task" : "sync_task", id, hasScheduleChanges(changes) ? { changes } : {}); return { task, projection, projection_error: projection.success === true ? null : projection, changed: true }; });
     }
     if (request.method === "DELETE") {
-      const id = String(input.id || "");
-      let title = "已取消任务";
-      try { title = (await getTaskBeforeDelete(user.id, id)).title || title; } catch { /* deletion still uses Google Tasks as truth */ }
-      await deleteTask(user.id, id);
-      return json({ deleted: true, projection: await schedulerSync("cancel_task", id, { title }) });
+      const id = String(input.task_id || input.id || "");
+      return runAuditedMutation(request, user.id, "delete", id, input, async (activity, recordOld) => { let oldTask: Record<string, unknown>; try { oldTask = await getTaskView(user.id, id); } catch (error) { if (error instanceof ApiError && error.code === "TASK_NOT_FOUND" && activity.old_value && typeof activity.old_value === "object") return { deleted: true, changed: false, deleted_task: activity.old_value, projection: null, projection_error: { code: "DELETE_RETRY_PROVIDER_MISSING" }, audit_new: { deleted: true, retried: true } }; throw error; } if (!activity.old_value) await recordOld(oldTask); const projection = requireSchedulerSync(await schedulerSync("delete_task", id, { deleted_by: input.source || "personal_os" })); await deleteTask(user.id, id); try { await getTaskView(user.id, id); throw new ApiError("Google Tasks deletion readback failed", 503, "DELETE_UNVERIFIED"); } catch (error) { if (!(error instanceof ApiError) || error.code !== "TASK_NOT_FOUND") throw error; } return { deleted: true, changed: true, deleted_task: oldTask, projection, projection_error: null, audit_new: { deleted: true } }; });
     }
     throw new ApiError("Method not allowed", 405, "METHOD_NOT_ALLOWED");
   } catch (error) {

@@ -24,7 +24,8 @@ export function resolvePublishableApiKey({ publishableKeys = "", anonKey = "", p
 
 export function serviceApiHeaders(apiKey) {
   const key = String(apiKey || "").trim();
-  if (!key) return { apikey: "" };
-  if (key.startsWith("sb_secret_")) return { apikey: key };
-  return { apikey: key, Authorization: `Bearer ${key}` };
+  return Object.fromEntries([
+    ["apikey", key],
+    ...(key && !key.startsWith("sb_secret_") ? [["Authorization", `Bearer ${key}`]] : []),
+  ]);
 }

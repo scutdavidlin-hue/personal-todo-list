@@ -1,0 +1,360 @@
+{
+  "schema_version": "1.0",
+  "task": {
+    "id": "personal-os-task-resolution-v1",
+    "summary": "Add a cross-session, auditable Task/Object Resolution Layer in front of every Personal OS task create path.",
+    "generalizable": true,
+    "reason": "The capability will govern Task, Goal, Plan, Project, Client, Company, Financial Item, and Knowledge intake across future Personal OS entry points."
+  },
+  "discovery": {
+    "internal": {
+      "status": "checked",
+      "queries": [
+        "repository: duplicate canonical semantic relationship dependency parent_task goal idempotency",
+        "Personal OS Codex threads: Task lifecycle, Goals & Plans, scheduler, Google Tasks CRUD",
+        "local capability registry: semantic task resolution deduplication task graph workflow object resolution"
+      ],
+      "evidence": [
+        {
+          "source": "supabase/functions/_shared/google-tasks-core.js",
+          "checked_at": "2026-09-05",
+          "summary": "Existing create path already has title-bigram duplicate detection, but only returns one open same-date candidate and cannot classify update, dependency, related, parent-child, goal-link, or conflict relationships."
+        },
+        {
+          "source": "supabase/functions/_shared/goal-operations.js",
+          "checked_at": "2026-09-05",
+          "summary": "Goals & Plans already has update-first semantic scoring and canonical identity preservation that can be generalized instead of replaced."
+        },
+        {
+          "source": "Supabase migrations and Codex task history",
+          "checked_at": "2026-09-05",
+          "summary": "The current chain already provides Google Tasks as Task source of truth, task_schedule_metadata, task_context_links, durable idempotency, lifecycle audit, Calendar projection, and follow-up parent metadata."
+        },
+        {
+          "source": "/Users/davidlin/.codex/capability-registry/registry.json",
+          "checked_at": "2026-09-05",
+          "summary": "No registered semantic task/object resolution capability was found."
+        }
+      ]
+    },
+    "installed_skills": {
+      "status": "checked",
+      "queries": [
+        "installed skills and plugins for task graph, semantic deduplication, entity resolution, workflow orchestration",
+        "configured MCP/app tools for task or goal relationship resolution"
+      ],
+      "evidence": [
+        {
+          "source": "Installed Skills and callable tool inventory",
+          "checked_at": "2026-09-05",
+          "summary": "reuse-first and personal-systems govern the workflow; GitHub supports read-only discovery. No installed Skill, plugin, MCP server, or CLI owns Personal OS semantic resolution or its Google Tasks/Supabase persistence boundary."
+        }
+      ]
+    },
+    "official": {
+      "status": "checked",
+      "queries": [
+        "PostgreSQL pg_trgm similarity and indexed retrieval",
+        "Supabase semantic search and hybrid search with pgvector",
+        "Google Tasks tasks.insert parent and tasks.list time/status filters"
+      ],
+      "evidence": [
+        {
+          "source": "https://www.postgresql.org/docs/current/pgtrgm.html",
+          "checked_at": "2026-09-05",
+          "summary": "pg_trgm is a trusted PostgreSQL extension with similarity functions and GiST/GIN index support suitable for low-cost candidate retrieval."
+        },
+        {
+          "source": "https://supabase.com/docs/guides/ai/hybrid-search",
+          "checked_at": "2026-09-05",
+          "summary": "Supabase recommends combining keyword and vector rankings for semantic retrieval; pgvector remains a compatible scale-up path once an embedding lifecycle is justified."
+        },
+        {
+          "source": "https://developers.google.com/workspace/tasks/reference/rest/v1/tasks/insert",
+          "checked_at": "2026-09-05",
+          "summary": "Google Tasks natively accepts a parent task identifier on insert, so parent-child persistence should extend the existing provider rather than introduce a second task store."
+        },
+        {
+          "source": "https://developers.google.com/workspace/tasks/reference/rest/v1/tasks/list",
+          "checked_at": "2026-09-05",
+          "summary": "Google Tasks can retrieve open, future, and recently completed candidates with due, completion, and updated filters, enabling cross-session resolution from the real task source."
+        }
+      ]
+    },
+    "github": {
+      "status": "checked",
+      "queries": [
+        "GitHub semantic deduplication entity resolution task graph JavaScript Postgres",
+        "pgvector/pgvector repository metadata and license",
+        "langchain-ai/langgraphjs repository metadata and license",
+        "dedupeio/dedupe repository metadata and license",
+        "temporalio/sdk-typescript repository metadata and license"
+      ],
+      "evidence": [
+        {
+          "source": "https://github.com/pgvector/pgvector",
+          "checked_at": "2026-09-05",
+          "summary": "22,909 stars, 1,306 forks, 14 open issues, pushed 2026-08-20; PostgreSQL-style license. Mature vector retrieval, but embedding generation is an additional lifecycle."
+        },
+        {
+          "source": "https://github.com/langchain-ai/langgraphjs",
+          "checked_at": "2026-09-05",
+          "summary": "3,250 stars, 570 forks, 141 open issues, pushed 2026-09-04; MIT. Strong agent workflow graphs, but it does not resolve or persist canonical Google Task identities."
+        },
+        {
+          "source": "https://github.com/dedupeio/dedupe",
+          "checked_at": "2026-09-05",
+          "summary": "4,510 stars, 576 forks, 91 open issues, last pushed 2025-07-29; MIT. Strong trained record linkage, but its Python/training-data model is mismatched to small Chinese natural-language task streams in Deno Edge Functions."
+        },
+        {
+          "source": "https://github.com/temporalio/sdk-typescript",
+          "checked_at": "2026-09-05",
+          "summary": "905 stars, 215 forks, 221 open issues, pushed 2026-09-04; MIT. Mature durable execution SDK, but adopting its server/runtime would duplicate the current Supabase scheduler for this resolution problem."
+        }
+      ]
+    },
+    "mcp_cli_library": {
+      "status": "checked",
+      "queries": [
+        "available MCP tools for semantic task resolution and Personal OS persistence",
+        "current package.json dependencies and Node/Deno-compatible graph or dedupe libraries",
+        "Temporal, LangGraph.js, PostgreSQL pg_trgm, and pgvector integration fit"
+      ],
+      "evidence": [
+        {
+          "source": "Callable MCP inventory and repository package.json",
+          "checked_at": "2026-09-05",
+          "summary": "No callable MCP owns this data layer. The repository is dependency-free Node/Deno code; adding an agent framework or workflow service would increase runtime, OAuth, deployment, and source-of-truth surface without replacing the required domain rules."
+        }
+      ]
+    }
+  },
+  "candidates": [
+    {
+      "id": "existing-personal-os-core",
+      "name": "Existing Personal OS intake, lifecycle, Goal matching, and scheduler core",
+      "source_type": "internal",
+      "source_url": "https://github.com/scutdavidlin-hue/personal-todo-list",
+      "last_checked": "2026-09-05",
+      "license": "Repository-owned code",
+      "scores": {
+        "popularity": 65,
+        "recency": 100,
+        "maintenance": 92,
+        "issue_pr_health": 85,
+        "documentation": 88,
+        "adoption": 90,
+        "license": 100,
+        "compatibility": 100
+      },
+      "quality_score": 88.1,
+      "viable": true,
+      "rejection_reason": "",
+      "admission": {
+        "required": false,
+        "status": "not_required",
+        "reason": "This is the user's existing repository and deployed data path; no third-party code is installed or executed."
+      }
+    },
+    {
+      "id": "postgres-pg-trgm",
+      "name": "PostgreSQL pg_trgm candidate retrieval",
+      "source_type": "official_postgresql_extension",
+      "source_url": "https://www.postgresql.org/docs/current/pgtrgm.html",
+      "last_checked": "2026-09-05",
+      "license": "PostgreSQL License",
+      "scores": {
+        "popularity": 98,
+        "recency": 100,
+        "maintenance": 100,
+        "issue_pr_health": 95,
+        "documentation": 98,
+        "adoption": 100,
+        "license": 100,
+        "compatibility": 98
+      },
+      "quality_score": 98.7,
+      "viable": true,
+      "rejection_reason": "",
+      "admission": {
+        "required": true,
+        "status": "pass",
+        "checks": {
+          "license": { "status": "pass", "note": "Permissive PostgreSQL License; no redistribution conflict." },
+          "install_scripts": { "status": "not_applicable", "note": "Enabled through a declarative Supabase/PostgreSQL migration, not a downloaded installer." },
+          "dependencies": { "status": "pass", "note": "Uses the existing PostgreSQL runtime only." },
+          "shell_commands": { "status": "not_applicable", "note": "No third-party shell command or subprocess is introduced." },
+          "network_access": { "status": "not_applicable", "note": "Similarity executes inside the existing Supabase database." },
+          "credential_access": { "status": "pass", "note": "No new credential or OAuth scope is required." },
+          "filesystem_access": { "status": "not_applicable", "note": "No runtime filesystem access is required." },
+          "binaries": { "status": "pass", "note": "No repository binary is added; Supabase supplies the trusted extension." },
+          "postinstall_hooks": { "status": "not_applicable", "note": "No package installation or postinstall hook is used." }
+        }
+      }
+    },
+    {
+      "id": "supabase-pgvector-hybrid",
+      "name": "Supabase pgvector hybrid semantic retrieval",
+      "source_type": "official_supabase_and_github",
+      "source_url": "https://supabase.com/docs/guides/ai/hybrid-search",
+      "last_checked": "2026-09-05",
+      "license": "PostgreSQL-style pgvector license; Supabase service terms apply",
+      "scores": {
+        "popularity": 96,
+        "recency": 100,
+        "maintenance": 97,
+        "issue_pr_health": 92,
+        "documentation": 98,
+        "adoption": 97,
+        "license": 100,
+        "compatibility": 78
+      },
+      "quality_score": 95.3,
+      "viable": true,
+      "rejection_reason": "Not selected for V1 because embedding generation would add an asynchronous provider/runtime and credential lifecycle before task volume demonstrates that structured + trigram retrieval is insufficient.",
+      "admission": {
+        "required": false,
+        "status": "not_required",
+        "reason": "Reference-only research; no pgvector code, model, or embedding provider is installed or executed in V1."
+      }
+    },
+    {
+      "id": "langgraph-js",
+      "name": "LangGraph.js",
+      "source_type": "github_npm_framework",
+      "source_url": "https://github.com/langchain-ai/langgraphjs",
+      "last_checked": "2026-09-05",
+      "license": "MIT",
+      "scores": {
+        "popularity": 82,
+        "recency": 100,
+        "maintenance": 96,
+        "issue_pr_health": 86,
+        "documentation": 95,
+        "adoption": 90,
+        "license": 100,
+        "compatibility": 44
+      },
+      "quality_score": 87.3,
+      "viable": false,
+      "rejection_reason": "It solves agent workflow execution, not canonical task entity resolution, and would duplicate the existing scheduler/checkpoint responsibilities.",
+      "admission": {
+        "required": false,
+        "status": "not_required",
+        "reason": "Reference-only research; the package is not installed or executed."
+      }
+    },
+    {
+      "id": "dedupe-python",
+      "name": "dedupe.io Python entity resolution",
+      "source_type": "github_python_library",
+      "source_url": "https://github.com/dedupeio/dedupe",
+      "last_checked": "2026-09-05",
+      "license": "MIT",
+      "scores": {
+        "popularity": 80,
+        "recency": 70,
+        "maintenance": 72,
+        "issue_pr_health": 75,
+        "documentation": 88,
+        "adoption": 84,
+        "license": 100,
+        "compatibility": 25
+      },
+      "quality_score": 73.0,
+      "viable": false,
+      "rejection_reason": "Requires a Python service and labeled training examples, and targets structured record linkage rather than intent updates and executable task relationships.",
+      "admission": {
+        "required": false,
+        "status": "not_required",
+        "reason": "Reference-only research; the library is not installed or executed."
+      }
+    },
+    {
+      "id": "temporal-typescript",
+      "name": "Temporal TypeScript SDK",
+      "source_type": "github_workflow_platform",
+      "source_url": "https://github.com/temporalio/sdk-typescript",
+      "last_checked": "2026-09-05",
+      "license": "MIT",
+      "scores": {
+        "popularity": 72,
+        "recency": 100,
+        "maintenance": 98,
+        "issue_pr_health": 92,
+        "documentation": 96,
+        "adoption": 98,
+        "license": 100,
+        "compatibility": 32
+      },
+      "quality_score": 85.9,
+      "viable": false,
+      "rejection_reason": "Requires a Temporal runtime/service and addresses durable workflow execution, while the current need is classification and graph metadata inside the existing Supabase/Google Tasks chain.",
+      "admission": {
+        "required": false,
+        "status": "not_required",
+        "reason": "Reference-only research; no Temporal server or package is installed or executed."
+      }
+    }
+  ],
+  "comparison": {
+    "shortlist": [
+      "postgres-pg-trgm",
+      "supabase-pgvector-hybrid",
+      "existing-personal-os-core"
+    ],
+    "recommended": [
+      "postgres-pg-trgm",
+      "existing-personal-os-core"
+    ],
+    "reason": "Compose the current canonical Google Tasks/Supabase path with a normalized relationship engine and PostgreSQL candidate retrieval. This covers V1 without a new service or source of truth, while preserving pgvector as a measured scale-up option.",
+    "fewer_than_three_waiver": ""
+  },
+  "decision": {
+    "type": "COMPOSE",
+    "selected": [
+      "existing-personal-os-core",
+      "postgres-pg-trgm"
+    ],
+    "reason": "Extend the existing intake, lifecycle, Goal matching, scheduler, audit, and Google Tasks provider; use pg_trgm only for bounded cross-session candidate retrieval. Domain relationship classification remains dependency-free and explainable in the current Node/Deno core.",
+    "why_build": "",
+    "better_mature_solution_ruled_out": false
+  },
+  "implementation": {
+    "status": "validated",
+    "test_evidence": [
+      "npm test: 162 tests passed, 0 failed, including all 10 PRD scenarios, every Task intake surface, executor integration, runtime retrieval, Goal/Project integrity, dependency ambiguity safety, graph safety, auditability, and migration assertions.",
+      "npm run check: static verification passed with 50 required files and 96 repository files scanned.",
+      "Node 24 --experimental-strip-types --check passed for google-tasks, task-status, personal-os-intake, and personal-os-mcp Edge Functions.",
+      "Supabase linked db push --dry-run identified only 202609050002_task_resolution_layer_v1.sql and performed no production write.",
+      "git diff --check passed with no whitespace errors."
+    ]
+  },
+  "registry_entry": {
+    "capability_id": "personal-os-object-resolution-layer",
+    "name": "Personal OS Object Resolution Layer",
+    "category": "personal-os-data-governance",
+    "source": "internal composition",
+    "github_url": "https://github.com/scutdavidlin-hue/personal-todo-list",
+    "stars": null,
+    "license": "Repository-owned code; PostgreSQL pg_trgm retains the PostgreSQL License",
+    "version": "1.0.0",
+    "last_checked": "2026-09-05",
+    "use_case": "Resolve incoming intents against canonical Personal OS objects before create, preserving relationships, dependencies, auditability, and cross-session context.",
+    "integration_method": "Existing Personal OS intake and Google Tasks lifecycle extended with a dependency-free resolution core, Supabase graph metadata, pg_trgm candidate retrieval, and MCP resolve/graph tools.",
+    "dependencies": [
+      "Existing Personal OS Supabase project",
+      "Existing Google Tasks provider and OAuth",
+      "PostgreSQL pg_trgm trusted extension"
+    ],
+    "status": "validated",
+    "quality_score": 93.0,
+    "tags": [
+      "resolve-before-create",
+      "semantic-deduplication",
+      "task-graph",
+      "object-resolution",
+      "non-destructive"
+    ]
+  }
+}

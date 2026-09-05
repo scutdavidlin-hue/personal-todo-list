@@ -1,0 +1,182 @@
+{
+  "schema_version": "1.0",
+  "task": {
+    "id": "personal-os-autonomous-intake-v1",
+    "summary": "Extend existing Intake with low-risk autonomous capture and verified feedback",
+    "generalizable": true,
+    "reason": "One policy for existing conversational task capture"
+  },
+  "discovery": {
+    "internal": {
+      "status": "checked",
+      "queries": [
+        "registry-search Personal OS",
+        "inspect latest smart reminder snapshot and Git worktrees"
+      ],
+      "evidence": [
+        {
+          "source": "~/.codex/capability-registry/registry.json",
+          "checked_at": "2026-09-05",
+          "summary": "Validated task resolution and reminder policies exist; latest local integration baseline is smart reminder snapshot."
+        },
+        {
+          "source": "supabase/functions/personal-os-intake/index.ts",
+          "checked_at": "2026-09-05",
+          "summary": "Existing audit, Google Task dispatch, Goal dispatch reused."
+        }
+      ]
+    },
+    "installed_skills": {
+      "status": "checked",
+      "queries": [
+        "ALL_TOOLS Personal OS and installed skills"
+      ],
+      "evidence": [
+        {
+          "source": "Personal OS connector and reuse-first SKILL.md",
+          "checked_at": "2026-09-05",
+          "summary": "Current Task/Goal connector is canonical; no new automation path required."
+        }
+      ]
+    },
+    "official": {
+      "status": "checked",
+      "queries": [
+        "Google Tasks get patch due timestamp"
+      ],
+      "evidence": [
+        {
+          "source": "https://developers.google.com/workspace/tasks/reference/rest",
+          "checked_at": "2026-09-05",
+          "summary": "Existing REST API supports reads and partial updates; due is date only."
+        }
+      ]
+    },
+    "github": {
+      "status": "checked",
+      "queries": [
+        "googleapis/google-api-nodejs-client tasks"
+      ],
+      "evidence": [
+        {
+          "source": "https://github.com/googleapis/google-api-nodejs-client",
+          "checked_at": "2026-09-05",
+          "summary": "Official maintained client wraps same APIs; no Personal OS intent/risk/context policy."
+        }
+      ]
+    },
+    "mcp_cli_library": {
+      "status": "checked",
+      "queries": [
+        "package.json dependencies and Personal OS tools"
+      ],
+      "evidence": [
+        {
+          "source": "package.json",
+          "checked_at": "2026-09-05",
+          "summary": "Existing dependency-free Deno/Node code and MCP already provide transport and persistence; no package installed."
+        }
+      ]
+    }
+  },
+  "candidates": [
+    {
+      "id": "existing-intake",
+      "quality_score": 89,
+      "name": "Personal OS Intake + task resolution + Calendar projection",
+      "source_type": "internal",
+      "source_url": "supabase/functions/personal-os-intake/index.ts",
+      "last_checked": "2026-09-05",
+      "license": "Repository-owned code",
+      "scores": {
+        "popularity": 70,
+        "recency": 100,
+        "maintenance": 90,
+        "issue_pr_health": 80,
+        "documentation": 95,
+        "adoption": 90,
+        "license": 100,
+        "compatibility": 100
+      },
+      "viable": true,
+      "admission": {
+        "required": false,
+        "status": "not_required",
+        "reason": "Existing source only; no installation or new permissions"
+      }
+    },
+    {
+      "id": "googleapis",
+      "quality_score": 85.8,
+      "name": "Google official Node client",
+      "source_type": "official_github_library",
+      "source_url": "https://github.com/googleapis/google-api-nodejs-client",
+      "license": "Apache-2.0",
+      "last_checked": "2026-09-05",
+      "scores": {
+        "popularity": 90,
+        "recency": 90,
+        "maintenance": 95,
+        "issue_pr_health": 80,
+        "documentation": 90,
+        "adoption": 95,
+        "license": 100,
+        "compatibility": 40
+      },
+      "viable": false,
+      "rejection_reason": "Adds transport dependency but no semantic policy; current Deno REST already provides required operations.",
+      "admission": {
+        "required": false,
+        "status": "not_required",
+        "reason": "Reference-only research"
+      }
+    }
+  ],
+  "comparison": {
+    "shortlist": [
+      "existing-intake"
+    ],
+    "recommended": [
+      "existing-intake"
+    ],
+    "reason": "Existing canonical ownership and tested provider operations are the required base.",
+    "fewer_than_three_waiver": "Only existing Intake satisfies canonical Tasks, Goals, context resolution and stable Calendar projection. Provider SDKs supply transport only; unrelated task services would duplicate truth."
+  },
+  "decision": {
+    "type": "EXTEND",
+    "selected": [
+      "existing-intake"
+    ],
+    "reason": "Add policy/readback to existing Intake without new storage or service",
+    "why_build": "",
+    "better_mature_solution_ruled_out": false
+  },
+  "implementation": {
+    "status": "validated",
+    "test_evidence": [
+      "npm run verify: 256 tests passed, zero failures; static checks passed (67 required files, 117 scanned).",
+      "All six affected Deno Edge Function entrypoints passed cached-only Deno type checking.",
+      "Original baseline task-lifecycle-core.test.js restored byte-for-byte: 8 tests passed.",
+      "Regression coverage includes exact PRD utterances, Date/Deadline, mixed partial persistence, provider/Schedule readback, stable Event identity, semantic reuse and interrupted-response replay.",
+      "Whitespace diff check passed. Existing project link completed; remote dry-run blocked by LegacyPlatformAuthRequiredError before database mutation. Production deployment pending login and authorization."
+    ]
+  },
+  "registry_entry": {
+    "capability_id": "personal-os-autonomous-intake-policy",
+    "name": "Personal OS Autonomous Intake Policy",
+    "category": "personal-os-execution",
+    "source": "internal extension",
+    "github_url": "https://github.com/scutdavidlin-hue/personal-todo-list",
+    "stars": null,
+    "license": "Repository-owned code",
+    "version": "1.0.0",
+    "last_checked": "2026-09-05",
+    "use_case": "Low risk natural-language capture with semantic reuse and provider readback",
+    "integration_method": "Locally validated integration in /Users/davidlin/Documents/Codex/2026-09-05/prd-v1-0-1-personal-os using existing Intake/MCP, Task provider, Goals and Calendar projection; production deployment pending CLI login and explicit release authorization",
+    "dependencies": [
+      "Existing Personal OS"
+    ],
+    "status": "validated",
+    "quality_score": 89
+  }
+}

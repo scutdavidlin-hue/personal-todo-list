@@ -55,6 +55,7 @@ test("Google task maps back to the existing UI contract", () => {
     status: "completed",
     completed: "2026-09-03T02:00:00Z",
     updated: "2026-09-03T02:00:00Z",
+    parent: "parent-google-id",
   });
   assert.equal(task.status, "completed");
   assert.equal(task.done, true);
@@ -62,6 +63,7 @@ test("Google task maps back to the existing UI contract", () => {
   assert.equal(task.externalId, "google-id");
   assert.equal(task.provider, "google_tasks");
   assert.equal(task.source, "google_tasks");
+  assert.equal(task.parent_task_id, "parent-google-id");
 });
 
 test("original intent round-trips through native Google task notes", () => {
