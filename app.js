@@ -147,6 +147,7 @@ function renderTaskItem(task) {
           <span>Google Tasks</span>
         </small>
       </div>
+      <button type="button" class="task-converse-button" data-converse="${escapeHtml(task.id)}" aria-label="对话：${escapeHtml(task.title)}" ${syncing ? "disabled" : ""}>对话</button>
       <div class="task-menu">
         <button aria-label="任务操作" ${syncing ? "disabled" : ""}>···</button>
         <div class="task-actions">
@@ -362,7 +363,7 @@ function renderGoalDetail() {
 
       <section class="detail-section">
         <div class="detail-section-heading"><div><h3>Tasks</h3><p>真正需要执行的下一步，状态来自 Google Tasks</p></div><button class="text-button" type="button" data-detail-action="new-task">新建下一步</button></div>
-        <div class="goal-task-list">${context.tasks.length ? context.tasks.map((task) => `<div class="goal-task-row ${task.done ? "done" : ""}" data-id="${escapeHtml(task.id)}"><input class="goal-task-check" type="checkbox" data-detail-action="toggle-task" ${task.done ? "checked" : ""} aria-label="${task.done ? "恢复" : "完成"} ${escapeHtml(task.title)}"><div><strong>${escapeHtml(task.title)}</strong><span>${task.done ? "已完成" : task.dueDate ? `到期 ${escapeHtml(task.dueDate)}` : "未安排日期"}</span></div><button type="button" data-detail-action="unlink-task" data-task-id="${escapeHtml(task.id)}">解除关联</button></div>`).join("") : '<div class="detail-empty">还没有关联 Task。没有明确动作时，这是正常状态。</div>'}</div>
+        <div class="goal-task-list">${context.tasks.length ? context.tasks.map((task) => `<div class="goal-task-row ${task.done ? "done" : ""}" data-id="${escapeHtml(task.id)}"><input class="goal-task-check" type="checkbox" data-detail-action="toggle-task" ${task.done ? "checked" : ""} aria-label="${task.done ? "恢复" : "完成"} ${escapeHtml(task.title)}"><div><strong>${escapeHtml(task.title)}</strong><span>${task.done ? "已完成" : task.dueDate ? `到期 ${escapeHtml(task.dueDate)}` : "未安排日期"}</span></div><button type="button" class="task-converse-button" data-detail-action="converse-task" data-task-id="${escapeHtml(task.id)}" aria-label="对话：${escapeHtml(task.title)}">对话</button><button type="button" data-detail-action="unlink-task" data-task-id="${escapeHtml(task.id)}">解除关联</button></div>`).join("") : '<div class="detail-empty">还没有关联 Task。没有明确动作时，这是正常状态。</div>'}</div>
         <div class="task-linker">
           <select id="existingTaskSelect" aria-label="选择已有任务" ${availableTasks.length ? "" : "disabled"}><option value="">${availableTasks.length ? "选择一个未完成 Task" : "没有可关联的未完成 Task"}</option>${taskOptions}</select>
           <select id="existingProjectSelect" aria-label="关联项目"><option value="">直接关联 Goal</option>${projectOptions}</select>
@@ -636,6 +637,7 @@ function handleGoalDetailAction(event) {
   if (action === "new-project") openProjectDialog();
   if (action === "new-task") openTaskDialog(null, selectedGoalId);
   if (action === "link-task") linkExistingTask();
+  if (action === "converse-task") taskConversation.open(tasks.find((task) => task.id === control.dataset.taskId));
   if (action === "unlink-task") unlinkTask(control.dataset.taskId);
   if (action === "toggle-task" && event.type === "change") {
     const row = control.closest("[data-id]");

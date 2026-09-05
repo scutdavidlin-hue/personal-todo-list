@@ -143,7 +143,7 @@ h3 { font-family: Georgia, "Songti SC", serif; font-weight: 500; }
 .filter-pill.active { background: white; color: var(--ink); box-shadow: 0 2px 8px rgba(0,0,0,.06); }
 .task-list { display: grid; }
 .task-item {
-  display: grid; grid-template-columns: 32px 1fr auto; align-items: center; gap: 12px;
+  display: grid; grid-template-columns: 32px minmax(0, 1fr) auto auto; align-items: center; gap: 12px;
   padding: 16px 2px; border-top: 1px solid var(--line);
 }
 .task-item.syncing { opacity: .64; }

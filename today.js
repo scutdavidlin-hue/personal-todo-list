@@ -29,7 +29,7 @@ function taskHtml(task) {
   return `<div class="task ${task.done ? "done" : ""} ${syncing ? "syncing" : ""}" data-id="${task.id}">
     <input class="check" type="checkbox" data-action="toggle" ${task.done ? "checked" : ""} ${syncing ? "disabled" : ""} aria-label="${task.done ? "取消完成" : "标记完成"}">
     <div class="task-main"><button class="name conversation-open" data-action="converse">${escapeHtml(task.title)}</button><div class="meta">${task.dueDate ? `截止 ${escapeHtml(task.dueDate)}` : "未设置日期"} · Google Tasks</div></div>
-    <div class="actions"><button data-action="tomorrow" ${syncing ? "disabled" : ""}>明天</button><button class="cancel" data-action="cancel" ${syncing ? "disabled" : ""}>取消</button></div>
+    <div class="actions"><button type="button" class="task-converse-button" data-action="converse" aria-label="对话：${escapeHtml(task.title)}">对话</button><button data-action="tomorrow" ${syncing ? "disabled" : ""}>明天</button><button class="cancel" data-action="cancel" ${syncing ? "disabled" : ""}>取消</button></div>
   </div>`;
 }
 

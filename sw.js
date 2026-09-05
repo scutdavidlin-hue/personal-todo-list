@@ -1,4 +1,4 @@
-const CACHE_NAME = "personal-os-shell-v1.3.1-conversation";
+const CACHE_NAME = "personal-os-shell-v1.3.2-conversation";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -54,8 +54,8 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  if (url.pathname.endsWith("runtime-config.js")) {
-    event.respondWith(networkFirst(request, "./runtime-config.js"));
+  if (/\.(?:js|css)$/.test(url.pathname)) {
+    event.respondWith(networkFirst(request, url.pathname));
     return;
   }
 
