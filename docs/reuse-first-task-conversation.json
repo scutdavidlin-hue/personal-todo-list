@@ -1,0 +1,131 @@
+{
+  "schema_version": "1.0",
+  "task": {
+    "id": "task-conversation-v1",
+    "summary": "Task-bound preview confirm execution using existing CRUD and audit",
+    "generalizable": true,
+    "reason": "Reusable task interaction"
+  },
+  "discovery": {
+    "internal": {
+      "status": "checked",
+      "queries": [
+        "registry and canonical repository e286824"
+      ],
+      "evidence": [
+        {
+          "source": "Existing lifecycle, resolution, schedule and Google readback; no conversation persistence or Speech/LLM implementation found.",
+          "checked_at": "2026-09-05",
+          "summary": "Existing lifecycle, resolution, schedule and Google readback; no conversation persistence or Speech/LLM implementation found."
+        }
+      ]
+    },
+    "installed_skills": {
+      "status": "checked",
+      "queries": [
+        "installed skills and callable Personal OS tools"
+      ],
+      "evidence": [
+        {
+          "source": "reuse-first available; Personal OS MCP not callable in this session; repository MCP reusable.",
+          "checked_at": "2026-09-05",
+          "summary": "reuse-first available; Personal OS MCP not callable in this session; repository MCP reusable."
+        }
+      ]
+    },
+    "official": {
+      "status": "checked",
+      "queries": [
+        "Google tasks.patch and MDN SpeechRecognition"
+      ],
+      "evidence": [
+        {
+          "source": "https://developers.google.com/workspace/tasks/reference/rest/v1/tasks/patch ; https://developer.mozilla.org/en-US/docs/Web/API/SpeechRecognition",
+          "checked_at": "2026-09-05",
+          "summary": "https://developers.google.com/workspace/tasks/reference/rest/v1/tasks/patch ; https://developer.mozilla.org/en-US/docs/Web/API/SpeechRecognition"
+        }
+      ]
+    },
+    "github": {
+      "status": "checked",
+      "queries": [
+        "langgraph human in the loop"
+      ],
+      "evidence": [
+        {
+          "source": "https://github.com/langchain-ai/langgraphjs/blob/main/docs/docs/concepts/human_in_the_loop.md ; interrupt supports checkpoint confirmation but adds agent runtime.",
+          "checked_at": "2026-09-05",
+          "summary": "https://github.com/langchain-ai/langgraphjs/blob/main/docs/docs/concepts/human_in_the_loop.md ; interrupt supports checkpoint confirmation but adds agent runtime."
+        }
+      ]
+    },
+    "mcp_cli_library": {
+      "status": "checked",
+      "queries": [
+        "package.json and LangGraph interrupt library"
+      ],
+      "evidence": [
+        {
+          "source": "Existing dependency-free Deno REST and MCP; LangGraph would add checkpoint layer overlapping Supabase.",
+          "checked_at": "2026-09-05",
+          "summary": "Existing dependency-free Deno REST and MCP; LangGraph would add checkpoint layer overlapping Supabase."
+        }
+      ]
+    }
+  },
+  "candidates": [
+    {
+      "id": "existing-lifecycle",
+      "name": "Existing Personal OS lifecycle plus attached conversation metadata",
+      "source_type": "internal_and_official_api",
+      "source_url": "supabase/functions/google-tasks/index.ts",
+      "last_checked": "2026-09-05",
+      "license": "Repository-owned code; Google Calendar API terms apply",
+      "scores": {
+        "popularity": 75,
+        "recency": 100,
+        "maintenance": 95,
+        "issue_pr_health": 90,
+        "documentation": 95,
+        "adoption": 95,
+        "license": 100,
+        "compatibility": 100
+      },
+      "quality_score": 92.3,
+      "viable": true,
+      "rejection_reason": "",
+      "admission": {
+        "required": false,
+        "status": "not_required",
+        "reason": "This extends the user's existing deployed code and already-authorized Calendar API; no third-party package is installed or executed."
+      }
+    }
+  ],
+  "comparison": {
+    "shortlist": [
+      "existing-lifecycle"
+    ],
+    "recommended": [
+      "existing-lifecycle"
+    ],
+    "reason": "Extend current persistence and provider chain.",
+    "fewer_than_three_waiver": "Only existing lifecycle meets no new framework/service requirement. LangGraph offers confirmation but not our Google ownership, reminder and lifecycle semantics; browser speech provides input only, not a competing full solution."
+  },
+  "decision": {
+    "type": "EXTEND",
+    "selected": [
+      "existing-lifecycle"
+    ],
+    "reason": "Add task-bound proposals and history, reuse CRUD, semantic resolution, OAuth, schedule and native Web Speech API; no new service or dependency.",
+    "why_build": "",
+    "better_mature_solution_ruled_out": false
+  },
+  "implementation": {
+    "status": "locally_tested_not_accepted",
+    "test_evidence": [
+      "npm run verify: 298 tests, 296 passed, 2 skipped browser tests, 0 failures",
+      "Cached Deno full typecheck passed for 3 changed endpoints",
+      "V1 acceptance pending existing GPT integration, Supabase CLI login, live migration/provider/iPhone checks; not registered as validated"
+    ]
+  }
+}

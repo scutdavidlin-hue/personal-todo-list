@@ -1,7 +1,9 @@
+import { createTaskConversation } from "./src/task-conversation.js";
 import { escapeHtml, fromDatabaseTask, groupTasksByDue, localDateISO, offsetDate, replaceTask } from "./src/core.js";
 import { TaskCloudClient } from "./src/cloud-client.js";
 
 const client = new TaskCloudClient(window.TASK_SYNC_CONFIG || {});
+const taskConversation = createTaskConversation({ client, onChanged: () => refresh({ quiet: true }) });
 const $ = (selector) => document.querySelector(selector);
 let tasks = [];
 let user = null;
@@ -26,7 +28,7 @@ function taskHtml(task) {
   const syncing = pendingIds.has(task.id);
   return `<div class="task ${task.done ? "done" : ""} ${syncing ? "syncing" : ""}" data-id="${task.id}">
     <input class="check" type="checkbox" data-action="toggle" ${task.done ? "checked" : ""} ${syncing ? "disabled" : ""} aria-label="${task.done ? "取消完成" : "标记完成"}">
-    <div class="task-main"><div class="name">${escapeHtml(task.title)}</div><div class="meta">${task.dueDate ? `截止 ${escapeHtml(task.dueDate)}` : "未设置日期"} · Google Tasks</div></div>
+    <div class="task-main"><button class="name conversation-open" data-action="converse">${escapeHtml(task.title)}</button><div class="meta">${task.dueDate ? `截止 ${escapeHtml(task.dueDate)}` : "未设置日期"} · Google Tasks</div></div>
     <div class="actions"><button data-action="tomorrow" ${syncing ? "disabled" : ""}>明天</button><button class="cancel" data-action="cancel" ${syncing ? "disabled" : ""}>取消</button></div>
   </div>`;
 }
@@ -54,6 +56,7 @@ function bindTaskEvents() {
     const id = control.closest(".task").dataset.id;
     const task = tasks.find((item) => item.id === id);
     if (!task) return;
+    if (control.dataset.action === "converse") taskConversation.open(task);
     if (control.dataset.action === "toggle") mutate(id, { status: task.done ? "open" : "completed", completed_at: task.done ? null : new Date().toISOString() }, task.done ? "已恢复为未完成" : "已完成并保存到云端");
     if (control.dataset.action === "tomorrow") mutate(id, { date: offsetDate(1) }, "已移到明天");
     if (control.dataset.action === "cancel" && window.confirm("这会从 Google Tasks 永久删除任务。确定删除吗？")) cancel(id);
@@ -193,6 +196,7 @@ function connectGoogleTasks() {
 }
 
 async function signOut() {
+  taskConversation.close();
   await client.signOut();
   user = null;
   tasks = [];

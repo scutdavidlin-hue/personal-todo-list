@@ -67,3 +67,7 @@ python3 -m http.server 4173 --bind 127.0.0.1
 ## 安全说明
 
 `runtime-config.js` 中的 Supabase Project URL 与 anon/publishable key 是公开客户端配置，不是管理员密钥。绝不能把 Google OAuth Client Secret、刷新令牌、`GOOGLE_TOKEN_ENCRYPTION_KEY`、service role key、自动化 Token 或 GitHub PAT 写入前端源码或 Git。
+
+## Task Conversational Update V1（本地开发）
+
+任务标题可打开对话详情，支持语音/文字、提案预览和自然语言确认。此功能的云端部署、GPT 服务接入与 iPhone 真机验收尚未完成。详见 [需求](PRD_TASK_CONVERSATIONAL_UPDATE_V1.md) 与 [验收状态](ACCEPTANCE_TASK_CONVERSATIONAL_UPDATE_V1.md)。

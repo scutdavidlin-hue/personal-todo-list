@@ -233,6 +233,16 @@ export class TaskCloudClient {
     });
   }
 
+  async getTaskConversation(taskId, { historyBefore = "" } = {}) {
+    const query = new URLSearchParams({ task_id: taskId });
+    if (historyBefore) query.set("history_before", historyBefore);
+    return this.authenticatedRequest(`/functions/v1/task-conversation?${query}`, { method: "GET" });
+  }
+
+  async sendTaskConversation(input) {
+    return this.authenticatedRequest("/functions/v1/task-conversation", { method: "POST", body: JSON.stringify(input) });
+  }
+
   async createTask(task) {
     const idempotencyKey = String(task?.idempotency_key || task?.idempotencyKey || taskMutationKey("create"));
     const result = await this.tasksRequest("POST", { action: "create", task }, "", { idempotencyKey });

@@ -5,6 +5,15 @@ import { fileURLToPath } from "node:url";
 
 const root = new URL("../", import.meta.url);
 const requiredFiles = [
+  "src/task-conversation.js",
+  "task-conversation.css",
+  "supabase/functions/_shared/task-conversation-core.js",
+  "supabase/functions/_shared/task-conversation-runtime.js",
+  "supabase/functions/task-conversation/index.ts",
+  "supabase/migrations/202609050004_task_conversation_v1.sql",
+  "PRD_TASK_CONVERSATIONAL_UPDATE_V1.md",
+  "ACCEPTANCE_TASK_CONVERSATIONAL_UPDATE_V1.md",
+  "docs/reuse-first-task-conversation.json",
   "index.html",
   "today.html",
   "app.js",
@@ -173,7 +182,7 @@ const manifest = JSON.parse(contents.get("manifest.webmanifest"));
 assert.equal(manifest.display, "standalone");
 assert.ok(manifest.icons.some((icon) => icon.sizes === "192x192"));
 assert.ok(manifest.icons.some((icon) => icon.sizes === "512x512" && icon.purpose === "maskable"));
-assert.match(contents.get("sw.js"), /personal-os-shell-v1\.2\.1/);
+assert.match(contents.get("sw.js"), /personal-os-shell-v1\.3\.1-conversation/);
 assert.match(contents.get("sw.js"), /request\.method !== "GET"/);
 
 const config = contents.get("runtime-config.js");

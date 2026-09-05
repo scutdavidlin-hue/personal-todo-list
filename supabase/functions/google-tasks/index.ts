@@ -3,6 +3,7 @@ import {
   chooseTaskList,
   createGoogleTaskPayload,
   filterTaskModels,
+  markTaskCancelledNotes,
   toTaskModel,
   updateGoogleTaskPayload,
 } from "../_shared/google-tasks-core.js";
@@ -16,7 +17,7 @@ import {
   loadTaskResolutionContext,
   resolveAndExecuteTask,
 } from "../_shared/task-resolution-runtime.js";
-import { canonicalTaskMutation, googleTaskChanges, hasScheduleChanges, normalizeTaskPatch, searchTaskViews, taskView } from "../_shared/task-lifecycle-core.js";
+import { canonicalTaskMutation, googleTaskChanges, hasScheduleChanges, normalizeTaskPatch, searchTaskViews, taskStateFingerprint, taskView } from "../_shared/task-lifecycle-core.js";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const USE_NEW_API_KEYS = Deno.env.get("SUPABASE_USE_NEW_API_KEYS") === "true";
@@ -598,6 +599,13 @@ function verifyProviderPatch(task: Record<string, unknown>, changes: Record<stri
   }
 }
 
+function verifyExpectedTaskVersion(task: Record<string, unknown>, input: Record<string, unknown>) {
+  const expected = String(input.expected_task_version || "");
+  if (expected && taskStateFingerprint(task) !== expected) {
+    throw new ApiError("Task changed after the proposed preview", 409, "TASK_VERSION_CONFLICT");
+  }
+}
+
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (!SUPABASE_URL || !SERVICE_API_KEY || !SUPABASE_PUBLIC_KEY || !GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || TOKEN_ENCRYPTION_KEY.length < 32) {
@@ -635,12 +643,16 @@ Deno.serve(async (request) => {
     }
     if (request.method === "PATCH" && (input.action === "complete" || input.action === "reopen")) {
       const id = String(input.task_id || input.id || ""); const action = input.action === "complete" ? "complete" : "reopen";
-      return runAuditedMutation(request, user.id, action, id, input, async (activity, recordOld) => { const expectedStatus = action === "complete" ? "completed" : "open"; const oldTask = await getTaskView(user.id, id); if (!activity.old_value) await recordOld(oldTask); if (oldTask.status !== expectedStatus) await patchTask(user.id, id, { status: expectedStatus }); const task = await getTaskView(user.id, id); verifyLifecycleStatus(task, expectedStatus); const projection = await schedulerSync("sync_task", id); return { task, projection, projection_error: projection.success === true ? null : projection, changed: oldTask.status !== expectedStatus }; });
+      return runAuditedMutation(request, user.id, action, id, input, async (activity, recordOld) => { const expectedStatus = action === "complete" ? "completed" : "open"; const oldTask = await getTaskView(user.id, id); verifyExpectedTaskVersion(oldTask, input); if (!activity.old_value) await recordOld(oldTask); if (oldTask.status !== expectedStatus) await patchTask(user.id, id, { ...(oldTask.status === "cancelled" ? { notes: oldTask.notes, originalIntent: oldTask.originalIntent } : {}), status: expectedStatus }); const writtenTask = await getTaskView(user.id, id); verifyLifecycleStatus(writtenTask, expectedStatus); const projection = await schedulerSync("sync_task", id); const task = await getTaskView(user.id, id); return { task, projection, projection_error: projection.success === true ? null : projection, changed: oldTask.status !== expectedStatus }; });
+    }
+    if (request.method === "PATCH" && input.action === "cancel") {
+      const id = String(input.task_id || input.id || "");
+      return runAuditedMutation(request, user.id, "cancel", id, input, async (activity, recordOld) => { const oldTask = await getTaskView(user.id, id); verifyExpectedTaskVersion(oldTask, input); if (!activity.old_value) await recordOld(oldTask); if (oldTask.status !== "cancelled") await patchTask(user.id, id, { notes: markTaskCancelledNotes(oldTask.notes), originalIntent: oldTask.originalIntent, status: "completed" }); const writtenTask = await getTaskView(user.id, id); verifyLifecycleStatus(writtenTask, "cancelled"); const projection = await schedulerSync("cancel_task", id, { title: oldTask.title }); const task = await getTaskView(user.id, id); return { task, projection, projection_error: projection.success === true ? null : projection, changed: oldTask.status !== "cancelled" }; });
     }
     if (request.method === "PATCH" && input.action === "update") {
       const id = String(input.task_id || input.id || ""); let changes: Record<string, unknown>;
       try { changes = normalizeTaskPatch({ changes: input.changes || {}, clear_fields: input.clear_fields || [] }) as unknown as Record<string, unknown>; } catch (error) { throw new ApiError(error instanceof Error ? error.message : "Invalid Task patch", 400, "INVALID_TASK_PATCH"); }
-      return runAuditedMutation(request, user.id, "update", id, { ...input, changes }, async (activity, recordOld) => { const oldTask = await getTaskView(user.id, id); if (!activity.old_value) await recordOld(oldTask); const providerChanges = googleTaskChanges(changes) as Record<string, unknown>; if (Object.keys(providerChanges).length) await patchTask(user.id, id, providerChanges); const task = await getTaskView(user.id, id); verifyProviderPatch(task, providerChanges); const projection = await schedulerSync(hasScheduleChanges(changes) ? "update_task" : "sync_task", id, hasScheduleChanges(changes) ? { changes } : {}); return { task, projection, projection_error: projection.success === true ? null : projection, changed: true }; });
+      return runAuditedMutation(request, user.id, "update", id, { ...input, changes }, async (activity, recordOld) => { const oldTask = await getTaskView(user.id, id); verifyExpectedTaskVersion(oldTask, input); if (!activity.old_value) await recordOld(oldTask); const providerChanges = googleTaskChanges(changes) as Record<string, unknown>; if (Object.keys(providerChanges).length) await patchTask(user.id, id, providerChanges); const writtenTask = await getTaskView(user.id, id); verifyProviderPatch(writtenTask, providerChanges); const projection = await schedulerSync(hasScheduleChanges(changes) ? "update_task" : "sync_task", id, hasScheduleChanges(changes) ? { changes } : {}); const task = await getTaskView(user.id, id); return { task, projection, projection_error: projection.success === true ? null : projection, changed: true }; });
     }
     if (request.method === "DELETE") {
       const id = String(input.task_id || input.id || "");

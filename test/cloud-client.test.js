@@ -246,3 +246,29 @@ test("planning cache supports offline read-only recovery", () => {
   assert.equal(cached.goals[0].id, "g1");
   assert.ok(cached.savedAt);
 });
+
+test("task conversation retains exact proposal and retry identity through authentication retry", async () => {
+  const sent = [];
+  let unauthorized = true;
+  const client = new TaskCloudClient(config, {
+    storage: sessionStorage(),
+    fetch: async (url, init) => {
+      if (url.includes('/auth/v1/token')) return response({ access_token: 'renewed', refresh_token: 'refresh', expires_in: 3600 });
+      sent.push(JSON.parse(init.body));
+      if (unauthorized) { unauthorized = false; return response({ error: 'expired' }, 401); }
+      return response({ success: true, message: '已核实', pending: null });
+    },
+  });
+  const input = { task_id: 'original-task', text: '对', source: 'voice', proposal_id: 'shown-proposal', request_id: 'stable-request-123' };
+  const result = await client.sendTaskConversation(input);
+  assert.equal(result.success, true);
+  assert.deepEqual(sent, [input, input]);
+});
+
+test("conversation history requests are scoped to the encoded current task", async () => {
+  let requested;
+  const client = new TaskCloudClient(config, { storage: sessionStorage(), fetch: async (url) => { requested = new URL(url); return response({ pending: null, history: [] }); } });
+  await client.getTaskConversation('task/a?owner=other');
+  assert.equal(requested.searchParams.get('task_id'), 'task/a?owner=other');
+  assert.equal(requested.searchParams.has('owner'), false);
+});

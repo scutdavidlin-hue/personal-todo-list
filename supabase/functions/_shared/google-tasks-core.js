@@ -2,6 +2,7 @@ export const GOOGLE_TASKS_SCOPE = "https://www.googleapis.com/auth/tasks";
 export const DEFAULT_TASK_LIST_TITLE = "Personal OS";
 
 const ORIGINAL_INTENT_PREFIX = "原始意图：";
+const TASK_CANCELLED_MARKER = "[Personal OS status: cancelled]";
 const TASK_STATUS = new Set(["open", "completed", "cancelled"]);
 
 export function validDate(value) {
@@ -21,11 +22,25 @@ export function googleDueToDate(due) {
 
 export function splitTaskNotes(value) {
   const lines = String(value || "").split("\n");
+  const cancelled = lines.some((line) => line.trim() === TASK_CANCELLED_MARKER);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (lines[index].trim() === TASK_CANCELLED_MARKER) lines.splice(index, 1);
+  }
   const index = lines.findLastIndex((line) => line.startsWith(ORIGINAL_INTENT_PREFIX));
-  if (index < 0) return { notes: String(value || ""), originalIntent: "" };
+  if (index < 0) return { notes: lines.join("\n").trim(), originalIntent: "", ...(cancelled ? { cancelled: true } : {}) };
   const originalIntent = lines[index].slice(ORIGINAL_INTENT_PREFIX.length).trim();
   lines.splice(index, 1);
-  return { notes: lines.join("\n").trim(), originalIntent };
+  return { notes: lines.join("\n").trim(), originalIntent, ...(cancelled ? { cancelled: true } : {}) };
+}
+
+export function markTaskCancelledNotes(notes, originalIntent = "") {
+  const composed = composeTaskNotes(notes, originalIntent);
+  const withoutMarker = composed.split("\n").filter((line) => line.trim() !== TASK_CANCELLED_MARKER).join("\n").trim();
+  return `${withoutMarker}${withoutMarker ? "\n\n" : ""}${TASK_CANCELLED_MARKER}`;
+}
+
+export function clearTaskCancelledNotes(notes) {
+  return String(notes || "").split("\n").filter((line) => line.trim() !== TASK_CANCELLED_MARKER).join("\n").trim();
 }
 
 export function composeTaskNotes(notes, originalIntent) {
@@ -38,8 +53,9 @@ export function composeTaskNotes(notes, originalIntent) {
 }
 
 export function toTaskModel(task, taskListId = "") {
-  const completed = task.status === "completed";
   const parsedNotes = splitTaskNotes(task.notes);
+  const cancelled = task.status === "completed" && parsedNotes.cancelled;
+  const completed = task.status === "completed" && !cancelled;
   const dueDate = googleDueToDate(task.due);
   return {
     id: task.id,
@@ -48,11 +64,12 @@ export function toTaskModel(task, taskListId = "") {
     taskListId,
     title: task.title || "",
     notes: parsedNotes.notes,
-    status: completed ? "completed" : "open",
+    status: cancelled ? "cancelled" : completed ? "completed" : "open",
     dueDate,
     createdAt: null,
     updatedAt: task.updated || null,
-    completedAt: task.completed || null,
+    completedAt: completed ? task.completed || null : null,
+    cancelledAt: cancelled ? task.completed || task.updated || null : null,
     source: "google_tasks",
     sourceConversationId: null,
     projectId: null,

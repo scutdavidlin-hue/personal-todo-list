@@ -5,3 +5,9 @@
 自定义 MCP App 官方目前仅支持网页端；本次 iPhone 验收按既定范围只核对 Google Tasks / Google Calendar 跨端结果，不包含在 iPhone ChatGPT 内直接调用自定义 MCP。
 
 `project_data`、`knowledge` 与 `gpt_job` Adapter 仍为非目标；Gateway 会明确失败，不会误建 Task。
+
+## Task Conversational Update V1 release checkpoints
+
+- Existing GPT/LLM service configuration location is required; no key should be sent through chat. Deterministic fallback is not full GPT interpretation.
+- Existing Supabase CLI reports `Access token not provided`; resume through existing account login, then inspect remote migrations before deploying the delta.
+- Run real iPhone speech/clarification/confirmation and Google Tasks + Calendar readback acceptance after deployment.

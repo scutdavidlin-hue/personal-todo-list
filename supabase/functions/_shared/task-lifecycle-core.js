@@ -132,6 +132,7 @@ export function normalizeTaskPatch(input = {}) {
   }
   if (hasOwn(changes, "notes") && changes.notes !== null) {
     if (typeof changes.notes !== "string" || changes.notes.length > 10_000) throw new Error("notes must contain at most 10000 characters");
+    if (changes.notes.split("\n").some((line) => line.trim() === "[Personal OS status: cancelled]")) throw new Error("notes cannot contain the reserved cancellation marker");
   }
   for (const field of ["due", "deadline", "requested_date"]) {
     if (hasOwn(changes, field) && changes[field] !== null && !validDate(changes[field])) {
@@ -309,6 +310,46 @@ function sortObject(value) {
   if (Array.isArray(value)) return value.map(sortObject);
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(Object.keys(value).sort().map((key) => [key, sortObject(value[key])]));
+}
+
+export function taskStateFingerprint(task = {}) {
+  const schedule = task.schedule && typeof task.schedule === "object" ? task.schedule : {};
+  return JSON.stringify(sortObject({
+    id: task.task_id || task.google_task_id || task.id || null,
+    title: task.title || "",
+    notes: task.notes || "",
+    original_intent: task.originalIntent || task.original_intent || "",
+    status: task.status || "",
+    date: task.date || task.due || task.dueDate || null,
+    deadline: task.deadline || null,
+    requested_date: task.requested_date || null,
+    requested_time: task.requested_time || null,
+    priority: task.priority || null,
+    estimated_duration: task.estimated_duration || null,
+    fixed_time: task.fixed_time === true,
+    timezone: task.timezone || null,
+    task_type: task.task_type || null,
+    parent_task_id: task.parent_task_id || null,
+    follow_up_of: task.follow_up_of || null,
+    follow_up_sequence: task.follow_up_sequence || null,
+    updated_at: task.updated_at || task.updatedAt || null,
+    schedule: {
+      scheduled_date: schedule.scheduled_date || null,
+      scheduled_start: schedule.scheduled_start || null,
+      scheduled_end: schedule.scheduled_end || null,
+      scheduling_status: schedule.scheduling_status || null,
+      deadline: schedule.deadline || null,
+      deadline_time: schedule.deadline_time || null,
+      reminders: schedule.reminders || [],
+      reminder_at: schedule.reminder_at || null,
+      reminder_offset_minutes: schedule.reminder_offset_minutes ?? null,
+      reminder_policy: schedule.reminder_policy || null,
+      reminder_policy_source: schedule.reminder_policy_source || null,
+      notification_channel: schedule.notification_channel || null,
+      calendar_event_id: schedule.calendar_event_id || null,
+      updated_at: schedule.updated_at || null,
+    },
+  }));
 }
 
 export function canonicalTaskMutation(action, taskId, input = {}) {

@@ -90,3 +90,9 @@
 - [x] 本地 Goals 页面与浏览器控制台验收通过。
 - [x] 现有 GitHub Pages 已发布 Goals UI；已认证页面真实同步并显示目标、`中期` horizon 与关联下一步 Task。
 - [x] 自动回归 85 tests / 0 fail，既有 Task、Calendar、晨会、夕会核心规则无 regression。
+
+## 2026-09-05 Task Conversational Update V1
+
+WHY：任务变化应能在任务内自然表达，更新原对象并保留历史。
+
+本次在 e286824 基线上扩展 Task 对话；独立分工实现意图、服务端状态机和界面验证。正式完成情况以 ACCEPTANCE_TASK_CONVERSATIONAL_UPDATE_V1.md 为准。明确不把本地测试等同云端或 iPhone 验收。现有 Supabase CLI 未登录；当前没有已配置的服务端 GPT 接口，已请求现有配置位置。

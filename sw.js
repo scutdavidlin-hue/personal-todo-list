@@ -1,4 +1,4 @@
-const CACHE_NAME = "personal-os-shell-v1.2.1";
+const CACHE_NAME = "personal-os-shell-v1.3.1-conversation";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -11,6 +11,8 @@ const APP_SHELL = [
   "./src/core.js",
   "./src/goals.js",
   "./src/cloud-client.js",
+  "./src/task-conversation.js",
+  "./task-conversation.css",
   "./manifest.webmanifest",
   "./icons/icon.svg",
   "./icons/apple-touch-icon.png",

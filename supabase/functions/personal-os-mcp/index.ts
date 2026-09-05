@@ -99,6 +99,7 @@ const TaskOutput = z.object({
   error: z.string().optional(),
 });
 
+const TaskConversationInput = z.object({ task_id: z.string().min(1).max(1024), text: z.string().min(1).max(10000), source: z.enum(["text", "voice"]).default("text"), request_id: z.string().min(8).max(200), proposal_id: z.string().max(200).optional() });
 const LifecycleIdInput = z.object({ task_id: z.string().min(1).max(1024) });
 const LifecycleMutationInput = LifecycleIdInput.extend({
   title: z.string().min(1).max(200).optional(), notes: z.string().max(10_000).nullable().optional(),
@@ -1034,6 +1035,18 @@ const COMPLETE_TASK_TOOL = lifecycleTool("complete_task", "Complete a Personal O
 const REOPEN_TASK_TOOL = lifecycleTool("reopen_task", "Reopen a Personal OS task", STATE_SCHEMA);
 const DELETE_TASK_TOOL = lifecycleTool("delete_task", "Delete a Personal OS task", { ...STATE_SCHEMA, properties: { ...STATE_SCHEMA.properties, reason: { type: "string", maxLength: 1_000 } } }, false, true);
 
+const TASK_CONVERSATION_TOOL = lifecycleTool("converse_task", "Continue a task conversation", { type: "object", properties: { task_id: ID_FIELD, text: { type: "string", minLength: 1, maxLength: 10000, description: "Exact user input; never synthesize a confirmation." }, source: { type: "string", enum: ["text", "voice"] }, request_id: { type: "string", minLength: 8, maxLength: 200 }, proposal_id: { type: "string", maxLength: 200, description: "Pending proposal id returned by get_task_conversation; required for confirming that exact preview." } }, required: ["task_id", "text", "request_id"], additionalProperties: false });
+TASK_CONVERSATION_TOOL.description = "Use for task-bound natural-language updates. Server stores a preview first, then executes only after the user's actual confirmation of that proposal. Send corrections to replace the preview. Low-risk notes may append directly. Always display returned diff and message, including partial failures. Never use update_task to bypass this conversation confirmation workflow.";
+const GET_TASK_CONVERSATION_TOOL = lifecycleTool("get_task_conversation", "Read task conversation and pending changes", { type: "object", properties: { task_id: ID_FIELD }, required: ["task_id"], additionalProperties: false }, true);
+
+async function conversationResult(request: Request, args: Record<string, unknown>, readOnly = false) {
+  const url = new URL(`${SUPABASE_URL}/functions/v1/task-conversation`);
+  if (readOnly) url.searchParams.set("task_id", String(args.task_id));
+  const response = await fetch(url, { method: readOnly ? "GET" : "POST", headers: { apikey: SUPABASE_PUBLIC_KEY, Authorization: request.headers.get("authorization") || "", "Content-Type": "application/json" }, body: readOnly ? undefined : JSON.stringify(args), signal: AbortSignal.timeout(40_000) });
+  const result = await response.json();
+  return { isError: !response.ok || result.success === false, content: [{ type: "text", text: result.message || result.error || "已读取任务对话" }], structuredContent: result };
+}
+
 async function lifecycleApi(request: Request, method: string, query: Record<string, unknown> = {}, body: Record<string, unknown> | null = null) {
   const url = new URL(`${SUPABASE_URL}/functions/v1/google-tasks`);
   for (const [key, value] of Object.entries(query)) if (value !== undefined && value !== null && value !== "") url.searchParams.set(key, String(value));
@@ -1087,11 +1100,13 @@ async function handleMcp(request: Request) {
       protocolVersion: requestedVersion,
       serverInfo: { name: "personal-os", title: "Personal OS", version: "1.5.0" },
       capabilities: { tools: { listChanged: false } },
-      instructions: "Google Tasks is Task status truth. Clear low-risk reversible actions are authorized by natural-language intent: infer missing optional fields and execute without asking for date, hotel name, repetition or reconfirmation. Resolve Before Create and update first. Questions create nothing; durable preferences use Goals & Plans; mixed rules and current actions save both. Pass known conversation_trips and current_task.id for short corrections; re-read provider state before changing it. Infer Date from explicit wording, conversation, Calendar, Travel Plan, current context, then a reasonable default. Never invent Deadline. One action is one Task; unfinished tasks remain visible through Today/Overdue, not duplicate daily inserts. L2 asks only about outcome-changing ambiguity; L3 transactions require critical parameters and confirmation and cannot execute through these Task tools. For timed actions perform Smart Reminder reasoning, attach reminders to the same Schedule and stable Calendar Event, and use update_task_reminder for existing reminders. Ordinary reminders go to Google Tasks; automation is for future GPT search, analysis or generated content. Only write_success=true plus verified=true permits 已经写进去了. Prefer the returned short message and report Calendar projection failures separately; projection is not phone delivery.",
+      instructions: "For task-bound conversational changes, use get_task_conversation and converse_task: preview, clarify, await actual human confirmation, then execute. This specific workflow overrides the general low-risk intake default for date/time/status/follow-up changes; never synthesize confirmation or bypass with CRUD. Google Tasks is Task status truth. Clear low-risk reversible actions are authorized by natural-language intent: infer missing optional fields and execute without asking for date, hotel name, repetition or reconfirmation. Resolve Before Create and update first. Questions create nothing; durable preferences use Goals & Plans; mixed rules and current actions save both. Pass known conversation_trips and current_task.id for short corrections; re-read provider state before changing it. Infer Date from explicit wording, conversation, Calendar, Travel Plan, current context, then a reasonable default. Never invent Deadline. One action is one Task; unfinished tasks remain visible through Today/Overdue, not duplicate daily inserts. L2 asks only about outcome-changing ambiguity; L3 transactions require critical parameters and confirmation and cannot execute through these Task tools. For timed actions perform Smart Reminder reasoning, attach reminders to the same Schedule and stable Calendar Event, and use update_task_reminder for existing reminders. Ordinary reminders go to Google Tasks; automation is for future GPT search, analysis or generated content. Only write_success=true plus verified=true permits 已经写进去了. Prefer the returned short message and report Calendar projection failures separately; projection is not phone delivery.",
     });
   }
   if (method === "ping") return rpcResult(id, {});
   if (method === "tools/list") return rpcResult(id, { tools: [
+    TASK_CONVERSATION_TOOL,
+    GET_TASK_CONVERSATION_TOOL,
     CREATE_TASK_TOOL,
     SEARCH_TASKS_TOOL,
     GET_TASK_TOOL,
@@ -1111,6 +1126,8 @@ async function handleMcp(request: Request) {
   if (method === "tools/call") {
     const params = rpc.params && typeof rpc.params === "object" ? rpc.params as Record<string, unknown> : {};
     const schemas: Record<string, z.ZodTypeAny> = {
+      converse_task: TaskConversationInput,
+      get_task_conversation: LifecycleIdInput,
       create_task: TaskInput,
       search_tasks: SearchTasksInput,
       get_task: LifecycleIdInput,
@@ -1138,6 +1155,8 @@ async function handleMcp(request: Request) {
         structuredContent: { success: false, code: "INVALID_ARGUMENTS", error: "Invalid intake arguments" },
       });
     }
+    if (name === "converse_task") return rpcResult(id, await conversationResult(request, parsed.data as z.infer<typeof TaskConversationInput>));
+    if (name === "get_task_conversation") return rpcResult(id, await conversationResult(request, parsed.data as z.infer<typeof LifecycleIdInput>, true));
     if (name === "create_task") return rpcResult(id, await createTask(parsed.data as z.infer<typeof TaskInput>));
     if (name === "search_tasks") return rpcResult(id, await lifecycleResult(request, "GET", { action: "search", ...(parsed.data as z.infer<typeof SearchTasksInput>) }));
     if (name === "get_task") return rpcResult(id, await lifecycleResult(request, "GET", { action: "get", task_id: (parsed.data as z.infer<typeof LifecycleIdInput>).task_id }));

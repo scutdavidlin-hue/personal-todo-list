@@ -54,3 +54,6 @@ verify_jwt = false
 
 [functions.task-scheduler]
 verify_jwt = false
+
+[functions.task-conversation]
+verify_jwt = false

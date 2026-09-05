@@ -1,3 +1,4 @@
+import { createTaskConversation } from "./src/task-conversation.js";
 import {
   escapeHtml,
   fromDatabaseTask,
@@ -21,6 +22,7 @@ import {
 } from "./src/goals.js";
 
 const client = new TaskCloudClient(window.TASK_SYNC_CONFIG || {});
+const taskConversation = createTaskConversation({ client, onChanged: () => refreshTasks({ quiet: true }) });
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 
@@ -137,7 +139,7 @@ function renderTaskItem(task) {
     <div class="task-item ${task.done ? "done" : ""} ${syncing ? "syncing" : ""}" data-id="${task.id}">
       <input class="task-check" type="checkbox" ${task.done ? "checked" : ""} ${syncing ? "disabled" : ""} aria-label="完成 ${escapeHtml(task.title)}">
       <div class="task-copy">
-        <strong>${escapeHtml(task.title)}</strong>
+        <button class="conversation-open" data-converse="${escapeHtml(task.id)}">${escapeHtml(task.title)}</button>
         <small>
           ${task.carriedFromDate ? `<span class="carry-chip">↪ ${escapeHtml(task.carriedFromDate)} 延续</span>` : ""}
           ${schedule?.scheduled_start ? `<span class="carry-chip">${schedule.scheduling_status === "rescheduled" ? "↪" : "◷"} ${escapeHtml(schedule.scheduled_date)} ${escapeHtml(schedule.scheduled_start.slice(0, 5))}</span>` : ""}
@@ -404,6 +406,7 @@ function render() {
 }
 
 function bindDynamicEvents() {
+  $$ ("[data-converse]").forEach((button) => button.addEventListener("click", () => taskConversation.open(tasks.find((task) => task.id === button.dataset.converse))));
   $$(".task-check").forEach((input) => input.addEventListener("change", (event) => {
     const row = event.target.closest("[data-id]");
     if (row) toggleTask(row.dataset.id, event.target.checked);
@@ -916,6 +919,7 @@ function connectGoogleTasks() {
 }
 
 async function signOut() {
+  taskConversation.close();
   await client.signOut();
   currentUser = null;
   tasks = [];
