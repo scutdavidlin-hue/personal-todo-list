@@ -130,28 +130,50 @@ async function addTask(event) {
   }
 }
 
-async function refresh({ quiet = false } = {}) {
-  if (!user) return;
-  $("#refreshButton").disabled = true;
-  setSync("syncing", "正在读取云端…");
+let refreshInFlight = false;
+let lastRefreshAt = 0;
+function autoRefreshBlocked() {
+  return document.visibilityState !== "visible" || navigator.onLine === false || pendingIds.size > 0
+    || Boolean(document.querySelector('dialog[open], .task-menu.open'))
+    || Boolean(document.activeElement?.matches('input, textarea, select, [contenteditable="true"]'));
+}
+function autoRefresh() {
+  if (autoRefreshBlocked() || Date.now() - lastRefreshAt < 5000) return;
+  void refresh({ quiet: true, automatic: true });
+}
+async function refresh({ quiet = false, automatic = false } = {}) {
+  if (!user || refreshInFlight || (automatic && autoRefreshBlocked())) return;
+  refreshInFlight = true;
+  const refreshUserId = user.id;
   try {
-    tasks = await client.getTasks();
-    client.cacheTasks(user.id, tasks);
-    render();
-    setSync("", `已同步 · ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`);
-    if (!quiet) toast("已读取最新状态");
-  } catch (error) {
-    const cached = client.readCachedTasks(user.id);
-    if (Array.isArray(cached?.tasks)) {
-      tasks = cached.tasks;
+    $("#refreshButton").disabled = true;
+    setSync("syncing", "正在读取云端…");
+    try {
+      const latestTasks = await client.getTasks();
+      if (user?.id !== refreshUserId || (automatic && autoRefreshBlocked())) return;
+      tasks = latestTasks;
+      client.cacheTasks(user.id, tasks);
       render();
-      setSync("offline", "离线只读 · 显示上次缓存");
-      toast("网络不可用；当前为只读缓存，写操作不会假装成功", true);
-    } else {
-      setSync("error", "读取失败");
-      toast(error.message, true);
+      setSync("", `已同步 · ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`);
+      if (!quiet) toast("已读取最新状态");
+    } catch (error) {
+      if (user?.id !== refreshUserId || (automatic && autoRefreshBlocked())) return;
+      const cached = client.readCachedTasks(user.id);
+      if (Array.isArray(cached?.tasks)) {
+        tasks = cached.tasks;
+        render();
+        setSync("offline", "离线只读 · 显示上次缓存");
+        if (!quiet) toast("网络不可用；当前为只读缓存，写操作不会假装成功", true);
+      } else {
+        setSync("error", "读取失败");
+        if (!quiet) toast(error.message, true);
+      }
+    } finally {
+      $("#refreshButton").disabled = false;
     }
   } finally {
+    refreshInFlight = false;
+    lastRefreshAt = Date.now();
     $("#refreshButton").disabled = false;
   }
 }
@@ -214,7 +236,7 @@ async function boot() {
   $("#signOutButton").addEventListener("click", signOut);
   $("#migrateButton").addEventListener("click", migrate);
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && user) refresh({ quiet: true });
+    autoRefresh();
   });
 
   if (!client.isConfigured()) {
@@ -252,3 +274,9 @@ async function boot() {
 
 
 boot();
+
+// Keep the existing cloud read path current while this page is in use.
+window.addEventListener("focus", autoRefresh);
+window.addEventListener("pageshow", autoRefresh);
+window.addEventListener("online", autoRefresh);
+setInterval(autoRefresh, 30_000);

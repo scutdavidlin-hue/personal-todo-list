@@ -815,67 +815,87 @@ function scheduleReviewSave() {
   reviewSaveTimer = setTimeout(saveReview, 700);
 }
 
-async function refreshTasks({ quiet = false } = {}) {
-  if (!currentUser) return;
-  setConnection("syncing", "正在同步 Tasks 与 Goals…");
-  $("#refreshButton").disabled = true;
-  const [taskResult, planningResult] = await Promise.allSettled([
-    Promise.all([client.getTasks(), client.listSchedules()]),
-    Promise.all([client.listGoals(), client.listProjects(), client.listTaskContextLinks()]),
-  ]);
+let refreshInFlight = false;
+let lastRefreshAt = 0;
+function autoRefreshBlocked() {
+  return document.visibilityState !== "visible" || navigator.onLine === false || pendingIds.size > 0
+    || Boolean(document.querySelector('dialog[open], .task-menu.open'))
+    || Boolean(document.activeElement?.matches('input, textarea, select, [contenteditable="true"]'));
+}
+function autoRefresh() {
+  if (autoRefreshBlocked() || Date.now() - lastRefreshAt < 5000) return;
+  void refreshTasks({ quiet: true, automatic: true });
+}
+async function refreshTasks({ quiet = false, automatic = false } = {}) {
+  if (!currentUser || refreshInFlight || (automatic && autoRefreshBlocked())) return;
+  refreshInFlight = true;
+  const refreshUserId = currentUser.id;
+  try {
+    setConnection("syncing", "正在同步 Tasks 与 Goals…");
+    $("#refreshButton").disabled = true;
+    const [taskResult, planningResult] = await Promise.allSettled([
+      Promise.all([client.getTasks(), client.listSchedules()]),
+      Promise.all([client.listGoals(), client.listProjects(), client.listTaskContextLinks()]),
+    ]);
 
-  let taskState = "online";
-  if (taskResult.status === "fulfilled") {
-    tasks = taskResult.value[0];
-    schedules = taskResult.value[1].schedules || [];
-    updateCachedTasks();
-  } else {
-    const cached = client.readCachedTasks(currentUser.id);
-    if (Array.isArray(cached?.tasks)) {
-      tasks = cached.tasks;
-      taskState = "offline";
+    if (currentUser?.id !== refreshUserId || (automatic && autoRefreshBlocked())) return;
+    let taskState = "online";
+    if (taskResult.status === "fulfilled") {
+      tasks = taskResult.value[0];
+      schedules = taskResult.value[1].schedules || [];
+      updateCachedTasks();
     } else {
-      taskState = "error";
-      tasks = [];
+      const cached = client.readCachedTasks(currentUser.id);
+      if (Array.isArray(cached?.tasks)) {
+        tasks = cached.tasks;
+        taskState = "offline";
+      } else {
+        taskState = "error";
+        tasks = [];
+      }
     }
-  }
 
-  if (planningResult.status === "fulfilled") {
-    [goals, projects, taskContextLinks] = planningResult.value;
-    planningLoadError = "";
-    updateCachedPlanning();
-  } else {
-    const cached = client.readCachedPlanning(currentUser.id);
-    if (Array.isArray(cached?.goals)) {
-      goals = cached.goals;
-      projects = cached.projects || [];
-      taskContextLinks = cached.links || [];
-      planningLoadError = "当前显示上次同步的长期规划缓存；恢复网络后可继续编辑。";
+    if (planningResult.status === "fulfilled") {
+      [goals, projects, taskContextLinks] = planningResult.value;
+      planningLoadError = "";
+      updateCachedPlanning();
     } else {
-      goals = [];
-      projects = [];
-      taskContextLinks = [];
-      planningLoadError = `V1.2 长期规划数据暂不可用：${planningResult.reason?.message || "请先部署 Goals & Plans migration"}`;
+      const cached = client.readCachedPlanning(currentUser.id);
+      if (Array.isArray(cached?.goals)) {
+        goals = cached.goals;
+        projects = cached.projects || [];
+        taskContextLinks = cached.links || [];
+        planningLoadError = "当前显示上次同步的长期规划缓存；恢复网络后可继续编辑。";
+      } else {
+        goals = [];
+        projects = [];
+        taskContextLinks = [];
+        planningLoadError = `V1.2 长期规划数据暂不可用：${planningResult.reason?.message || "请先部署 Goals & Plans migration"}`;
+      }
     }
-  }
 
-  render();
-  const time = new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
-  if (taskState === "online" && planningResult.status === "fulfilled") {
-    setConnection("", `Tasks 与 Goals 已同步 · ${time}`);
-    if (!quiet) showToast("已读取最新 Tasks 与 Goals");
-  } else if (taskState === "online") {
-    setConnection("offline", `Tasks 已同步 · Goals 暂时只读`);
-    if (!quiet) showToast(planningLoadError, "error");
-  } else if (taskState === "offline") {
-    setConnection("offline", "离线只读 · 显示上次缓存");
-    if (!quiet) showToast("网络不可用；当前为只读缓存，写操作不会假装成功", "error");
-  } else {
-    const message = taskResult.status === "rejected" ? taskResult.reason?.message : "云端任务读取失败";
-    setConnection("error", "云端任务读取失败");
-    showToast(message || "云端任务读取失败", "error");
+    render();
+    const time = new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+    if (taskState === "online" && planningResult.status === "fulfilled") {
+      setConnection("", `Tasks 与 Goals 已同步 · ${time}`);
+      if (!quiet) showToast("已读取最新 Tasks 与 Goals");
+    } else if (taskState === "online") {
+      setConnection("offline", `Tasks 已同步 · Goals 暂时只读`);
+      if (!quiet) showToast(planningLoadError, "error");
+    } else if (taskState === "offline") {
+      setConnection("offline", "离线只读 · 显示上次缓存");
+      if (!quiet) showToast("网络不可用；当前为只读缓存，写操作不会假装成功", "error");
+    } else {
+      const message = taskResult.status === "rejected" ? taskResult.reason?.message : "云端任务读取失败";
+      setConnection("error", "云端任务读取失败");
+      if (!quiet) showToast(message || "云端任务读取失败", "error");
+    }
+    $("#refreshButton").disabled = false;
+  } finally {
+    refreshInFlight = false;
+    lastRefreshAt = Date.now();
+    $("#refreshButton").disabled = false;
   }
-  $("#refreshButton").disabled = false;
 }
 
 function updateMigrationPanel() {
@@ -1032,7 +1052,7 @@ function bindStaticEvents() {
   }));
   document.addEventListener("click", () => $$(".task-menu").forEach((item) => item.classList.remove("open")));
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && currentUser) refreshTasks({ quiet: true });
+    autoRefresh();
   });
 }
 
@@ -1081,3 +1101,9 @@ async function boot() {
 
 boot();
 setInterval(checkReminders, 30_000);
+
+// Keep the existing cloud read path current while this page is in use.
+window.addEventListener("focus", autoRefresh);
+window.addEventListener("pageshow", autoRefresh);
+window.addEventListener("online", autoRefresh);
+setInterval(autoRefresh, 30_000);
