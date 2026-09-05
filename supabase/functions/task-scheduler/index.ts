@@ -184,8 +184,8 @@ async function schedules(ownerId: string, taskId = "", includeDeleted = false) {
   return rest(`task_schedule_metadata?${query}`);
 }
 
-async function writeSchedule(ownerId: string, taskId: string, input: Record<string, unknown>) {
-  const normalized = normalizeScheduleInput(input);
+async function writeSchedule(ownerId: string, taskId: string, input: Record<string, unknown>, preserveReminderPolicy = false) {
+  const normalized = normalizeScheduleInput(input, { preserveReminderPolicy });
   const current = (await schedules(ownerId, taskId))?.[0] || null;
   const calendarEventId = calendarProjectionWindow(normalized) ? await stableCalendarEventId(taskId) : null;
   const rescheduled = Boolean(current?.scheduled_date && normalized.scheduled_date && current.scheduled_date !== normalized.scheduled_date);
@@ -226,7 +226,7 @@ async function projectTask(ownerId: string, google: { accessToken: string; taskL
     raw_text: task.originalIntent || task.original_intent,
     title: task.title,
     notes: task.notes,
-  });
+  }, { preserveReminderPolicy: true });
   if (!calendarProjectionWindow(normalized)) return { projected: false, reason: "NO_TIME", calendar_event_id: null };
   const eventId = String(schedule.calendar_event_id || await stableCalendarEventId(task.id));
   const calendarId = String(normalized.calendar_id || "primary");
@@ -397,12 +397,12 @@ async function syncTask(ownerId: string, taskId: string) {
   return { task_id: taskId, ...(await projectTask(ownerId, google, task, schedule)) };
 }
 
-async function updateTaskSchedule(ownerId: string, taskId: string, changes: Record<string, unknown>) {
+async function updateTaskSchedule(ownerId: string, taskId: string, changes: Record<string, unknown>, preserveReminderPolicy = false) {
   if (!taskId) throw new ApiError("task_id is required", 400, "INVALID_TASK");
   const google = await googleContext(ownerId);
   const task = await getTask(google, taskId);
   const current = (await schedules(ownerId, taskId))?.[0] || null;
-  const patched = applyTaskSchedulePatch(current, changes, task.dueDate || null);
+  const patched = applyTaskSchedulePatch(current, changes, task.dueDate || null, { preserveReminderPolicy });
   if (!patched.touched) return syncTask(ownerId, taskId);
 
   const next = patched.schedule;
@@ -410,7 +410,7 @@ async function updateTaskSchedule(ownerId: string, taskId: string, changes: Reco
   if (current?.calendar_event_id && (!calendarProjectionWindow(next) || current.calendar_id !== next.calendar_id)) {
     await removeCalendarProjection(google, current);
   }
-  const schedule = await writeSchedule(ownerId, taskId, next);
+  const schedule = await writeSchedule(ownerId, taskId, next, preserveReminderPolicy);
   if (!calendarProjectionWindow(schedule)) {
     await markSynced(ownerId, taskId, {
       calendar_event_id: null,
@@ -574,7 +574,7 @@ Deno.serve(async (request) => {
       return json({ success: true, ...(await updateTaskReminder(ownerId, String(input.task_id || ""), input.reminder || input)) });
     }
     if (action === "sync_task") return json({ success: true, ...(await syncTask(ownerId, String(input.task_id || ""))) });
-    if (action === "update_task") return json({ success: true, ...(await updateTaskSchedule(ownerId, String(input.task_id || ""), input.changes || {})) });
+    if (action === "update_task") return json({ success: true, ...(await updateTaskSchedule(ownerId, String(input.task_id || ""), input.changes || {}, input.preserve_reminder_policy === true)) });
     if (action === "delete_task") return json({ success: true, ...(await deleteTaskArtifacts(ownerId, String(input.task_id || ""), String(input.deleted_by || "chatgpt"))) });
     if (action === "cancel_task") return json({ success: true, ...(await cancelProjection(ownerId, String(input.task_id || ""), String(input.title || "已取消任务"))) });
     if (action === "unschedule") return json({ success: true, ...(await unscheduleTask(ownerId, String(input.task_id || ""), input.schedule || input)) });

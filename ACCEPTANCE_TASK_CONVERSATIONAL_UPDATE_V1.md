@@ -65,3 +65,7 @@ User explicitly requested deployment to the existing Personal OS URL.
 - Combined verification: 303 tests, 301 passed, 0 failed, 2 browser tests skipped; three deployed function entrypoints pass cached Deno typecheck.
 - Preview uses deterministic interpretation, explicitly identified in UI. This is not full GPT understanding.
 - Deployment and browser readback results are recorded in the release task thread. Earlier blockers above are historical; server GPT integration and iPhone microphone/delivery acceptance remain outstanding.
+
+- Production preview published at GitHub commit 84829844790a1dd6419ff49706b46d0836c9ef0d; Pages build 33973546317 succeeded.
+- Signed-in Chrome verified task conversation loading, 20:15 -> 20:30 preview, natural-language confirmation and same Task/Event readback. Unknown question clarified without changing notes.
+- Live acceptance found unpreviewed reminder inference on existing-task reschedule. Fixed preservation across scheduler normalization and Calendar projection. Regression: 307 tests, 305 passed, 0 failed, 2 skipped; new-task smart inference remains unchanged. Three runtime entrypoints passed typecheck again.

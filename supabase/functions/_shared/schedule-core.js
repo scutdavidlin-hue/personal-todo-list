@@ -41,7 +41,7 @@ export function addMinutes(time, amount) {
   return timeFromMinutes(result);
 }
 
-export function normalizeScheduleInput(input = {}) {
+export function normalizeScheduleInput(input = {}, options = {}) {
   const scheduledDate = input.scheduled_date || input.scheduledDate || input.requested_date || input.requestedDate || null;
   const scheduledStart = normalizeTime(input.scheduled_start || input.scheduledStart || input.requested_time || input.requestedTime || null);
   const duration = Number(input.duration_minutes || input.durationMinutes || input.estimated_duration || input.estimatedDuration || 30);
@@ -98,7 +98,7 @@ export function normalizeScheduleInput(input = {}) {
   };
   return {
     ...schedule,
-    ...reminderProjectionFields(resolveReminderPolicy({ ...input, ...schedule })),
+    ...reminderProjectionFields(resolveReminderPolicy({ ...input, ...schedule }, options)),
   };
 }
 
@@ -111,7 +111,7 @@ function owns(value, key) {
  * @param {Record<string, any>} changes
  * @param {string | null} taskDue
  */
-export function applyTaskSchedulePatch(current, changes = {}, taskDue = null) {
+export function applyTaskSchedulePatch(current, changes = {}, taskDue = null, options = {}) {
   const hasCurrent = Boolean(current);
   const next = { ...(current || {}) };
   let touched = false;
@@ -166,7 +166,7 @@ export function applyTaskSchedulePatch(current, changes = {}, taskDue = null) {
     next.scheduled_end = addMinutes(String(next.scheduled_start).slice(0, 5), Number(next.duration_minutes || 30));
   }
   if (timingChanged) {
-    if (next.reminder_policy_source === "ai_inferred" || next.reminder_policy_source === "system_default") {
+    if (!options.preserveReminderPolicy && (next.reminder_policy_source === "ai_inferred" || next.reminder_policy_source === "system_default")) {
       next.reminders = [];
       next.reminder_at = null;
       next.reminder_offset_minutes = null;
@@ -174,7 +174,7 @@ export function applyTaskSchedulePatch(current, changes = {}, taskDue = null) {
     next.scheduling_status = next.scheduled_start ? (hasCurrent ? "rescheduled" : "scheduled") : next.scheduled_date ? "unscheduled" : "backlog";
     next.scheduling_source = hasCurrent ? "rescheduled" : "explicit_user";
   }
-  return { touched: true, schedule: normalizeScheduleInput(next), timing_changed: timingChanged };
+  return { touched: true, schedule: normalizeScheduleInput(next, options), timing_changed: timingChanged };
 }
 
 export async function stableCalendarEventId(googleTaskId) {
@@ -223,7 +223,7 @@ export function buildCalendarEvent(task, schedule, eventId = "") {
     raw_text: task.originalIntent || task.original_intent || schedule.raw_text,
     title: task.title,
     notes: task.notes,
-  });
+  }, { preserveReminderPolicy: Object.hasOwn(schedule, "reminder_policy") });
   const window = calendarProjectionWindow(normalized);
   if (!window) throw new Error("A Calendar projection requires a scheduled time or an exact deadline time");
   const prefix = projectionPrefix(task.status, normalized.scheduling_status);

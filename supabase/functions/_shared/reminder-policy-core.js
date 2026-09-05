@@ -304,7 +304,7 @@ export function mergeReminderPolicyUpdate(current = {}, update = {}) {
   };
 }
 
-export function resolveReminderPolicy(input = {}) {
+export function resolveReminderPolicy(input = {}, { preserveReminderPolicy = false } = {}) {
   const text = [first(input, "raw_text", "rawText", "originalIntent"), first(input, "title"), first(input, "notes")]
     .filter(Boolean)
     .join("。 ");
@@ -368,6 +368,28 @@ export function resolveReminderPolicy(input = {}) {
   if (suppliedPolicy && !VALID_POLICY.has(suppliedPolicy)) throw new Error("reminder_policy is invalid");
   const suppliedReason = String(first(input, "reminder_reason", "reminderReason") || "").trim() || null;
   const suppliedReminders = first(input, "reminders");
+
+  // A task-bound preview authorizes a timing change, not a new reminder policy.
+  // Projection also uses this path so repeated normalization cannot add alerts.
+  if (preserveReminderPolicy) {
+    const storedAt = first(input, "reminder_at", "reminderAt");
+    const storedOffset = first(input, "reminder_offset_minutes", "reminderOffsetMinutes");
+    const existing = suppliedPolicy === "none" ? []
+      : Array.isArray(suppliedReminders) && suppliedReminders.length ? suppliedReminders
+      : storedAt !== null || storedOffset !== null
+        ? [{ at: storedAt, offset_minutes: storedOffset, type: first(input, "reminder_type", "reminderType") || "preparation" }]
+        : [];
+    const specs = anchor ? existing.map((item) => normalizeSpec(item, anchor)) : [];
+    return policyResult({
+      policy: suppliedPolicy || "none",
+      source: suppliedSource || "system_default",
+      reason: suppliedReason,
+      specs,
+      context,
+      channel,
+      disabled: suppliedPolicy === "none" && input.notification_status === "disabled",
+    });
+  }
 
   const disabledByText = /(?:不用|不要|无需|取消)(?:再)?提醒|别提醒/.test(text);
   const disabledByInput = suppliedPolicy === "none" && suppliedSource !== "system_default";
