@@ -12,7 +12,7 @@ permissions:
   contents: write
 
 jobs:
-  implement-and-verify:
+  verify:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
@@ -23,81 +23,24 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Apply calendar sync reliability fix
+      - name: Verify main baseline
+        id: baseline
         shell: bash
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
+          git worktree add /tmp/personal-os-main origin/main
+          cd /tmp/personal-os-main
+          set +e
+          npm run verify 2>&1 | tee /tmp/main-verify.log
+          status=${PIPESTATUS[0]}
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          exit 0
 
-          path = Path('supabase/functions/google-tasks/index.ts')
-          source = path.read_text()
-          old = '''async function schedulerSync(action: string, taskId: string, extra: Record<string, unknown> = {}) {
-            if (WRITE_TOKEN.length < 32) return { success: false, code: "SCHEDULER_NOT_CONFIGURED" };
-            try {
-              const response = await requestWithTimeout(`${SUPABASE_URL}/functions/v1/task-scheduler`, {
-                method: "POST",
-                headers: { Authorization: `Bearer ${WRITE_TOKEN}`, "Content-Type": "application/json" },
-                body: JSON.stringify({ action, task_id: taskId, ...extra }),
-              });
-              const result = await parseJson(response);
-              return response.ok ? result : { success: false, code: result?.code || "CALENDAR_SYNC_FAILED", error: result?.error || "Calendar sync failed" };
-            } catch (error) {
-              return { success: false, code: "CALENDAR_SYNC_FAILED", error: error instanceof Error ? error.message : "Calendar sync failed" };
-            }
-          }
-          '''
-          new = '''function shouldRetrySchedulerSync(status: number, code = "") {
-            return status === 408 || status === 429 || status >= 500 || ["TIMEOUT", "RATE_LIMITED", "CALENDAR_SYNC_FAILED"].includes(code);
-          }
-
-          async function schedulerSync(action: string, taskId: string, extra: Record<string, unknown> = {}) {
-            if (WRITE_TOKEN.length < 32) return { success: false, code: "SCHEDULER_NOT_CONFIGURED" };
-            const maxAttempts = 3;
-            let lastFailure: Record<string, unknown> = { success: false, code: "CALENDAR_SYNC_FAILED", error: "Calendar sync failed" };
-            for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-              try {
-                const response = await requestWithTimeout(`${SUPABASE_URL}/functions/v1/task-scheduler`, {
-                  method: "POST",
-                  headers: { Authorization: `Bearer ${WRITE_TOKEN}`, "Content-Type": "application/json" },
-                  body: JSON.stringify({ action, task_id: taskId, ...extra }),
-                });
-                const result = await parseJson(response);
-                if (response.ok) return result;
-                lastFailure = {
-                  success: false,
-                  code: result?.code || "CALENDAR_SYNC_FAILED",
-                  error: result?.error || "Calendar sync failed",
-                  attempts: attempt,
-                };
-                if (!shouldRetrySchedulerSync(response.status, String(lastFailure.code || "")) || attempt === maxAttempts) return lastFailure;
-              } catch (error) {
-                lastFailure = {
-                  success: false,
-                  code: error instanceof DOMException && error.name === "TimeoutError" ? "TIMEOUT" : "CALENDAR_SYNC_FAILED",
-                  error: error instanceof Error ? error.message : "Calendar sync failed",
-                  attempts: attempt,
-                };
-                if (attempt === maxAttempts) return lastFailure;
-              }
-              await new Promise((resolve) => setTimeout(resolve, 200 * attempt));
-            }
-            return lastFailure;
-          }
-          '''
-          if old not in source:
-              raise SystemExit('Expected schedulerSync block not found; refusing unsafe patch')
-          path.write_text(source.replace(old, new, 1))
-
-          test_path = Path('test/calendar-sync-retry.test.js')
-          test_path.write_text('''import assert from "node:assert/strict";\nimport { readFile } from "node:fs/promises";\nimport test from "node:test";\n\nconst root = new URL("../", import.meta.url);\n\ntest("Calendar projection sync retries recoverable scheduler failures", async () => {\n  const source = await readFile(new URL("supabase/functions/google-tasks/index.ts", root), "utf8");\n  assert.match(source, /function shouldRetrySchedulerSync/);\n  assert.match(source, /const maxAttempts = 3/);\n  assert.match(source, /status === 408 \\|\\| status === 429 \\|\\| status >= 500/);\n  assert.match(source, /await new Promise\\(\\(resolve\\) => setTimeout\\(resolve, 200 \\* attempt\\)\\)/);\n  assert.match(source, /attempts: attempt/);\n});\n\ntest("Calendar projection sync still surfaces permanent failures", async () => {\n  const source = await readFile(new URL("supabase/functions/google-tasks/index.ts", root), "utf8");\n  assert.match(source, /if \\(!shouldRetrySchedulerSync\\(response\\.status/);\n  assert.match(source, /projection_error: projection\\.success === true \\? null : projection/);\n});\n''')
-          PY
-
-      - name: Run repository verification
-        id: verify
+      - name: Verify fix branch
+        id: branch
         shell: bash
         run: |
           set +e
-          npm run verify 2>&1 | tee /tmp/verify.log
+          npm run verify 2>&1 | tee /tmp/branch-verify.log
           status=${PIPESTATUS[0]}
           echo "status=$status" >> "$GITHUB_OUTPUT"
           exit 0
@@ -105,26 +48,38 @@ jobs:
       - name: Record verification result
         shell: bash
         run: |
-          status='${{ steps.verify.outputs.status }}'
+          baseline_status='${{ steps.baseline.outputs.status }}'
+          branch_status='${{ steps.branch.outputs.status }}'
           {
             echo '# Cloud PRD verification'
             echo
             echo "- Branch: fix/cloud-calendar-task-sync"
             echo "- Commit tested: $GITHUB_SHA"
-            echo "- npm run verify exit code: $status"
+            echo "- main baseline npm run verify exit code: $baseline_status"
+            echo "- fix branch npm run verify exit code: $branch_status"
             echo
-            echo '## Log tail'
+            echo '## Main baseline failures'
             echo '```text'
-            tail -n 120 /tmp/verify.log
+            grep -n -E '^(not ok|# fail |# tests |# pass |# skipped )|AssertionError|ERR_ASSERTION|failureType|error:' /tmp/main-verify.log || true
+            echo '```'
+            echo
+            echo '## Fix branch failures'
+            echo '```text'
+            grep -n -E '^(not ok|# fail |# tests |# pass |# skipped )|AssertionError|ERR_ASSERTION|failureType|error:' /tmp/branch-verify.log || true
+            echo '```'
+            echo
+            echo '## Fix branch log tail'
+            echo '```text'
+            tail -n 80 /tmp/branch-verify.log
             echo '```'
           } > CLOUD_PRD_VERIFICATION.md
 
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add supabase/functions/google-tasks/index.ts test/calendar-sync-retry.test.js CLOUD_PRD_VERIFICATION.md
-          git commit -m 'fix: retry recoverable calendar projection sync failures' || true
+          git add CLOUD_PRD_VERIFICATION.md
+          git commit -m 'test: record cloud verification baseline comparison' || true
           git push origin HEAD:fix/cloud-calendar-task-sync
 
-          if [ "$status" != '0' ]; then
-            exit "$status"
+          if [ "$branch_status" != '0' ]; then
+            exit "$branch_status"
           fi
