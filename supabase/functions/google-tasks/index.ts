@@ -536,19 +536,42 @@ async function patchTask(userId: string, id: string, changes: Record<string, unk
   return task;
 }
 
+function shouldRetrySchedulerSync(status: number, code = "") {
+  return status === 408 || status === 429 || status >= 500 || ["TIMEOUT", "RATE_LIMITED", "CALENDAR_SYNC_FAILED"].includes(code);
+}
+
 async function schedulerSync(action: string, taskId: string, extra: Record<string, unknown> = {}) {
   if (WRITE_TOKEN.length < 32) return { success: false, code: "SCHEDULER_NOT_CONFIGURED" };
-  try {
-    const response = await requestWithTimeout(`${SUPABASE_URL}/functions/v1/task-scheduler`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${WRITE_TOKEN}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ action, task_id: taskId, ...extra }),
-    });
-    const result = await parseJson(response);
-    return response.ok ? result : { success: false, code: result?.code || "CALENDAR_SYNC_FAILED", error: result?.error || "Calendar sync failed" };
-  } catch (error) {
-    return { success: false, code: "CALENDAR_SYNC_FAILED", error: error instanceof Error ? error.message : "Calendar sync failed" };
+  const maxAttempts = 3;
+  let lastFailure: Record<string, unknown> = { success: false, code: "CALENDAR_SYNC_FAILED", error: "Calendar sync failed" };
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const response = await requestWithTimeout(`${SUPABASE_URL}/functions/v1/task-scheduler`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${WRITE_TOKEN}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ action, task_id: taskId, ...extra }),
+      });
+      const result = await parseJson(response);
+      if (response.ok) return result;
+      lastFailure = {
+        success: false,
+        code: result?.code || "CALENDAR_SYNC_FAILED",
+        error: result?.error || "Calendar sync failed",
+        attempts: attempt,
+      };
+      if (!shouldRetrySchedulerSync(response.status, String(lastFailure.code || "")) || attempt === maxAttempts) return lastFailure;
+    } catch (error) {
+      lastFailure = {
+        success: false,
+        code: error instanceof DOMException && error.name === "TimeoutError" ? "TIMEOUT" : "CALENDAR_SYNC_FAILED",
+        error: error instanceof Error ? error.message : "Calendar sync failed",
+        attempts: attempt,
+      };
+      if (attempt === maxAttempts) return lastFailure;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200 * attempt));
   }
+  return lastFailure;
 }
 
 function requireSchedulerSync(result: Record<string, unknown>) {
