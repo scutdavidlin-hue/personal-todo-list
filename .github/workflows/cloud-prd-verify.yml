@@ -9,64 +9,16 @@ on:
       - main
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   verify:
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-
-      - name: Make Node test runner able to load Supabase TypeScript handlers
-        shell: bash
-        run: |
-          npm install --save-dev tsx
-          npm pkg set 'scripts.test=node --import tsx --test'
-
-      - name: Run repository verification
-        id: verify
-        shell: bash
-        run: |
-          set +e
-          npm run verify 2>&1 | tee /tmp/verify.log
-          status=${PIPESTATUS[0]}
-          echo "status=$status" >> "$GITHUB_OUTPUT"
-          exit 0
-
-      - name: Record and commit cloud result
-        shell: bash
-        run: |
-          status='${{ steps.verify.outputs.status }}'
-          {
-            echo '# Cloud PRD verification'
-            echo
-            echo "- Branch: fix/cloud-calendar-task-sync"
-            echo "- Commit tested before result commit: $GITHUB_SHA"
-            echo "- npm run verify exit code: $status"
-            echo
-            echo '## Failure summary'
-            echo '```text'
-            grep -n -E '^(not ok|# fail |# tests |# pass |# skipped )|AssertionError|ERR_ASSERTION|failureType|error:' /tmp/verify.log || true
-            echo '```'
-            echo
-            echo '## Log tail'
-            echo '```text'
-            tail -n 100 /tmp/verify.log
-            echo '```'
-          } > CLOUD_PRD_VERIFICATION.md
-
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add package.json package-lock.json CLOUD_PRD_VERIFICATION.md
-          git commit -m 'test: load TypeScript edge handlers with tsx' || true
-          git push origin HEAD:fix/cloud-calendar-task-sync
-
-          if [ "$status" != '0' ]; then
-            exit "$status"
-          fi
+          cache: npm
+      - run: npm ci
+      - run: npm run verify
