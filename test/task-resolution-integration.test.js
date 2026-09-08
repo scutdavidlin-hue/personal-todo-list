@@ -56,7 +56,7 @@ test("Codex receives resolution, graph, explainability, and update-first reminde
   }
   assert.match(mcp, /Resolve Before Create/);
   assert.match(mcp, /Smart Reminder reasoning/);
-  assert.match(mcp, /version: "1\.4\.0"/);
+  assert.match(mcp, /version: "1\.6\.0"/);
 });
 
 test("Task graph and audit reads are served from current provider truth plus metadata", async () => {

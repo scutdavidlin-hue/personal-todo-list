@@ -7,13 +7,16 @@
 - Supabase Auth OAuth 2.1、PKCE、动态客户端注册和授权同意页。
 - 每次 MCP 请求校验 Supabase access token，并限制为 `OWNER_USER_ID`。
 - MCP 只把经过验证的结构化字段送入 `personal-os-intake`；Google refresh token、service role key、自动化 Token 均不返回 ChatGPT。
-- 工具元数据明确排除 Calendar、项目事实、长期知识和 GPT 周期研究任务，避免误写普通 Task。
+- 独立 Calendar 行程通过同一个 Personal OS Developer MCP 有界查询和原位更新；项目事实、长期知识和 GPT 周期研究任务仍不误写成普通 Task。
 - `create_task` V1.1 可接收明确的执行日期、时间、duration、priority 与 fixed_time，并在写 Task 后建立唯一 Calendar 投影。
 - `capture_personal_os_item`：对话分类并 update-first 写入 Goal/Plan；明确要求入库时不重复确认。
 - `get_goals`：从 Personal OS 数据库读取真实 Goal，支持 horizon/status/query 过滤。
 - `update_goal`：只更新指定 Goal，不会创建新记录；摘要补充默认合并。
 - `complete_goal`：把指定 Goal 更新为 Completed / 100%，不会新建记录。
 - `create_task.goal_id`：明确下一步可关联已有 Goal，Task 正文与完成状态仍只在 Google Tasks。
+- `search_calendar_events` / `get_calendar_event`：读取既有 Google Calendar 行程，返回精确 Event ID 与更新时间。
+- `update_calendar_event`：要求最新 `expected_updated`，使用 ETag 条件 PATCH 并回读同一 Event ID；不提供创建 Calendar Event 的工具。
+- 带 `personalOsProjection` / `googleTaskId` 的 Task 投影拒绝直接修改，继续走原 Google Task 生命周期。
 
 ## 首次连接
 
@@ -37,3 +40,4 @@ OpenAI 官方当前流程通过 Developer mode 注册远程 MCP。当前自定�
 - `我现在有哪些中期 Goal？` → 调用 `get_goals(horizon=medium)`，不凭 Memory 回忆。
 - 已知 Goal 的补充内容 → `update_goal`，不得另建重复 Goal。
 - `这个 Goal 已经落地了。` → 先查询定位，再调用 `complete_goal`。
+- `把已有哈尔滨行程改到11点。` → 先 `search_calendar_events`，再用返回的 Event ID / `updated` 调用 `update_calendar_event`；数量变化必须为 0。

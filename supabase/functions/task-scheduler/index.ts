@@ -8,6 +8,12 @@ import {
 } from "../_shared/schedule-core.js";
 import { mergeReminderPolicyUpdate, reminderProjectionFields } from "../_shared/reminder-policy-core.js";
 import { toTaskModel } from "../_shared/google-tasks-core.js";
+import {
+  calendarEventView,
+  calendarSearchParameters,
+  normalizeCalendarSearchInput,
+} from "../_shared/calendar-events-core.js";
+import { CalendarEventRuntimeError, updateCalendarEventInPlace } from "../_shared/calendar-events-runtime.js";
 import { shanghaiDate, shiftDate } from "../task-status/status-core.js";
 import {
   resolvePublishableApiKey,
@@ -149,6 +155,7 @@ async function googleRequest(accessToken: string, base: string, path: string, in
     }
     if (response.status === 404) throw new ApiError(message, 404, "GOOGLE_OBJECT_NOT_FOUND");
     if (response.status === 409) throw new ApiError(message, 409, "GOOGLE_OBJECT_EXISTS");
+    if (response.status === 412 && base === CALENDAR_BASE) throw new ApiError("Calendar event changed after it was read; search again before updating", 409, "CALENDAR_EVENT_CHANGED");
     if (response.status === 429) throw new ApiError("Google rate limit reached", 429, "RATE_LIMITED");
     throw new ApiError(message, response.status, base === CALENDAR_BASE ? "GOOGLE_CALENDAR_ERROR" : "GOOGLE_TASKS_ERROR");
   }
@@ -511,6 +518,69 @@ async function calendarBusy(accessToken: string, startDate: string, endDate: str
   return busy;
 }
 
+function calendarEventPath(calendarId: string, eventId = "") {
+  const root = `/calendars/${encodeURIComponent(calendarId)}/events`;
+  return eventId ? `${root}/${encodeURIComponent(eventId)}` : root;
+}
+
+async function searchCalendarEvents(ownerId: string, input: Record<string, unknown>) {
+  const dateFrom = String(input.date_from || shanghaiDate());
+  const normalized = normalizeCalendarSearchInput(input, { date_from: dateFrom, date_to: shiftDate(dateFrom, 30) });
+  const google = await googleContext(ownerId);
+  const params = calendarSearchParameters(normalized);
+  const page = await googleRequest(google.accessToken, CALENDAR_BASE, `${calendarEventPath(normalized.calendar_id)}?${params}`);
+  const events = (page?.items || [])
+    .filter((event: Record<string, unknown>) => event.status !== "cancelled")
+    .map((event: Record<string, unknown>) => calendarEventView(event, normalized.calendar_id));
+  return {
+    calendar_id: normalized.calendar_id,
+    date_from: normalized.date_from,
+    date_to: normalized.date_to,
+    count: events.length,
+    events,
+    next_page_token: page?.nextPageToken || null,
+  };
+}
+
+async function getCalendarEvent(ownerId: string, input: Record<string, unknown>) {
+  const calendarId = String(input.calendar_id || "primary");
+  const eventId = String(input.event_id || "");
+  if (!eventId) throw new ApiError("event_id is required", 400, "INVALID_CALENDAR_EVENT");
+  const google = await googleContext(ownerId);
+  const event = await googleRequest(google.accessToken, CALENDAR_BASE, calendarEventPath(calendarId, eventId));
+  return { event: calendarEventView(event, calendarId) };
+}
+
+async function updateCalendarEvent(ownerId: string, input: Record<string, unknown>) {
+  const calendarId = String(input.calendar_id || "primary");
+  const eventId = String(input.event_id || "");
+  const expectedUpdated = String(input.expected_updated || "");
+  if (!eventId || !expectedUpdated) throw new ApiError("event_id and expected_updated are required", 400, "INVALID_CALENDAR_EVENT");
+  const google = await googleContext(ownerId);
+  const path = calendarEventPath(calendarId, eventId);
+  let update;
+  try {
+    update = await updateCalendarEventInPlace({ ownerId, calendarId, eventId, expectedUpdated, changes: input }, {
+      getEvent: () => googleRequest(google.accessToken, CALENDAR_BASE, path),
+      patchEvent: ({ patch, etag }: { patch: Record<string, unknown>; etag: string }) => googleRequest(google.accessToken, CALENDAR_BASE, path, {
+        method: "PATCH",
+        headers: etag ? { "If-Match": etag } : {},
+        body: JSON.stringify(patch),
+      }),
+    });
+  } catch (error) {
+    if (error instanceof CalendarEventRuntimeError) throw new ApiError(error.message, error.status, error.code);
+    throw error;
+  }
+  return {
+    event: calendarEventView(update.readback, calendarId),
+    event_id: eventId,
+    event_id_unchanged: update.updated?.id === eventId && update.readback?.id === eventId,
+    calendar_event_count_delta: 0,
+    verified: true,
+  };
+}
+
 async function runMorningScheduler(ownerId: string, targetDate: string) {
   const google = await googleContext(ownerId);
   const [tasks, existingSchedules, busy] = await Promise.all([
@@ -578,6 +648,9 @@ Deno.serve(async (request) => {
     if (action === "delete_task") return json({ success: true, ...(await deleteTaskArtifacts(ownerId, String(input.task_id || ""), String(input.deleted_by || "chatgpt"))) });
     if (action === "cancel_task") return json({ success: true, ...(await cancelProjection(ownerId, String(input.task_id || ""), String(input.title || "已取消任务"))) });
     if (action === "unschedule") return json({ success: true, ...(await unscheduleTask(ownerId, String(input.task_id || ""), input.schedule || input)) });
+    if (action === "search_calendar_events") return json({ success: true, ...(await searchCalendarEvents(ownerId, input)) });
+    if (action === "get_calendar_event") return json({ success: true, ...(await getCalendarEvent(ownerId, input)) });
+    if (action === "update_calendar_event") return json({ success: true, ...(await updateCalendarEvent(ownerId, input)) });
     if (action === "run") {
       const date = String(input.date || shanghaiDate());
       return json({ success: true, ...(await runMorningScheduler(ownerId, date)) });

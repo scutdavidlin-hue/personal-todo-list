@@ -8,7 +8,7 @@
 - [x] 普通低风险行动可由现有 Personal OS Intake 直接进入 Google Tasks；信息查询零写入，长期偏好进入 Goal/Plan，高风险资金、房产、合同或关键删除在写入前停止并请求必要确认。
 - [x] 写入仅在 Google Task 与排程回读一致时返回“已经写进去了”；日期、Deadline、Calendar 投影与失败恢复分别保留。
 - [x] 新增任务全生命周期、语义解析、关系图、提醒策略和恢复测试；`npm run verify` 为 256/256，通过六个 Edge Function 的缓存 Deno 类型检查。
-- [ ] 生产 Supabase 发布尚未执行：本机 CLI 缺少官方登录令牌。登录后先执行 remote dry-run，再只发布本包的必要 migration 与六个 Functions，并以可清理验收项回读验证。
+- [x] 后续 2026-09-05 晚间线程已恢复现有 Supabase 登录，生产应用缺失的 050002–050004 migration，发布任务对话相关 Functions，并发布手机旧缓存恢复、实时语音草稿和 30 秒自动刷新；最终当晚回归 321 passed / 2 skipped。旧 256 项检查点不再代表生产状态。
 
 ## 已完成
 
@@ -95,4 +95,16 @@
 
 WHY：任务变化应能在任务内自然表达，更新原对象并保留历史。
 
-本次在 e286824 基线上扩展 Task 对话；独立分工实现意图、服务端状态机和界面验证。正式完成情况以 ACCEPTANCE_TASK_CONVERSATIONAL_UPDATE_V1.md 为准。明确不把本地测试等同云端或 iPhone 验收。现有 Supabase CLI 未登录；当前没有已配置的服务端 GPT 接口，已请求现有配置位置。
+本次在 e286824 基线上扩展 Task 对话；独立分工实现意图、服务端状态机和界面验证。正式完成情况以 ACCEPTANCE_TASK_CONVERSATIONAL_UPDATE_V1.md 为准。后续晚间线程已发布规则解析预览、手机旧缓存恢复、实时语音草稿与自动刷新；完整 GPT 服务接入和 iPhone 麦克风真机验收仍未完成。
+
+## 2026-09-08 Calendar Developer MCP 权限恢复
+
+WHY：ChatGPT 会话可见 Google Calendar 连接器，但 search/update 返回 `FORBIDDEN: This conversation is restricted to developer MCPs`；本地 sandbox 或 Personal OS OAuth 配置不能放宽该会话级平台限制。
+
+- [x] 正式 GitHub `main` 回读为 `a7a3d7a`；与晚间本地 `8e575cf` 的 Git tree 相同，确认 321 项自动刷新版是当前基线。
+- [x] 选择 `EXTEND`：复用现有 Personal OS Developer MCP、Supabase Auth、Google OAuth refresh token 与 `task-scheduler` Calendar API，不新增 App、OAuth 项目、数据库或任务真源。
+- [x] 新增 `search_calendar_events`、`get_calendar_event`、`update_calendar_event`。搜索窗口最多 366 天；修改要求最新 `expected_updated`，按精确 Event ID 执行 `If-Match` PATCH，再 GET 回读。
+- [x] 不暴露创建 Calendar Event 的 MCP 工具；更新成功必须返回 `event_id_unchanged=true`、`calendar_event_count_delta=0`、`verified=true`。
+- [x] Personal OS Task 投影拒绝直接 Calendar 修改，继续通过原 Google Task / Schedule 链路保持单一真源。
+- [x] 本地 `npm run verify`：333 tests，331 passed，0 failed，2 个既有可选浏览器测试 skipped；新增测试覆盖模拟 Google GET→PATCH→GET、ETag 并发保护、授权 owner 绑定、精确 Event ID、Task 投影保护及回读不一致失败。
+- [ ] 生产只读搜索、MCP 工具刷新与专用合成 Calendar Event 原位修改验收待完成；不得修改真实旅行事件。若没有明确专用样本，只报告最后一步待指定事件。

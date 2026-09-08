@@ -110,6 +110,30 @@ const LifecycleMutationInput = LifecycleIdInput.extend({
 });
 const LifecycleStateInput = LifecycleIdInput.extend({ raw_text: z.string().max(10_000).optional(), request_id: z.string().max(200).optional(), idempotency_key: z.string().min(8).max(200), reason: z.string().max(1_000).optional() });
 const SearchTasksInput = z.object({ query: z.string().max(500).optional(), task_id: z.string().max(1024).optional(), status: z.enum(["open", "completed", "all"]).default("open"), priority: z.enum(["low", "medium", "high", "urgent"]).optional(), task_type: z.enum(["task", "follow_up"]).optional(), date_from: z.string().optional(), date_to: z.string().optional(), deadline_from: z.string().optional(), deadline_to: z.string().optional(), created_from: z.string().max(40).optional(), created_to: z.string().max(40).optional(), updated_from: z.string().max(40).optional(), updated_to: z.string().max(40).optional(), limit: z.number().int().min(1).max(100).default(20) });
+const CalendarSearchInput = z.object({
+  calendar_id: z.string().min(1).max(200).default("primary"),
+  date_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  date_to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  query: z.string().max(500).optional(),
+  limit: z.number().int().min(1).max(100).default(50),
+});
+const CalendarEventInput = z.object({
+  calendar_id: z.string().min(1).max(200).default("primary"),
+  event_id: z.string().min(1).max(1024),
+});
+const CalendarEventUpdateInput = CalendarEventInput.extend({
+  expected_updated: z.string().min(1).max(80).describe("The exact updated timestamp returned by search_calendar_events or get_calendar_event."),
+  summary: z.string().min(1).max(1000).optional(),
+  description: z.string().max(8_000).nullable().optional(),
+  location: z.string().max(1_000).nullable().optional(),
+  start: z.string().max(80).optional().describe("RFC3339 date-time with timezone offset; must be paired with end."),
+  end: z.string().max(80).optional().describe("RFC3339 date-time with timezone offset; must be paired with start."),
+  start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("All-day start date; must be paired with exclusive end_date."),
+  end_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("All-day exclusive end date; must be paired with start_date."),
+  timezone: z.string().min(1).max(80).optional(),
+}).refine((value) => ["summary", "description", "location", "start", "end", "start_date", "end_date"].some((key) => Object.hasOwn(value, key)), {
+  message: "At least one Calendar event field must be changed",
+});
 
 const UnifiedIntakeInput = z.object({
   context: z.record(z.string(), z.unknown()).optional(),
@@ -1039,6 +1063,56 @@ const TASK_CONVERSATION_TOOL = lifecycleTool("converse_task", "Continue a task c
 TASK_CONVERSATION_TOOL.description = "Use for task-bound natural-language updates. Server stores a preview first, then executes only after the user's actual confirmation of that proposal. Send corrections to replace the preview. Low-risk notes may append directly. Always display returned diff and message, including partial failures. Never use update_task to bypass this conversation confirmation workflow.";
 const GET_TASK_CONVERSATION_TOOL = lifecycleTool("get_task_conversation", "Read task conversation and pending changes", { type: "object", properties: { task_id: ID_FIELD }, required: ["task_id"], additionalProperties: false }, true);
 
+function calendarTool(name: string, title: string, description: string, inputSchema: Record<string, unknown>, readOnly = false) {
+  return {
+    name,
+    title,
+    description,
+    inputSchema,
+    outputSchema: {
+      type: "object",
+      properties: {
+        success: { type: "boolean" },
+        count: { type: "integer" },
+        event: { type: "object", additionalProperties: true },
+        events: { type: "array", items: { type: "object", additionalProperties: true } },
+        event_id: { type: "string" },
+        event_id_unchanged: { type: "boolean" },
+        calendar_event_count_delta: { type: "integer" },
+        verified: { type: "boolean" },
+        code: { type: "string" },
+        error: { type: "string" },
+      },
+      required: ["success"],
+      additionalProperties: true,
+    },
+    securitySchemes: AUTH_SCHEMES,
+    annotations: { readOnlyHint: readOnly, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    _meta: { securitySchemes: AUTH_SCHEMES, "openai/visibility": "public" },
+  };
+}
+
+const SEARCH_CALENDAR_EVENTS_TOOL = calendarTool(
+  "search_calendar_events",
+  "Search existing Google Calendar events",
+  "Read existing Google Calendar events in a bounded Shanghai date range. Use this before changing an event. This tool never creates or modifies an event.",
+  { type: "object", properties: { calendar_id: { type: "string", minLength: 1, maxLength: 200, default: "primary" }, date_from: DATE_FIELD, date_to: DATE_FIELD, query: { type: "string", maxLength: 500 }, limit: { type: "integer", minimum: 1, maximum: 100, default: 50 } }, required: ["date_from", "date_to"], additionalProperties: false },
+  true,
+);
+const GET_CALENDAR_EVENT_TOOL = calendarTool(
+  "get_calendar_event",
+  "Read an existing Google Calendar event",
+  "Read one existing Google Calendar event by its exact event_id. This tool never creates or modifies an event.",
+  { type: "object", properties: { calendar_id: { type: "string", minLength: 1, maxLength: 200, default: "primary" }, event_id: ID_FIELD }, required: ["event_id"], additionalProperties: false },
+  true,
+);
+const UPDATE_CALENDAR_EVENT_TOOL = calendarTool(
+  "update_calendar_event",
+  "Update an existing Google Calendar event in place",
+  "Update the exact event_id returned by a fresh search/get call, then read it back. This tool never creates another event and reports event_id_unchanged plus calendar_event_count_delta=0. Pass expected_updated from the read result to prevent stale writes. Personal OS Task projection events must be updated through the original Google Task instead.",
+  { type: "object", properties: { calendar_id: { type: "string", minLength: 1, maxLength: 200, default: "primary" }, event_id: ID_FIELD, expected_updated: { type: "string", minLength: 1, maxLength: 80 }, summary: { type: "string", minLength: 1, maxLength: 1000 }, description: { anyOf: [{ type: "string", maxLength: 8_000 }, { type: "null" }] }, location: { anyOf: [{ type: "string", maxLength: 1_000 }, { type: "null" }] }, start: { type: "string", maxLength: 80 }, end: { type: "string", maxLength: 80 }, start_date: DATE_FIELD, end_date: DATE_FIELD, timezone: { type: "string", minLength: 1, maxLength: 80 } }, required: ["event_id", "expected_updated"], additionalProperties: false },
+);
+
 async function conversationResult(request: Request, args: Record<string, unknown>, readOnly = false) {
   const url = new URL(`${SUPABASE_URL}/functions/v1/task-conversation`);
   if (readOnly) url.searchParams.set("task_id", String(args.task_id));
@@ -1060,6 +1134,32 @@ async function lifecycleResult(request: Request, method: string, query: Record<s
   try { result = text ? JSON.parse(text) : {}; } catch { result = { success: false, code: "INVALID_GATEWAY_RESPONSE", error: "Google Tasks returned invalid JSON" }; }
   const succeeded = response.ok && result.success === true;
   return { isError: !succeeded, content: [{ type: "text", text: succeeded ? "任务操作已核实。" : `任务操作未完成：${result.error || response.status}` }], structuredContent: result };
+}
+
+async function calendarResult(action: string, args: Record<string, unknown>) {
+  try {
+    const response = await fetch(`${SUPABASE_URL}/functions/v1/task-scheduler`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${WRITE_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ action, ...args }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    const text = await response.text();
+    let result: Record<string, unknown>;
+    try { result = text ? JSON.parse(text) : {}; }
+    catch { result = { success: false, code: "INVALID_GATEWAY_RESPONSE", error: "Calendar service returned invalid JSON" }; }
+    const succeeded = response.ok && result.success === true && (action !== "update_calendar_event" || result.verified === true);
+    const message = succeeded
+      ? action === "search_calendar_events"
+        ? `已读取 ${result.count || 0} 条既有 Calendar 行程。`
+        : action === "get_calendar_event"
+          ? "已读取既有 Calendar 行程。"
+          : `已原位更新并回读 Calendar 行程；Event ID=${result.event_id}，数量变化 0。`
+      : `Calendar 操作未完成：${result.error || response.status}`;
+    return { isError: !succeeded, content: [{ type: "text", text: message }], structuredContent: result };
+  } catch (error) {
+    return toolFailure("Calendar 操作", error);
+  }
 }
 
 function rpcResult(id: unknown, result: unknown) {
@@ -1098,9 +1198,9 @@ async function handleMcp(request: Request) {
     const requestedVersion = typeof params.protocolVersion === "string" ? params.protocolVersion : "2025-06-18";
     return rpcResult(id, {
       protocolVersion: requestedVersion,
-      serverInfo: { name: "personal-os", title: "Personal OS", version: "1.5.0" },
+      serverInfo: { name: "personal-os", title: "Personal OS", version: "1.6.0" },
       capabilities: { tools: { listChanged: false } },
-      instructions: "For task-bound conversational changes, use get_task_conversation and converse_task: preview, clarify, await actual human confirmation, then execute. This specific workflow overrides the general low-risk intake default for date/time/status/follow-up changes; never synthesize confirmation or bypass with CRUD. Google Tasks is Task status truth. Clear low-risk reversible actions are authorized by natural-language intent: infer missing optional fields and execute without asking for date, hotel name, repetition or reconfirmation. Resolve Before Create and update first. Questions create nothing; durable preferences use Goals & Plans; mixed rules and current actions save both. Pass known conversation_trips and current_task.id for short corrections; re-read provider state before changing it. Infer Date from explicit wording, conversation, Calendar, Travel Plan, current context, then a reasonable default. Never invent Deadline. One action is one Task; unfinished tasks remain visible through Today/Overdue, not duplicate daily inserts. L2 asks only about outcome-changing ambiguity; L3 transactions require critical parameters and confirmation and cannot execute through these Task tools. For timed actions perform Smart Reminder reasoning, attach reminders to the same Schedule and stable Calendar Event, and use update_task_reminder for existing reminders. Ordinary reminders go to Google Tasks; automation is for future GPT search, analysis or generated content. Only write_success=true plus verified=true permits 已经写进去了. Prefer the returned short message and report Calendar projection failures separately; projection is not phone delivery.",
+      instructions: "For task-bound conversational changes, use get_task_conversation and converse_task: preview, clarify, await actual human confirmation, then execute. This specific workflow overrides the general low-risk intake default for date/time/status/follow-up changes; never synthesize confirmation or bypass with CRUD. Google Tasks is Task status truth. Clear low-risk reversible actions are authorized by natural-language intent: infer missing optional fields and execute without asking for date, hotel name, repetition or reconfirmation. Resolve Before Create and update first. Questions create nothing; durable preferences use Goals & Plans; mixed rules and current actions save both. Pass known conversation_trips and current_task.id for short corrections; re-read provider state before changing it. Infer Date from explicit wording, conversation, Calendar, Travel Plan, current context, then a reasonable default. Never invent Deadline. One action is one Task; unfinished tasks remain visible through Today/Overdue, not duplicate daily inserts. L2 asks only about outcome-changing ambiguity; L3 transactions require critical parameters and confirmation and cannot execute through these Task tools. For timed actions perform Smart Reminder reasoning, attach reminders to the same Schedule and stable Calendar Event, and use update_task_reminder for existing reminders. Ordinary reminders go to Google Tasks; automation is for future GPT search, analysis or generated content. Only write_success=true plus verified=true permits 已经写进去了. Prefer the returned short message and report Calendar projection failures separately; projection is not phone delivery. For an existing independent Calendar event, search or get it through this Personal OS server, then update the exact event_id in place with expected_updated; never create a replacement when an update fails. Task projection events must still be changed through the original Google Task.",
     });
   }
   if (method === "ping") return rpcResult(id, {});
@@ -1114,6 +1214,9 @@ async function handleMcp(request: Request) {
     COMPLETE_TASK_TOOL,
     REOPEN_TASK_TOOL,
     DELETE_TASK_TOOL,
+    SEARCH_CALENDAR_EVENTS_TOOL,
+    GET_CALENDAR_EVENT_TOOL,
+    UPDATE_CALENDAR_EVENT_TOOL,
     UPDATE_TASK_REMINDER_TOOL,
     RESOLVE_TASK_INTENT_TOOL,
     GET_TASK_GRAPH_TOOL,
@@ -1135,6 +1238,9 @@ async function handleMcp(request: Request) {
       complete_task: LifecycleStateInput,
       reopen_task: LifecycleStateInput,
       delete_task: LifecycleStateInput,
+      search_calendar_events: CalendarSearchInput,
+      get_calendar_event: CalendarEventInput,
+      update_calendar_event: CalendarEventUpdateInput,
       update_task_reminder: UpdateTaskReminderInput,
       resolve_task_intent: TaskResolutionPreviewInput,
       get_task_graph: TaskGraphInput,
@@ -1166,6 +1272,9 @@ async function handleMcp(request: Request) {
     }
     if (name === "complete_task" || name === "reopen_task") return rpcResult(id, await lifecycleResult(request, "PATCH", {}, { action: name === "complete_task" ? "complete" : "reopen", ...(parsed.data as z.infer<typeof LifecycleStateInput>), source: "chatgpt" }));
     if (name === "delete_task") return rpcResult(id, await lifecycleResult(request, "DELETE", {}, { action: "delete", ...(parsed.data as z.infer<typeof LifecycleStateInput>), source: "chatgpt" }));
+    if (name === "search_calendar_events") return rpcResult(id, await calendarResult(name, parsed.data as z.infer<typeof CalendarSearchInput>));
+    if (name === "get_calendar_event") return rpcResult(id, await calendarResult(name, parsed.data as z.infer<typeof CalendarEventInput>));
+    if (name === "update_calendar_event") return rpcResult(id, await calendarResult(name, parsed.data as z.infer<typeof CalendarEventUpdateInput>));
     if (name === "update_task_reminder") return rpcResult(id, await updateTaskReminder(parsed.data as z.infer<typeof UpdateTaskReminderInput>));
     if (name === "resolve_task_intent") return rpcResult(id, await previewTaskIntent(parsed.data as z.infer<typeof TaskResolutionPreviewInput>));
     if (name === "get_task_graph") return rpcResult(id, await getTaskGraph());
@@ -1204,7 +1313,7 @@ async function authorize(request: Request) {
 const app = new Hono();
 const functionApp = new Hono();
 
-functionApp.get("/", (context) => context.json({ name: "personal-os", version: "1.4.0", mcp: "/mcp" }));
+functionApp.get("/", (context) => context.json({ name: "personal-os", version: "1.6.0", mcp: "/mcp" }));
 functionApp.get("/.well-known/oauth-protected-resource", (context) => context.json({
   resource: MCP_RESOURCE,
   authorization_servers: [AUTHORIZATION_SERVER],

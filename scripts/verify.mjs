@@ -41,6 +41,8 @@ const requiredFiles = [
   "supabase/migrations/202609050003_smart_reminder_policy_v1.sql",
   "supabase/functions/google-tasks/index.ts",
   "supabase/functions/_shared/google-tasks-core.js",
+  "supabase/functions/_shared/calendar-events-core.js",
+  "supabase/functions/_shared/calendar-events-runtime.js",
   "supabase/functions/_shared/action-router.js",
   "supabase/functions/_shared/goal-operations.js",
   "supabase/functions/_shared/personal-os-intake.js",
@@ -136,6 +138,9 @@ assert.match(contents.get("supabase/functions/personal-os-mcp/index.ts"), /compl
 assert.match(contents.get("supabase/functions/personal-os-mcp/index.ts"), /resolve_task_intent/);
 assert.match(contents.get("supabase/functions/personal-os-mcp/index.ts"), /get_task_graph/);
 assert.match(contents.get("supabase/functions/personal-os-mcp/index.ts"), /explain_task_resolution/);
+assert.match(contents.get("supabase/functions/personal-os-mcp/index.ts"), /search_calendar_events/);
+assert.match(contents.get("supabase/functions/personal-os-mcp/index.ts"), /get_calendar_event/);
+assert.match(contents.get("supabase/functions/personal-os-mcp/index.ts"), /update_calendar_event/);
 assert.match(contents.get("supabase/functions/_shared/personal-os-intake.js"), /goalPlanDispatchPayload/);
 assert.match(contents.get("supabase/functions/_shared/goal-operations.js"), /findExistingGoalMatch/);
 assert.match(contents.get("supabase/migrations/202609040001_personal_os_intake.sql"), /unique \(owner_id, idempotency_key\)/i);
@@ -169,6 +174,8 @@ assert.doesNotMatch(contents.get("supabase/functions/task-status/index.ts"), /fi
 assert.match(contents.get("supabase/functions/task-scheduler/index.ts"), /stableCalendarEventId/);
 assert.match(contents.get("supabase/functions/task-scheduler/index.ts"), /updateTaskReminder/);
 assert.match(contents.get("supabase/functions/task-scheduler/index.ts"), /google_tasks_count_delta: 0/);
+assert.match(contents.get("supabase/functions/task-scheduler/index.ts"), /searchCalendarEvents/);
+assert.match(contents.get("supabase/functions/task-scheduler/index.ts"), /updateCalendarEvent/);
 assert.match(contents.get("supabase/functions/_shared/schedule-core.js"), /personalOsProjection/);
 assert.match(contents.get("supabase/functions/_shared/schedule-core.js"), /useDefault: false/);
 assert.match(contents.get("supabase/functions/personal-os-mcp/index.ts"), /update_task_reminder/);

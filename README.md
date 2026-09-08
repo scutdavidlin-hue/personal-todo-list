@@ -14,11 +14,12 @@ V1.1 增加一对一 Schedule Metadata 与 Google Calendar 时间投影。Calend
 - Action Router：自然语言统一分类为 `task / calendar_event / project_data / note`；Task 自动写入 Google Tasks。
 - Personal OS Intake Gateway：统一接收 `task / calendar_event / project_data / knowledge / gpt_job`，Task 成功写入 Google 后才返回 `success:true`。
 - 数据库级 idempotency key 与持久 Audit Log；重试复用原响应，不会重复创建 Task。
-- 远程 MCP：通过 `personal-os-mcp/mcp` 暴露聚焦的 `create_task` 工具，使用 Supabase Auth OAuth 2.1 验证 ChatGPT 用户。
+- 远程 MCP：通过 `personal-os-mcp/mcp` 暴露 Google Tasks、Goals 与既有 Calendar 行程的聚焦工具，使用 Supabase Auth OAuth 2.1 验证 ChatGPT 用户。
 - 智能 Intake 解析 `requested_date / requested_time / deadline / estimated_duration / priority / fixed_time`。
 - `task_schedule_metadata` 只保存排程字段，以 `(owner_id, google_task_id)` 唯一绑定，不保存 Task title 或完成状态。
 - `task-scheduler` 使用 Task ID 派生稳定 Calendar Event ID；创建、重试、改期都 upsert 同一 Event。
 - Calendar 投影使用 `☐ / ✓ / ↪ / ✕`，完成 Event 保留；Personal OS 的 checkbox、恢复、改名和取消立即触发同步，Google Tasks 原生界面的外部修改由 Scheduler reconciliation 校正。
+- 独立 Calendar 行程支持有界查询、精确读取和 ETag 保护的原位 PATCH；没有创建/复制 Event 的 MCP 工具，Task 投影仍只能从 Google Task 更新。
 - Morning Scheduler 避开 Calendar 已有事件、尊重固定时间和每日容量；无日期 Task 保留 Backlog。
 - 状态接口新增 Today Plan、Tomorrow、Next 3 Days、Backlog、Waiting 与 evening summary。
 - 创建前语义去重：相同未完成事项更新原 Task，不重复创建。
@@ -68,6 +69,6 @@ python3 -m http.server 4173 --bind 127.0.0.1
 
 `runtime-config.js` 中的 Supabase Project URL 与 anon/publishable key 是公开客户端配置，不是管理员密钥。绝不能把 Google OAuth Client Secret、刷新令牌、`GOOGLE_TOKEN_ENCRYPTION_KEY`、service role key、自动化 Token 或 GitHub PAT 写入前端源码或 Git。
 
-## Task Conversational Update V1（本地开发）
+## Task Conversational Update V1
 
-任务标题可打开对话详情，支持语音/文字、提案预览和自然语言确认。此功能的云端部署、GPT 服务接入与 iPhone 真机验收尚未完成。详见 [需求](PRD_TASK_CONVERSATIONAL_UPDATE_V1.md) 与 [验收状态](ACCEPTANCE_TASK_CONVERSATIONAL_UPDATE_V1.md)。
+任务标题可打开对话详情，支持实时语音草稿、文字、提案预览和自然语言确认；规则解析预览、手机旧缓存升级及页面自动刷新已于 2026-09-05 发布。完整 GPT 理解与 iPhone 麦克风真机验收仍待完成。详见 [需求](PRD_TASK_CONVERSATIONAL_UPDATE_V1.md) 与 [验收状态](ACCEPTANCE_TASK_CONVERSATIONAL_UPDATE_V1.md)。
