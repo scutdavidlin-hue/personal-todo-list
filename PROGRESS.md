@@ -106,5 +106,7 @@ WHY：ChatGPT 会话可见 Google Calendar 连接器，但 search/update 返回 
 - [x] 新增 `search_calendar_events`、`get_calendar_event`、`update_calendar_event`。搜索窗口最多 366 天；修改要求最新 `expected_updated`，按精确 Event ID 执行 `If-Match` PATCH，再 GET 回读。
 - [x] 不暴露创建 Calendar Event 的 MCP 工具；更新成功必须返回 `event_id_unchanged=true`、`calendar_event_count_delta=0`、`verified=true`。
 - [x] Personal OS Task 投影拒绝直接 Calendar 修改，继续通过原 Google Task / Schedule 链路保持单一真源。
-- [x] 本地 `npm run verify`：333 tests，331 passed，0 failed，2 个既有可选浏览器测试 skipped；新增测试覆盖模拟 Google GET→PATCH→GET、ETag 并发保护、授权 owner 绑定、精确 Event ID、Task 投影保护及回读不一致失败。
-- [ ] 生产只读搜索、MCP 工具刷新与专用合成 Calendar Event 原位修改验收待完成；不得修改真实旅行事件。若没有明确专用样本，只报告最后一步待指定事件。
+- [x] Calendar diff 回归修复：Task-only `sync_task` 与 Morning Scheduler 在投影前对账实际 Calendar anchor。一般 `due != scheduled_date`、deadline-only 的 `due != deadline` 均保留 `sync_required=true` 并停止 Calendar PATCH；只有 `deadline == due` 的明示提前执行或真正 `morning_plan` provenance 放行。notes-only Task 写入仍成功，但会返回 `projection_error`，不得把待对账伪报为已同步。
+- [x] Calendar 直接更新在 GET 结果缺少 ETag 时以 `CALENDAR_EVENT_ETAG_REQUIRED` fail closed；搜索窗口按包含首尾的自然日计算，最多 366 天。
+- [x] 本地 `npm run verify`：339 tests，337 passed，0 failed，2 个既有可选浏览器测试 skipped；定向 22/22。新增回归覆盖两条已观察到但未修改的 due/schedule 冲突状态、deadline-only 冲突、合法提前执行、Morning Scheduler `NO_TIME`、缺失 ETag 零 PATCH，以及 366/367 天搜索边界。
+- [ ] 生产窄部署与安全验收待完成。只允许发布既有 `google-tasks`、`task-scheduler`；不得部署 migration/无关 Function，不得修改真实旅行事件或两条真实 date-conflict Task 日期。当前官方 Supabase CLI 可运行，但本机缺少 `~/.supabase/profile`，管理 API 命令在等待登录；本地验证不等于生产已发布。

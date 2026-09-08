@@ -23,8 +23,8 @@ export function normalizeCalendarSearchInput(input = {}, defaults = {}) {
   const dateTo = String(input.date_to || defaults.date_to || "");
   if (!validDate(dateFrom) || !validDate(dateTo)) throw new Error("date_from and date_to must be valid YYYY-MM-DD dates");
   if (dateTo < dateFrom) throw new Error("date_to must not be earlier than date_from");
-  const windowDays = Math.round((Date.parse(`${dateTo}T00:00:00Z`) - Date.parse(`${dateFrom}T00:00:00Z`)) / 86_400_000);
-  if (windowDays > 366) throw new Error("Calendar search window must not exceed 366 days");
+  const inclusiveDays = Math.round((Date.parse(`${dateTo}T00:00:00Z`) - Date.parse(`${dateFrom}T00:00:00Z`)) / 86_400_000) + 1;
+  if (inclusiveDays > 366) throw new Error("Calendar search window must not exceed 366 days");
   const limit = Number(input.limit ?? 50);
   if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error("limit must be an integer from 1 to 100");
   const query = input.query === undefined ? "" : String(input.query).trim();

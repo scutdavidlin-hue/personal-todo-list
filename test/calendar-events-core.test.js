@@ -16,7 +16,9 @@ test("Calendar search is bounded and uses the inclusive Shanghai date window", (
   assert.equal(params.get("timeMin"), "2026-09-08T00:00:00+08:00");
   assert.equal(params.get("timeMax"), "2026-09-11T00:00:00+08:00");
   assert.equal(params.get("q"), "哈尔滨");
-  assert.throws(() => normalizeCalendarSearchInput({ date_from: "2026-09-08", date_to: "2028-09-10" }), /366 days/);
+  const maximum = normalizeCalendarSearchInput({ date_from: "2026-01-01", date_to: "2027-01-01" });
+  assert.equal(calendarSearchParameters(maximum).get("timeMax"), "2027-01-02T00:00:00+08:00");
+  assert.throws(() => normalizeCalendarSearchInput({ date_from: "2026-01-01", date_to: "2027-01-02" }), /366 days/);
 });
 
 test("Calendar event patch updates an existing timed event without changing identity", () => {

@@ -5,6 +5,7 @@ import {
   normalizeScheduleInput,
   planTaskSlots,
   stableCalendarEventId,
+  taskScheduleSyncDecision,
 } from "../supabase/functions/_shared/schedule-core.js";
 
 test("normalizes explicit schedule without copying task state", () => {
@@ -98,4 +99,84 @@ test("morning planning preserves an exact deadline anchor and its reminder polic
   const result = planTaskSlots(tasks, schedules, {}, { today: "2026-09-05" });
   assert.deepEqual(result.plans, []);
   assert.deepEqual(result.backlog, []);
+});
+
+test("notes-only sync blocks the two reported external due conflicts and keeps reconciliation pending", () => {
+  const reported = [
+    {
+      task: { id: "wechat", dueDate: "2026-09-09", updatedAt: "2026-09-08T14:35:42Z" },
+      schedule: {
+        scheduled_date: "2026-09-05", scheduled_start: "20:00", fixed_time: false,
+        scheduling_status: "rescheduled", scheduling_source: "rescheduled", deadline: null,
+        rescheduled_at: "2026-09-05T00:00:00Z", last_synced_at: "2026-09-08T14:35:46Z",
+      },
+    },
+    {
+      task: { id: "second", dueDate: "2026-09-08", updatedAt: "2026-09-08T14:21:21.231Z" },
+      schedule: {
+        scheduled_date: "2026-09-06", fixed_time: false,
+        scheduling_status: "unscheduled", scheduling_source: "gpt_inferred", deadline: null, last_synced_at: null,
+      },
+    },
+  ];
+  for (const fixture of reported) {
+    assert.deepEqual(taskScheduleSyncDecision(fixture.task, fixture.schedule), {
+      project: false,
+      sync_required: true,
+      reason: "TASK_SCHEDULE_RECONCILIATION_REQUIRED",
+      task_due: fixture.task.dueDate,
+      scheduled_date: fixture.schedule.scheduled_date,
+    });
+  }
+});
+
+test("Task due and execution date may differ when due is the explicit deadline", () => {
+  assert.deepEqual(taskScheduleSyncDecision(
+    { id: "early", dueDate: "2026-09-09" },
+    { scheduled_date: "2026-09-05", scheduled_start: "20:00", scheduled_end: "20:30", deadline: "2026-09-09", fixed_time: true, scheduling_source: "explicit_user" },
+  ), {
+    project: true,
+    sync_required: false,
+    reason: "EXECUTION_BEFORE_TASK_DEADLINE",
+  });
+  assert.equal(taskScheduleSyncDecision(
+    { id: "late", dueDate: "2026-09-09" },
+    { scheduled_date: "2026-09-10", deadline: "2026-09-09", scheduling_source: "explicit_user" },
+  ).project, false);
+});
+
+test("aligned and morning-planned schedules remain projectable", () => {
+  assert.equal(taskScheduleSyncDecision(
+    { dueDate: "2026-09-09" },
+    { scheduled_date: "2026-09-09", scheduled_start: "09:00", scheduled_end: "09:30" },
+  ).project, true);
+  assert.equal(taskScheduleSyncDecision(
+    { dueDate: "2026-09-09" },
+    { scheduled_date: "2026-09-08", scheduled_start: "09:00", scheduled_end: "09:30", scheduling_source: "morning_plan", fixed_time: false },
+  ).project, true);
+});
+
+test("aligned backlog and unscheduled metadata return NO_TIME without projection", () => {
+  assert.deepEqual(taskScheduleSyncDecision(
+    { dueDate: "2026-09-09" },
+    { scheduled_date: "2026-09-09", scheduling_status: "unscheduled" },
+  ), { project: false, sync_required: false, reason: "NO_TIME" });
+  assert.deepEqual(taskScheduleSyncDecision(
+    { dueDate: null },
+    { scheduled_date: null, scheduling_status: "backlog" },
+  ), { project: false, sync_required: false, reason: "NO_TIME" });
+});
+
+test("deadline-only projection blocks an externally changed Task due from replaying the old deadline", () => {
+  assert.deepEqual(taskScheduleSyncDecision(
+    { id: "deadline-only", dueDate: "2026-09-09" },
+    { scheduled_date: null, scheduled_start: null, deadline: "2026-09-05", deadline_time: "20:00", scheduling_source: "gpt_inferred" },
+  ), {
+    project: false,
+    sync_required: true,
+    reason: "TASK_SCHEDULE_RECONCILIATION_REQUIRED",
+    task_due: "2026-09-09",
+    scheduled_date: null,
+    deadline: "2026-09-05",
+  });
 });

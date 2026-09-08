@@ -177,6 +177,47 @@ export function applyTaskSchedulePatch(current, changes = {}, taskDue = null, op
   return { touched: true, schedule: normalizeScheduleInput(next, options), timing_changed: timingChanged };
 }
 
+/**
+ * Decide whether Task-only reconciliation may safely reuse Schedule timing.
+ * Google Task due and execution timing may intentionally differ, so a date
+ * mismatch needs explicit semantic provenance before projection.
+ */
+export function taskScheduleSyncDecision(task = {}, schedule = {}) {
+  const taskDue = task?.dueDate || task?.due || task?.date || null;
+  const scheduledDate = schedule?.scheduled_date || null;
+  const projectionWindow = calendarProjectionWindow(schedule);
+  if (projectionWindow?.kind === "deadline" && taskDue && schedule?.deadline && taskDue !== schedule.deadline) {
+    return {
+      project: false,
+      sync_required: true,
+      reason: "TASK_SCHEDULE_RECONCILIATION_REQUIRED",
+      task_due: taskDue,
+      scheduled_date: null,
+      deadline: schedule.deadline,
+    };
+  }
+  let reason = null;
+  if (taskDue && scheduledDate && taskDue !== scheduledDate) {
+    if (schedule?.deadline === taskDue && scheduledDate <= taskDue) {
+      reason = "EXECUTION_BEFORE_TASK_DEADLINE";
+    } else if (String(schedule?.scheduling_source || "") === "morning_plan") {
+      reason = "MORNING_PLAN_DATE_SEPARATION";
+    } else {
+      return {
+        project: false,
+        sync_required: true,
+        reason: "TASK_SCHEDULE_RECONCILIATION_REQUIRED",
+        task_due: taskDue,
+        scheduled_date: scheduledDate,
+      };
+    }
+  }
+  if (!projectionWindow) {
+    return { project: false, sync_required: false, reason: "NO_TIME" };
+  }
+  return { project: true, sync_required: false, reason };
+}
+
 export async function stableCalendarEventId(googleTaskId) {
   const id = String(googleTaskId || "");
   if (!id) throw new Error("google_task_id is required");

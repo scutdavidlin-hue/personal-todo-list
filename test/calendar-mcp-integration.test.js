@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 
 const mcpPath = new URL("../supabase/functions/personal-os-mcp/index.ts", import.meta.url);
 const schedulerPath = new URL("../supabase/functions/task-scheduler/index.ts", import.meta.url);
+const googleTasksPath = new URL("../supabase/functions/google-tasks/index.ts", import.meta.url);
 
 test("Personal OS MCP exposes bounded Calendar reads and in-place update only", async () => {
   const mcp = await readFile(mcpPath, "utf8");
@@ -19,10 +20,16 @@ test("Personal OS MCP exposes bounded Calendar reads and in-place update only", 
 });
 
 test("Calendar actions bind to the request-authorized owner and exact event id", async () => {
-  const scheduler = await readFile(schedulerPath, "utf8");
+  const [scheduler, googleTasks] = await Promise.all([readFile(schedulerPath, "utf8"), readFile(googleTasksPath, "utf8")]);
   assert.match(scheduler, /const ownerId = await ownerForRequest\(request\)/);
   assert.match(scheduler, /updateCalendarEvent\(ownerId, input\)/);
   assert.match(scheduler, /updateCalendarEventInPlace\(\{ ownerId, calendarId, eventId, expectedUpdated, changes: input \}/);
   assert.match(scheduler, /calendarEventPath\(calendarId, eventId\)/);
   assert.match(scheduler, /"If-Match": etag/);
+  assert.doesNotMatch(scheduler, /etag \? \{ "If-Match": etag \} : \{\}/);
+  assert.match(scheduler, /reconcileTaskProjection\(ownerId, google, task, schedule\)/);
+  assert.match(scheduler, /decision\.sync_required !== true\) return \{ projected: false, \.\.\.decision \}/);
+  assert.match(scheduler, /sync_required: true,[\s\S]*last_sync_error: decision\.reason/);
+  assert.match(scheduler, /reconciliationBlocked\.add\(String\(task\.id\)\)/);
+  assert.match(googleTasks, /projection\.success === true && projection\.sync_required !== true \? null : projection/);
 });

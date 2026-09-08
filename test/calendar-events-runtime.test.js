@@ -58,6 +58,19 @@ test("stale updated timestamp prevents PATCH", async () => {
   assert.equal(patchCalls, 0);
 });
 
+test("missing ETag fails closed before PATCH", async () => {
+  let patchCalls = 0;
+  const adapter = {
+    async getEvent() { return event({ etag: "" }); },
+    async patchEvent() { patchCalls += 1; },
+  };
+  await assert.rejects(
+    updateCalendarEventInPlace({ ownerId: "owner", calendarId: "primary", eventId: "event-1", expectedUpdated: "2026-09-08T01:00:00Z", changes: { location: "机场" } }, adapter),
+    (error) => error instanceof CalendarEventRuntimeError && error.code === "CALENDAR_EVENT_ETAG_REQUIRED",
+  );
+  assert.equal(patchCalls, 0);
+});
+
 test("Task projection protection prevents direct Calendar mutation", async () => {
   let patchCalls = 0;
   const adapter = {

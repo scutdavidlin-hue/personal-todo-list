@@ -5,6 +5,7 @@ import {
   normalizeScheduleInput,
   planTaskSlots,
   stableCalendarEventId,
+  taskScheduleSyncDecision,
 } from "../_shared/schedule-core.js";
 import { mergeReminderPolicyUpdate, reminderProjectionFields } from "../_shared/reminder-policy-core.js";
 import { toTaskModel } from "../_shared/google-tasks-core.js";
@@ -285,11 +286,28 @@ async function projectTask(ownerId: string, google: { accessToken: string; taskL
   });
   return {
     projected: true,
+    sync_required: false,
     calendar_id: calendarId,
     calendar_event_id: eventId,
     summary: event.summary,
     ...projectedReminderFields,
   };
+}
+
+async function reconcileTaskProjection(
+  ownerId: string,
+  google: { accessToken: string; taskListId: string },
+  task: Record<string, unknown>,
+  schedule: Record<string, unknown>,
+) {
+  const decision = taskScheduleSyncDecision(task, schedule);
+  if (decision.project) return projectTask(ownerId, google, task, schedule);
+  if (decision.sync_required !== true) return { projected: false, ...decision };
+  await markSynced(ownerId, String(task.id), {
+    sync_required: true,
+    last_sync_error: decision.reason,
+  });
+  return { projected: false, ...decision };
 }
 
 function scheduleAfterProjection(schedule: Record<string, unknown>, projection: object) {
@@ -401,7 +419,7 @@ async function syncTask(ownerId: string, taskId: string) {
   if (!schedule) return { task_id: taskId, projected: false, reason: "NOT_SCHEDULED" };
   const google = await googleContext(ownerId);
   const task = await getTask(google, taskId);
-  return { task_id: taskId, ...(await projectTask(ownerId, google, task, schedule)) };
+  return { task_id: taskId, ...(await reconcileTaskProjection(ownerId, google, task, schedule)) };
 }
 
 async function updateTaskSchedule(ownerId: string, taskId: string, changes: Record<string, unknown>, preserveReminderPolicy = false) {
@@ -564,7 +582,7 @@ async function updateCalendarEvent(ownerId: string, input: Record<string, unknow
       getEvent: () => googleRequest(google.accessToken, CALENDAR_BASE, path),
       patchEvent: ({ patch, etag }: { patch: Record<string, unknown>; etag: string }) => googleRequest(google.accessToken, CALENDAR_BASE, path, {
         method: "PATCH",
-        headers: etag ? { "If-Match": etag } : {},
+        headers: { "If-Match": etag },
         body: JSON.stringify(patch),
       }),
     });
@@ -591,14 +609,22 @@ async function runMorningScheduler(ownerId: string, targetDate: string) {
 
   let synced = 0;
   const syncErrors = [];
-  for (const schedule of existingSchedules.filter((item: Record<string, unknown>) => calendarProjectionWindow(item))) {
+  const reconciliationBlocked = new Set<string>();
+  for (const schedule of existingSchedules) {
     const task = tasks.find((item) => item.id === schedule.google_task_id);
     if (!task) continue;
-    try { await projectTask(ownerId, google, task, schedule); synced += 1; }
+    try {
+      const result = await reconcileTaskProjection(ownerId, google, task, schedule);
+      if (result.projected) synced += 1;
+      else if (result.sync_required) {
+        reconciliationBlocked.add(String(task.id));
+        syncErrors.push({ task_id: task.id, code: result.reason, error: "Task due and execution schedule require reconciliation" });
+      }
+    }
     catch (error) { syncErrors.push({ task_id: task.id, error: error instanceof Error ? error.message : "sync failed" }); }
   }
 
-  const plan = planTaskSlots(tasks, existingSchedules, busy, { today: targetDate, horizonDays: 3 });
+  const plan = planTaskSlots(tasks.filter((task) => !reconciliationBlocked.has(String(task.id))), existingSchedules, busy, { today: targetDate, horizonDays: 3 });
   const projected = [];
   for (const item of plan.plans) {
     const task = tasks.find((candidate) => candidate.id === item.google_task_id);
