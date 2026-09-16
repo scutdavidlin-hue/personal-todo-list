@@ -1,3 +1,4 @@
+import { createCalendarView } from "./src/calendar-view.js";
 import { createTaskConversation } from "./src/task-conversation.js";
 import {
   escapeHtml,
@@ -33,13 +34,14 @@ let projects = [];
 let taskContextLinks = [];
 let currentUser = null;
 let currentFilter = "all";
-let currentGoalFilter = "active";
+let currentGoalFilter = "all";
 let selectedGoalId = null;
 let pendingGoalLinkId = null;
 let planningLoadError = "";
 let pendingIds = new Set();
 let reviewSaveTimer = null;
 const firedReminders = new Set();
+const calendar = createCalendarView({client,root: $("#calendarRoot"),getTasks:()=>tasks,getSchedules:()=>schedules,openTask:task=>task && openTaskDialog(task),onSaved:showToast});
 
 const GOAL_TYPE_LABELS = {
   Goal: "目标",
@@ -76,18 +78,12 @@ const GOAL_STATUS_LABELS = {
 };
 
 function formatDate(dateString) {
-  if (!dateString) return "无截止日期";
+  if (!dateString) return "未定日期";
   const date = new Date(`${dateString}T00:00:00`);
   return date.toLocaleDateString("zh-CN", { month: "long", day: "numeric", weekday: "short" });
 }
 
-function greeting() {
-  const hour = new Date().getHours();
-  if (hour < 11) return "早上好，今天准备做什么？";
-  if (hour < 14) return "中午好，看看上午的进展吧";
-  if (hour < 18) return "下午好，继续稳稳地推进";
-  return "晚上好，给今天收个尾吧";
-}
+function greeting() { return "今天"; }
 
 function priorityLabel(value) {
   return { urgent: "紧急", high: "高优先", medium: "中优先", low: "低优先" }[value] || "中优先";
@@ -115,7 +111,7 @@ function showToast(message, tone = "normal") {
 }
 
 function showCloudContent(show) {
-  ["#todayView", "#tasksView", "#goalsView", "#statsView"].forEach((selector) => { $(selector).hidden = !show; });
+  ["#todayView", "#calendarView", "#tasksView", "#goalsView", "#statsView"].forEach((selector) => { $(selector).hidden = !show; });
   $("#syncToolbar").hidden = !show;
   updatePrimaryAction(show ? activeViewName() : "");
 }
@@ -136,15 +132,15 @@ function renderTaskItem(task) {
   const contextLink = taskContextLinks.find((item) => item.google_task_id === task.id);
   const linkedGoal = goals.find((item) => item.id === contextLink?.goal_plan_id);
   return `
-    <div class="task-item ${task.done ? "done" : ""} ${syncing ? "syncing" : ""}" data-id="${task.id}">
+    <div class="task-item ${task.done ? "done" : ""} ${syncing ? "syncing" : ""}" data-id="${escapeHtml(task.id)}">
       <input class="task-check" type="checkbox" ${task.done ? "checked" : ""} ${syncing ? "disabled" : ""} aria-label="完成 ${escapeHtml(task.title)}">
       <div class="task-copy">
-        <button class="conversation-open" data-converse="${escapeHtml(task.id)}">${escapeHtml(task.title)}</button>
+        <button class="conversation-open" data-edit-task="${escapeHtml(task.id)}">${escapeHtml(task.title)}</button>
         <small>
           ${task.carriedFromDate ? `<span class="carry-chip">↪ ${escapeHtml(task.carriedFromDate)} 延续</span>` : ""}
           ${schedule?.scheduled_start ? `<span class="carry-chip">${schedule.scheduling_status === "rescheduled" ? "↪" : "◷"} ${escapeHtml(schedule.scheduled_date)} ${escapeHtml(schedule.scheduled_start.slice(0, 5))}</span>` : ""}
           ${linkedGoal ? `<span class="goal-link-chip">目标 · ${escapeHtml(linkedGoal.title)}</span>` : ""}
-          <span>Google Tasks</span>
+          <button type="button" class="task-date-chip" data-edit-task="${escapeHtml(task.id)}">${escapeHtml(formatDate(task.date || task.dueDate))}</button>
         </small>
       </div>
       <button type="button" class="task-converse-button" data-converse="${escapeHtml(task.id)}" aria-label="对话：${escapeHtml(task.title)}" ${syncing ? "disabled" : ""}>对话</button>
@@ -193,34 +189,20 @@ function renderAllTasks() {
   const list = tasks
     .filter((task) => task.status !== "cancelled")
     .filter((task) => task.title.toLowerCase().includes(query) || task.notes.toLowerCase().includes(query));
-  const groups = groupTasksByDue(list, localDateISO());
-  const taskRow = (task) => {
-    const contextLink = taskContextLinks.find((item) => item.google_task_id === task.id);
-    const linkedGoal = goals.find((item) => item.id === contextLink?.goal_plan_id);
-    return `
-    <div class="task-row ${pendingIds.has(task.id) ? "syncing" : ""}" data-id="${task.id}">
-      <div class="task-row-main">
-        <input class="task-check" type="checkbox" ${task.done ? "checked" : ""} ${pendingIds.has(task.id) ? "disabled" : ""} aria-label="完成 ${escapeHtml(task.title)}">
-        <span>${escapeHtml(task.title)}</span>
-      </div>
-      <span>${formatDate(task.dueDate)}</span>
-      <span class="category-chip">${linkedGoal ? escapeHtml(linkedGoal.title) : escapeHtml(task.category)}</span>
-      <span class="status-chip ${task.done ? "done" : "open"}">${task.done ? "已完成" : "进行中"}</span>
-    </div>`;
-  };
-  const sections = [
-    ["overdue", "Overdue", "已逾期"],
-    ["today", "Today", "今天"],
-    ["upcoming", "Upcoming", "未来 / 待安排"],
-    ["completed", "Completed", "已完成"],
+  const today=localDateISO();
+  const groups = [
+    ["之前未完成",list.filter(t=>!t.done && (t.date||t.dueDate) && (t.date||t.dueDate)<today)],
+    ["今天",list.filter(t=>!t.done && (t.date||t.dueDate)===today)],
+    ["接下来",list.filter(t=>!t.done && (t.date||t.dueDate)>today)],
+    ["未定日期",list.filter(t=>!t.done && !(t.date||t.dueDate))],
+    ["已完成",list.filter(t=>t.done)]
   ];
-  $("#allTaskList").innerHTML = list.length
-    ? sections.map(([key, eyebrow, title]) => `
-      <section class="task-group">
-        <div class="task-group-title"><span><small>${eyebrow}</small><strong>${title}</strong></span><b>${groups[key].length}</b></div>
-        <div>${groups[key].length ? (key === "completed" ? groups[key].slice(0, 50) : groups[key]).map(taskRow).join("") : '<div class="group-empty">暂无</div>'}</div>
-      </section>`).join("")
-    : emptyState("没有找到相关任务");
+  $("#allTaskList").innerHTML = groups.map(([title,rows])=> {
+    rows.sort((a,b)=>(a.date||a.dueDate||'').localeCompare(b.date||b.dueDate||''));
+    const heading=`<div class="task-group-title"><strong>${title}</strong><b>${rows.length}</b></div>`;
+    const body=rows.map(renderTaskItem).join('') || '<div class="group-empty">暂无</div>';
+    return title==='已完成'?`<details class="task-group"><summary>${heading}</summary>${body}</details>`:`<section class="task-group">${heading}${body}</section>`;
+  }).join('');
 }
 
 function renderStats() {
@@ -307,11 +289,12 @@ function renderGoals() {
 
   const query = ($("#goalSearch")?.value || "").trim().toLowerCase();
   const visible = goals
-    .filter((goal) => goalMatchesSection(goal, currentGoalFilter))
+    .filter((goal) => currentGoalFilter === "all" ? !["Completed","Dropped","Archived"].includes(goal.status) : goalMatchesSection(goal, currentGoalFilter))
     .filter((goal) => [goal.title, goal.description, goal.why, goal.counterparty].some((value) => String(value || "").toLowerCase().includes(query)));
-  $("#goalsList").innerHTML = visible.length
-    ? visible.map(goalCard).join("")
-    : `<div class="goals-empty"><h3>${query ? "没有找到匹配内容" : "这个视图还没有长期事项"}</h3><p>${query ? "换一个关键词，或切换上方视图。" : "先保存方向，不必为了填满系统而虚构下一步。"}</p>${planningLoadError ? "" : '<button class="primary-button" type="button" data-create-goal>添加第一个 Goal</button>'}</div>`;
+  $("#goalsList").innerHTML = GOAL_HORIZONS.map(horizon=>{
+    const rows=visible.filter(goal=>(goal.horizon||'medium')===horizon);
+    return `<section class="goal-horizon-section"><h3>${goalHorizonLabel(horizon)} <small>${rows.length} 项</small></h3><div class="goal-horizon-cards">${rows.map(goalCard).join('') || '<p class="group-empty">暂无计划</p>'}</div></section>`;
+  }).join('');
 }
 
 function renderRecentGoals() {
@@ -402,30 +385,19 @@ function render() {
   renderGoals();
   renderRecentGoals();
   renderStats();
+  calendar.render();
   if (selectedGoalId && $("#goalDetailDialog").open) renderGoalDetail();
   bindDynamicEvents();
 }
 
 function bindDynamicEvents() {
-  $$ ("[data-converse]").forEach((button) => button.addEventListener("click", () => taskConversation.open(tasks.find((task) => task.id === button.dataset.converse))));
-  $$(".task-check").forEach((input) => input.addEventListener("change", (event) => {
-    const row = event.target.closest("[data-id]");
-    if (row) toggleTask(row.dataset.id, event.target.checked);
-  }));
-  $$(".task-menu > button").forEach((button) => button.addEventListener("click", (event) => {
-    event.stopPropagation();
-    const menu = button.closest(".task-menu");
-    $$(".task-menu").filter((item) => item !== menu).forEach((item) => item.classList.remove("open"));
-    menu.classList.toggle("open");
-  }));
-  $$(".task-actions button").forEach((button) => button.addEventListener("click", () => {
-    const id = button.closest(".task-item").dataset.id;
-    if (button.dataset.action === "edit") openTaskDialog(tasks.find((task) => task.id === id));
-    if (button.dataset.action === "tomorrow") moveToTomorrow(id);
-    if (button.dataset.action === "delete") cancelTask(id);
-  }));
-  $$('[data-open-goal]').forEach((button) => button.addEventListener("click", () => openGoalDetail(button.dataset.openGoal)));
-  $$('[data-create-goal]').forEach((button) => button.addEventListener("click", () => openGoalDialog()));
+  $$("[data-edit-task]").forEach(button=>button.onclick=()=>openTaskDialog(tasks.find(task=>task.id===button.dataset.editTask)));
+  $$("[data-converse]").forEach(button=>button.onclick=()=>taskConversation.open(tasks.find(task=>task.id===button.dataset.converse)));
+  $$(".task-check").forEach(input=>input.onchange=event=>{const row=event.target.closest('[data-id]');if(row)toggleTask(row.dataset.id,event.target.checked);});
+  $$(".task-menu > button").forEach(button=>button.onclick=event=>{event.stopPropagation();const menu=button.closest('.task-menu');$$('.task-menu').filter(item=>item!==menu).forEach(item=>item.classList.remove('open'));menu.classList.toggle('open');});
+  $$(".task-actions button").forEach(button=>button.onclick=()=>{const id=button.closest('.task-item').dataset.id;if(button.dataset.action==='edit')openTaskDialog(tasks.find(task=>task.id===id));if(button.dataset.action==='tomorrow')moveToTomorrow(id);if(button.dataset.action==='delete')cancelTask(id);});
+  $$('[data-open-goal]').forEach(button=>button.onclick=()=>openGoalDetail(button.dataset.openGoal));
+  $$('[data-create-goal]').forEach(button=>button.onclick=()=>openGoalDialog());
 }
 
 function updateCachedTasks() {
@@ -664,9 +636,11 @@ async function mutateTask(id, changes, successMessage) {
     updateCachedTasks();
     setConnection("", `已同步 · ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`);
     showToast(successMessage);
+    void calendar.refresh();
   } catch (error) {
-    setConnection("error", "保存失败，云端状态未改变");
-    showToast(`${error.message}；操作已撤回`, "error");
+    setConnection("error", "同步未完成，正在回读实际状态");
+    showToast(error.message, "error");
+    await refreshTasks({ quiet: true });
   } finally {
     pendingIds.delete(id);
     render();
@@ -715,7 +689,7 @@ function openTaskDialog(task = null, goalId = null) {
   $("#dialogTitle").textContent = task ? "编辑这件事" : "添加一件要做的事";
   $("#taskId").value = task?.id || "";
   $("#taskTitle").value = task?.title || "";
-  $("#taskDate").value = task?.date || localDateISO();
+  $("#taskDate").value = task ? (task.date || task.dueDate || "") : localDateISO();
   $("#taskNotes").value = task?.notes || "";
   $("#taskTime").value = schedule?.scheduled_start?.slice(0, 5) || "";
   $("#taskDuration").value = schedule?.duration_minutes || 30;
@@ -727,6 +701,7 @@ function openTaskDialog(task = null, goalId = null) {
 async function saveTask(event) {
   event.preventDefault();
   if (!$("#taskForm").reportValidity()) return;
+  if ($("#taskTime").value && !$("#taskDate").value) { showToast("设置时间前，请选择安排日期", "error"); return; }
   const button = $("#saveTaskButton");
   button.disabled = true;
   setConnection("syncing", "正在保存到云端…");
@@ -772,6 +747,7 @@ async function saveTask(event) {
       }
     }
     pendingGoalLinkId = null;
+    await refreshTasks({ quiet: true });
     updateCachedTasks();
     $("#taskDialog").close();
     render();
@@ -875,6 +851,7 @@ async function refreshTasks({ quiet = false, automatic = false } = {}) {
     }
 
     render();
+    if (activeViewName() === "calendar") void calendar.refresh();
     const time = new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
     if (taskState === "online" && planningResult.status === "fulfilled") {
       setConnection("", `Tasks 与 Goals 已同步 · ${time}`);
@@ -944,6 +921,7 @@ async function signOut() {
   taskConversation.close();
   await client.signOut();
   currentUser = null;
+  calendar.clear();
   tasks = [];
   schedules = [];
   goals = [];
@@ -983,17 +961,20 @@ function switchView(view) {
   $$(".view").forEach((item) => item.classList.toggle("active", item.id === `${view}View`));
   const titles = {
     today: greeting(),
-    tasks: "把所有执行动作放在一个地方",
-    goals: "长期方向，不必伪装成今日待办",
+    calendar: "月度日历",
+    tasks: "我的任务",
+    goals: "我的计划",
     stats: "看见自己的每一点进展",
   };
   $("#pageTitle").textContent = titles[view];
   updatePrimaryAction(view);
+  if (view === "calendar" && currentUser) void calendar.refresh();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 function bindStaticEvents() {
   populateGoalOptions();
+  $$("[data-date-offset]").forEach(button=>button.addEventListener('click',()=>{const value=button.dataset.dateOffset;$("#taskDate").value=value==='none'?'':offsetDate(Number(value));if(value==='none')$("#taskTime").value='';}));
   $$(".nav-item").forEach((button) => button.addEventListener("click", () => switchView(button.dataset.view)));
   $$(".filter-pill").forEach((button) => button.addEventListener("click", () => {
     $$(".filter-pill").forEach((item) => item.classList.remove("active"));

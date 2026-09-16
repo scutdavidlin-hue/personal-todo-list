@@ -1,5 +1,5 @@
 // Load the app only after an existing offline worker has finished upgrading.
-export const APP_RELEASE = '20260905-auto-refresh-6';
+export const APP_RELEASE = '20260916-compact-month-1';
 
 export function waitForActivation(worker, timeoutMs = 20000) {
   if (!worker || worker.state === 'activated') return Promise.resolve();
@@ -20,9 +20,13 @@ export function waitForActivation(worker, timeoutMs = 20000) {
 }
 
 async function startApp() {
+  if (location.pathname.endsWith('/today.html')) {
+    location.replace('./index.html' + location.search + location.hash);
+    return;
+  }
   const status = document.createElement('p');
   status.setAttribute('role', 'status');
-  status.textContent = '正在加载任务对话新版…';
+  status.textContent = '正在加载 Personal OS…';
   Object.assign(status.style, { position: 'fixed', top: 'env(safe-area-inset-top, 0px)', left: '0', right: '0', zIndex: '10000', margin: '0', padding: '14px', background: '#203c34', color: 'white', textAlign: 'center' });
   document.body.append(status);
   try {

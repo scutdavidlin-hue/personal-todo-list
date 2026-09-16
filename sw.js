@@ -1,9 +1,11 @@
-const CACHE_NAME = "personal-os-shell-v1.3.5-auto-refresh";
+const CACHE_NAME = "personal-os-shell-v1.4.0-compact-month";
 const APP_SHELL = [
   "./",
   "./index.html",
   "./today.html",
   "./styles.css",
+  "./compact-ui.css",
+  "./src/calendar-view.js",
   "./today.css",
   "./app-loader.js",
   "./app.js",

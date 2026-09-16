@@ -13,6 +13,16 @@ const SESSION_KEY = "task-sync-auth-session-v1";
 const GOOGLE_OAUTH_TRANSIENT_KEY = "task-sync-google-oauth-transient-v1";
 const PLANNING_CACHE_KEY_PREFIX = "personal-os-planning-cache-v1";
 const REQUEST_TIMEOUT_MS = 45_000;
+const CALENDAR_MUTATION_UNSUPPORTED = "CALENDAR_MUTATION_UNSUPPORTED";
+
+function splitCalendarDateRange(dateFrom, dateTo) {
+  const start = Date.parse(`${dateFrom}T00:00:00Z`);
+  const end = Date.parse(`${dateTo}T00:00:00Z`);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start >= end) return null;
+  const midpoint = new Date(start + Math.floor((end - start) / 2 / 86_400_000) * 86_400_000);
+  const rightStart = new Date(midpoint.valueOf() + 86_400_000);
+  return [midpoint.toISOString().slice(0, 10), rightStart.toISOString().slice(0, 10)];
+}
 
 function taskMutationKey(action = "task") {
   const id = globalThis.crypto?.randomUUID?.()
@@ -298,6 +308,154 @@ export class TaskCloudClient {
 
   async listSchedules() {
     return this.authenticatedRequest("/functions/v1/task-scheduler", { method: "GET" });
+  }
+
+  async calendarRequest(action, input = {}) {
+    return this.authenticatedRequest("/functions/v1/task-scheduler", {
+      method: "POST",
+      body: JSON.stringify({ ...input, action }),
+    });
+  }
+
+  async listCalendarEvents(range = {}) {
+    const baseInput = {
+      calendar_id: range.calendarId || range.calendar_id || "primary",
+      query: range.query || "",
+      limit: range.limit ?? 100,
+    };
+    const readWindow = async (dateFrom, dateTo) => this.calendarRequest("search_calendar_events", {
+      ...baseInput,
+      date_from: dateFrom,
+      date_to: dateTo,
+    });
+    const first = await readWindow(range.dateFrom || range.date_from, range.dateTo || range.date_to);
+    const dateFrom = first.date_from;
+    const dateTo = first.date_to;
+
+    const resolveWindow = async (page) => {
+      const nextPageToken = page.next_page_token || null;
+      if (!nextPageToken) return { events: page.events || [], incomplete: [] };
+      const split = splitCalendarDateRange(page.date_from, page.date_to);
+      if (!split) {
+        return {
+          events: page.events || [],
+          incomplete: [{ date: page.date_from, nextPageToken }],
+        };
+      }
+      const [leftDateTo, rightDateFrom] = split;
+      const [left, right] = await Promise.all([
+        readWindow(page.date_from, leftDateTo),
+        readWindow(rightDateFrom, page.date_to),
+      ]);
+      const [resolvedLeft, resolvedRight] = await Promise.all([
+        resolveWindow(left),
+        resolveWindow(right),
+      ]);
+      return {
+        events: [...resolvedLeft.events, ...resolvedRight.events],
+        incomplete: [...resolvedLeft.incomplete, ...resolvedRight.incomplete],
+      };
+    };
+
+    const resolved = await resolveWindow(first);
+    const eventsById = new Map();
+    for (const event of resolved.events) {
+      const key = event?.id || JSON.stringify(event);
+      if (!eventsById.has(key)) eventsById.set(key, event);
+    }
+    const events = [...eventsById.values()];
+    const nextPageToken = resolved.incomplete[0]?.nextPageToken || null;
+    return {
+      calendarId: first.calendar_id,
+      dateFrom,
+      dateTo,
+      count: events.length,
+      events,
+      nextPageToken,
+      hasMore: resolved.incomplete.length > 0,
+      isComplete: resolved.incomplete.length === 0,
+      pageTokenPaginationSupported: false,
+      paginationStrategy: "range_split",
+      incompleteDates: resolved.incomplete.map((item) => item.date),
+    };
+  }
+
+  async getCalendarEvent(eventId, { calendarId = "primary" } = {}) {
+    const result = await this.calendarRequest("get_calendar_event", {
+      calendar_id: calendarId,
+      event_id: eventId,
+    });
+    if (!result.event || result.event.id !== eventId) {
+      throw new CloudError("读取到的日历行程与请求的 Event ID 不一致", {
+        status: 502,
+        code: "CALENDAR_EVENT_IDENTITY_CHANGED",
+      });
+    }
+    return result.event;
+  }
+
+  async updateCalendarEvent(eventId, changes = {}, options = {}) {
+    if (changes.personal_os_projection || changes.personalOsProjection) {
+      throw new CloudError("这是 Personal OS 任务的日历投影，请通过原 Google Task 修改", {
+        status: 409,
+        code: "PERSONAL_OS_PROJECTION_REQUIRES_TASK_UPDATE",
+      });
+    }
+    const expectedUpdated = options.expectedUpdated
+      || changes.expectedUpdated
+      || changes.expected_updated;
+    if (!expectedUpdated) {
+      throw new CloudError("更新日历行程前需要先读取最新版本", {
+        status: 400,
+        code: "INVALID_CALENDAR_EVENT",
+      });
+    }
+    const calendarId = options.calendarId || changes.calendarId || changes.calendar_id || "primary";
+    const input = {
+      calendar_id: calendarId,
+      event_id: eventId,
+      expected_updated: expectedUpdated,
+    };
+    const fields = ["summary", "description", "location", "start", "end", "timezone"];
+    for (const field of fields) if (Object.hasOwn(changes, field)) input[field] = changes[field];
+    if (Object.hasOwn(changes, "startDate") || Object.hasOwn(changes, "start_date")) {
+      input.start_date = changes.startDate ?? changes.start_date;
+    }
+    if (Object.hasOwn(changes, "endDate") || Object.hasOwn(changes, "end_date")) {
+      input.end_date = changes.endDate ?? changes.end_date;
+    }
+    const result = await this.calendarRequest("update_calendar_event", input);
+    if (result.verified !== true
+      || result.event_id !== eventId
+      || result.event?.id !== eventId
+      || result.event_id_unchanged !== true
+      || result.calendar_event_count_delta !== 0) {
+      throw new CloudError("日历行程更新未能核实，请重新读取后再试", {
+        status: 502,
+        code: "CALENDAR_UPDATE_UNVERIFIED",
+      });
+    }
+    return result;
+  }
+
+  async createCalendarEvent() {
+    throw new CloudError("当前 Personal OS 仅支持读取和原位更新既有日历行程", {
+      status: 405,
+      code: CALENDAR_MUTATION_UNSUPPORTED,
+    });
+  }
+
+  async deleteCalendarEvent(_eventId, event = {}) {
+    if (event.personal_os_projection || event.personalOsProjection) {
+      throw new CloudError("这是 Personal OS 任务的日历投影，请通过原 Google Task 修改", {
+        status: 409,
+        code: "PERSONAL_OS_PROJECTION_REQUIRES_TASK_UPDATE",
+      });
+    }
+    throw new CloudError("当前 Personal OS 不支持删除独立日历行程", {
+      status: 405,
+      code: CALENDAR_MUTATION_UNSUPPORTED,
+    });
   }
 
   async scheduleTask(id, schedule) {
