@@ -21,4 +21,10 @@ Strategy EXTEND: reuse TaskCloudClient, task-scheduler calendar event actions an
 Repository npm run verify; new calendar range, timezone, projection deduplication and client verification tests. Manual browser checks and production readback recorded separately. Unit checks cannot establish iPhone acceptance.
 
 ## RESULT
-Implementation staged for release. Production deployment and iPhone acceptance pending.
+Published to the existing GitHub Pages site; application commit 3427251 has a successful Pages build. Existing task-scheduler deployed as ACTIVE v11 with its prior gateway configuration and unchanged handler owner authentication. Anonymous Calendar search returns 401.
+
+Verification: npm run verify passes (351 tests: 349 pass, 2 existing skips). Signed-in Chrome at 390 × 844 read real Tasks, Goals and Calendar; the event edit form populated via exact-event GET. Task date shortcut changed draft to day-after-tomorrow and was cancelled; no real task/event mutations were used as tests. Plans show all three horizons and document width has no horizontal overflow. Prior event-read/logout race fixed during review.
+
+User iPhone physical-device acceptance remains pending. Existing historical Task/Schedule date discrepancies were observed and preserved; this UI release does not silently reconcile production records. Independent Calendar create/delete are not included; more than 100 matching events on one day is explicitly incomplete. No new service, credentials or data migration.
+
+Human interventions: 0. Approval prompts: 0. Autonomous recoveries: stale cache-version verifier updated, cached CLI reused, async event-read race repaired.
