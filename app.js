@@ -81,7 +81,7 @@ function formatDate(dateString) {
   return date.toLocaleDateString("zh-CN", { month: "long", day: "numeric", weekday: "short" });
 }
 
-function greeting() { return "今天"; }
+function greeting() { return "日报"; }
 
 function priorityLabel(value) {
   return { urgent: "紧急", high: "高优先", medium: "中优先", low: "低优先" }[value] || "中优先";
@@ -115,12 +115,12 @@ function showCloudContent(show) {
 }
 
 function activeViewName() {
-  return $(".nav-item.active")?.dataset.view || "today";
+  return $(".nav-item.active")?.dataset.view || "tasks";
 }
 
 function updatePrimaryAction(view = activeViewName()) {
   const visible = Boolean(currentUser);
-  $("#addTaskButton").hidden = !visible || view === "goals";
+  $("#addTaskButton").hidden = !visible || view === "goals" || view === "today";
   $("#addGoalButton").hidden = !visible || view !== "goals";
 }
 
@@ -150,26 +150,6 @@ function renderTaskItem(task) {
         </div>
       </div>
     </div>`;
-}
-
-function renderToday() {
-  const today = localDateISO();
-  let todayTasks = tasks.filter((task) => task.date === today && task.status !== "cancelled");
-  if (currentFilter === "open") todayTasks = todayTasks.filter((task) => !task.done);
-  if (currentFilter === "done") todayTasks = todayTasks.filter((task) => task.done);
-  $("#todayTaskList").innerHTML = todayTasks.length
-    ? todayTasks.map(renderTaskItem).join("")
-    : emptyState(currentFilter === "done" ? "今天还没有已完成任务" : "这里暂时空空的");
-
-  const allToday = tasks.filter((task) => task.date === today && task.status !== "cancelled");
-  const focus = allToday.find((task) => !task.done);
-  $("#focusTitle").textContent = focus?.title || "今天的任务已完成";
-  $("#focusMeta").textContent = focus
-    ? `${formatDate(focus.date)}${focus.notes ? ` · ${focus.notes}` : ""}`
-    : "做得很好。可以休息一下，或者提前安排明天。";
-  $("#completeFocusButton").dataset.id = focus?.id || "";
-  $("#completeFocusButton").textContent = focus ? "标记完成" : "全部完成";
-  $("#completeFocusButton").disabled = !focus || pendingIds.has(focus?.id);
 }
 
 function renderAllTasks() {
@@ -285,22 +265,6 @@ function renderGoals() {
   }).join('');
 }
 
-function renderRecentGoals() {
-  const visible = goals
-    .filter((goal) => ["Active", "Planning"].includes(goal.status))
-    .slice(0, 3);
-  $("#recentGoals").innerHTML = visible.length
-    ? visible.map((goal) => {
-      const context = goalContext(goal.id, projects, taskContextLinks, tasks);
-      return `<button type="button" class="recent-goal" data-open-goal="${escapeHtml(goal.id)}">
-        <span>${escapeHtml(GOAL_CATEGORY_LABELS[goal.category] || goal.category)} · ${escapeHtml(goalHorizonLabel(goal))}</span>
-        <strong>${escapeHtml(goal.title)}</strong>
-        <small>${context.nextAction ? `下一步：${escapeHtml(context.nextAction.title)}` : `${escapeHtml(goalTargetLabel(goal))} · 暂无下一步`}</small>
-      </button>`;
-    }).join("")
-    : `<div class="recent-goals-empty"><strong>长期方向还没有进入这里</strong><span>在 Goals 中保存目标、计划或持续事项。</span></div>`;
-}
-
 function goalDateRow(label, value) {
   return `<div><dt>${label}</dt><dd>${escapeHtml(value || "未设置")}</dd></div>`;
 }
@@ -368,10 +332,8 @@ function renderGoalDetail() {
 function render() {
   $("#dateLabel").textContent = new Date().toLocaleDateString("zh-CN", { year: "numeric", month: "long", day: "numeric", weekday: "long" });
   if ($("#todayView").classList.contains("active")) $("#pageTitle").textContent = greeting();
-  renderToday();
   renderAllTasks();
   renderGoals();
-  renderRecentGoals();
   renderStats();
   calendar.render();
   if (selectedGoalId && $("#goalDetailDialog").open) renderGoalDetail();
@@ -965,8 +927,7 @@ function bindStaticEvents() {
     $$(".filter-pill").forEach((item) => item.classList.remove("active"));
     button.classList.add("active");
     currentFilter = button.dataset.filter;
-    renderToday();
-    bindDynamicEvents();
+      bindDynamicEvents();
   }));
   $("#addTaskButton").addEventListener("click", () => openTaskDialog());
   $("#addGoalButton").addEventListener("click", () => openGoalDialog());
@@ -1001,9 +962,7 @@ function bindStaticEvents() {
     bindDynamicEvents();
   }));
   $("#goalSearch").addEventListener("input", () => { renderGoals(); bindDynamicEvents(); });
-  $("#viewAllGoalsButton").addEventListener("click", () => switchView("goals"));
   $("#taskSearch").addEventListener("input", () => { renderAllTasks(); bindDynamicEvents(); });
-  $("#completeFocusButton").addEventListener("click", (event) => event.currentTarget.dataset.id && toggleTask(event.currentTarget.dataset.id, true));
   $("#notificationButton").addEventListener("click", enableNotifications);
   $("#loginForm").addEventListener("submit", requestLogin);
   $("#connectGoogleButton").addEventListener("click", connectGoogleTasks);
@@ -1025,7 +984,7 @@ function bindStaticEvents() {
 async function boot() {
   bindStaticEvents();
   $("#dateLabel").textContent = new Date().toLocaleDateString("zh-CN", { year: "numeric", month: "long", day: "numeric", weekday: "long" });
-  $("#pageTitle").textContent = greeting();
+  $("#pageTitle").textContent = "我的任务";
   if (!client.isConfigured()) {
     $("#setupPanel").hidden = false;
     showCloudContent(false);
