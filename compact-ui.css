@@ -253,3 +253,6 @@ dialog.calendar-event-form[open] { display:block; margin:auto; width:min(520px,c
 @media(max-width:760px){ input,select,textarea,.calendar-event-form input,.calendar-event-form textarea{font-size:16px;} .topbar .primary-button{border-radius:6px;} .conversation-open{overflow-wrap:anywhere;} }
 
 .daily-report-panel {margin-bottom:14px;} .report-source-links{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px;} .report-source-links a{text-decoration:none;}
+
+/* Approved growth-ring identity; keep the app layout and functional colors. */
+img.brand-mark { display: block; object-fit: contain; background: #17654f; flex-shrink: 0; }

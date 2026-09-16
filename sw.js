@@ -1,4 +1,4 @@
-const CACHE_NAME = "personal-os-shell-v1.4.2-compact-month";
+const CACHE_NAME = "personal-os-shell-v1.4.3-growth-logo";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -19,6 +19,7 @@ const APP_SHELL = [
   "./manifest.webmanifest",
   "./icons/icon.svg",
   "./icons/apple-touch-icon.png",
+  "./icons/apple-touch-icon-growth-v1.png",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "./icons/icon-512-maskable.png"

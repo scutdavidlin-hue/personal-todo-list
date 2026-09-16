@@ -1,10 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
-  <title id="title">Personal OS</title>
-  <desc id="desc">Deep green rounded square with a warm white path connecting direction to action.</desc>
-  <rect width="512" height="512" fill="#203c34"/>
-  <circle cx="256" cy="172" r="78" fill="none" stroke="#f7f3e8" stroke-width="28"/>
-  <circle cx="256" cy="172" r="18" fill="#d4864d"/>
-  <path d="M256 250v92c0 24 18 43 42 43h72" fill="none" stroke="#f7f3e8" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="m338 349 34 36-34 36" fill="none" stroke="#f7f3e8" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M174 342h82" fill="none" stroke="#d4864d" stroke-width="28" stroke-linecap="round"/>
+<title id="title">Personal OS</title>
+<desc id="desc">生长之环：深绿底色上向上舒展的浅绿圆环，象征内在力量和持续成长。</desc>
+<rect width="512" height="512" fill="#17654f"/>
+<path fill="#ddede4" d="M326 89C376 158 382 244 345 303C317 349 260 367 211 346C166 327 143 282 153 240C162 201 200 173 250 171C202 155 155 169 124 205C89 246 92 302 117 346C150 403 227 428 295 397C370 362 405 290 395 217C390 165 365 121 326 89Z"/>
 </svg>
