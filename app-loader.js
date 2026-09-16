@@ -1,5 +1,5 @@
 // Load the app only after an existing offline worker has finished upgrading.
-export const APP_RELEASE = '20260916-compact-month-1';
+export const APP_RELEASE = '20260916-compact-month-2';
 
 export function waitForActivation(worker, timeoutMs = 20000) {
   if (!worker || worker.state === 'activated') return Promise.resolve();

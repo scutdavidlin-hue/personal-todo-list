@@ -1,5 +1,4 @@
 import { createCalendarView } from "./src/calendar-view.js";
-import { createTaskConversation } from "./src/task-conversation.js";
 import {
   escapeHtml,
   fromDatabaseTask,
@@ -23,7 +22,6 @@ import {
 } from "./src/goals.js";
 
 const client = new TaskCloudClient(window.TASK_SYNC_CONFIG || {});
-const taskConversation = createTaskConversation({ client, onChanged: () => refreshTasks({ quiet: true }) });
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 
@@ -140,10 +138,9 @@ function renderTaskItem(task) {
           ${task.carriedFromDate ? `<span class="carry-chip">↪ ${escapeHtml(task.carriedFromDate)} 延续</span>` : ""}
           ${schedule?.scheduled_start ? `<span class="carry-chip">${schedule.scheduling_status === "rescheduled" ? "↪" : "◷"} ${escapeHtml(schedule.scheduled_date)} ${escapeHtml(schedule.scheduled_start.slice(0, 5))}</span>` : ""}
           ${linkedGoal ? `<span class="goal-link-chip">目标 · ${escapeHtml(linkedGoal.title)}</span>` : ""}
-          <button type="button" class="task-date-chip" data-edit-task="${escapeHtml(task.id)}">${escapeHtml(formatDate(task.date || task.dueDate))}</button>
+          <button type="button" class="task-date-chip" aria-label="修改安排日期" title="点击改到明天、后天或其他日期" data-edit-task="${escapeHtml(task.id)}">${escapeHtml(formatDate(task.date || task.dueDate))}</button>
         </small>
       </div>
-      <button type="button" class="task-converse-button" data-converse="${escapeHtml(task.id)}" aria-label="对话：${escapeHtml(task.title)}" ${syncing ? "disabled" : ""}>对话</button>
       <div class="task-menu">
         <button aria-label="任务操作" ${syncing ? "disabled" : ""}>···</button>
         <div class="task-actions">
@@ -165,15 +162,6 @@ function renderToday() {
     : emptyState(currentFilter === "done" ? "今天还没有已完成任务" : "这里暂时空空的");
 
   const allToday = tasks.filter((task) => task.date === today && task.status !== "cancelled");
-  const completed = allToday.filter((task) => task.done).length;
-  const percent = allToday.length ? Math.round(completed / allToday.length * 100) : 0;
-  $("#progressPercent").textContent = `${percent}%`;
-  $("#completedCount").textContent = completed;
-  $("#importantCount").textContent = allToday.filter((task) => !task.done).length;
-  $("#remainingMinutes").textContent = allToday.length;
-  $("#ringText").textContent = `${completed}/${allToday.length}`;
-  $("#progressRing").style.setProperty("--progress", `${percent * 3.6}deg`);
-
   const focus = allToday.find((task) => !task.done);
   $("#focusTitle").textContent = focus?.title || "今天的任务已完成";
   $("#focusMeta").textContent = focus
@@ -346,7 +334,7 @@ function renderGoalDetail() {
 
       <section class="detail-section">
         <div class="detail-section-heading"><div><h3>Tasks</h3><p>真正需要执行的下一步，状态来自 Google Tasks</p></div><button class="text-button" type="button" data-detail-action="new-task">新建下一步</button></div>
-        <div class="goal-task-list">${context.tasks.length ? context.tasks.map((task) => `<div class="goal-task-row ${task.done ? "done" : ""}" data-id="${escapeHtml(task.id)}"><input class="goal-task-check" type="checkbox" data-detail-action="toggle-task" ${task.done ? "checked" : ""} aria-label="${task.done ? "恢复" : "完成"} ${escapeHtml(task.title)}"><div><strong>${escapeHtml(task.title)}</strong><span>${task.done ? "已完成" : task.dueDate ? `到期 ${escapeHtml(task.dueDate)}` : "未安排日期"}</span></div><button type="button" class="task-converse-button" data-detail-action="converse-task" data-task-id="${escapeHtml(task.id)}" aria-label="对话：${escapeHtml(task.title)}">对话</button><button type="button" data-detail-action="unlink-task" data-task-id="${escapeHtml(task.id)}">解除关联</button></div>`).join("") : '<div class="detail-empty">还没有关联 Task。没有明确动作时，这是正常状态。</div>'}</div>
+        <div class="goal-task-list">${context.tasks.length ? context.tasks.map((task) => `<div class="goal-task-row ${task.done ? "done" : ""}" data-id="${escapeHtml(task.id)}"><input class="goal-task-check" type="checkbox" data-detail-action="toggle-task" ${task.done ? "checked" : ""} aria-label="${task.done ? "恢复" : "完成"} ${escapeHtml(task.title)}"><div><strong>${escapeHtml(task.title)}</strong><span>${task.done ? "已完成" : task.dueDate ? `到期 ${escapeHtml(task.dueDate)}` : "未安排日期"}</span></div><button type="button" data-detail-action="unlink-task" data-task-id="${escapeHtml(task.id)}">解除关联</button></div>`).join("") : '<div class="detail-empty">还没有关联 Task。没有明确动作时，这是正常状态。</div>'}</div>
         <div class="task-linker">
           <select id="existingTaskSelect" aria-label="选择已有任务" ${availableTasks.length ? "" : "disabled"}><option value="">${availableTasks.length ? "选择一个未完成 Task" : "没有可关联的未完成 Task"}</option>${taskOptions}</select>
           <select id="existingProjectSelect" aria-label="关联项目"><option value="">直接关联 Goal</option>${projectOptions}</select>
@@ -392,7 +380,6 @@ function render() {
 
 function bindDynamicEvents() {
   $$("[data-edit-task]").forEach(button=>button.onclick=()=>openTaskDialog(tasks.find(task=>task.id===button.dataset.editTask)));
-  $$("[data-converse]").forEach(button=>button.onclick=()=>taskConversation.open(tasks.find(task=>task.id===button.dataset.converse)));
   $$(".task-check").forEach(input=>input.onchange=event=>{const row=event.target.closest('[data-id]');if(row)toggleTask(row.dataset.id,event.target.checked);});
   $$(".task-menu > button").forEach(button=>button.onclick=event=>{event.stopPropagation();const menu=button.closest('.task-menu');$$('.task-menu').filter(item=>item!==menu).forEach(item=>item.classList.remove('open'));menu.classList.toggle('open');});
   $$(".task-actions button").forEach(button=>button.onclick=()=>{const id=button.closest('.task-item').dataset.id;if(button.dataset.action==='edit')openTaskDialog(tasks.find(task=>task.id===id));if(button.dataset.action==='tomorrow')moveToTomorrow(id);if(button.dataset.action==='delete')cancelTask(id);});
@@ -609,7 +596,6 @@ function handleGoalDetailAction(event) {
   if (action === "new-project") openProjectDialog();
   if (action === "new-task") openTaskDialog(null, selectedGoalId);
   if (action === "link-task") linkExistingTask();
-  if (action === "converse-task") taskConversation.open(tasks.find((task) => task.id === control.dataset.taskId));
   if (action === "unlink-task") unlinkTask(control.dataset.taskId);
   if (action === "toggle-task" && event.type === "change") {
     const row = control.closest("[data-id]");
@@ -918,7 +904,6 @@ function connectGoogleTasks() {
 }
 
 async function signOut() {
-  taskConversation.close();
   await client.signOut();
   currentUser = null;
   calendar.clear();

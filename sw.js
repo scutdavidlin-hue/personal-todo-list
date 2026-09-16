@@ -1,4 +1,4 @@
-const CACHE_NAME = "personal-os-shell-v1.4.0-compact-month";
+const CACHE_NAME = "personal-os-shell-v1.4.1-compact-month";
 const APP_SHELL = [
   "./",
   "./index.html",
