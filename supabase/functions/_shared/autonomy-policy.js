@@ -104,6 +104,12 @@ function splitPreference(text) {
   };
 }
 
+// An explicit persistence directive outranks question words inside task content.
+function hasExplicitTaskIntent(text) {
+  if (/^(?:什么|怎么|如何|为什么|为何|是否|能否|可不可以|能不能)/.test(text)) return false;
+  return /(?:提醒(?:一下)?我|帮我记(?:一下|下来|住)?|创建(?:一个|个)?任务|(?:加|添加|写|放)(?:到|进)?(?:我的)?\s*task(?:\s*里面)?|写进去)/i.test(text);
+}
+
 function isInformationQuestion(text) {
   if (!text) return false;
   const asksForAction = /(?:帮我|请|麻烦|记得|提醒我|替我|给我).{0,50}(?:安排|创建|添加|记录|提交|发送|回复|联系|准备|整理|检查|查看|查询|预订|订|购买|修改|调整|取消|删除|处理)/.test(text);
@@ -121,7 +127,7 @@ function isAction(text) {
 }
 
 function isOuterReminder(text) {
-  return /^(?:(?:今天|明天|后天|下周[一二三四五六日天]?|周[一二三四五六日天]|\d{1,2}月\d{1,2}[日号]?)\s*)?(?:请|麻烦)?(?:记得)?提醒我/.test(text)
+  return /^(?:(?:今天|明天|后天|下周[一二三四五六日天]?|周[一二三四五六日天]|\d{1,2}月\d{1,2}[日号]?)\s*)?(?:请|麻烦)?(?:记得)?提醒(?:一下)?我/.test(text)
     || /^(?:请|麻烦)?(?:创建|加|设|设置)(?:一个|个)?提醒/.test(text);
 }
 
@@ -217,8 +223,8 @@ function contextualDate(text, context = {}) {
 }
 
 function requestedDate(text, inputDate, context, baseDate) {
-  return autonomyIntentDate(text, baseDate)
-    || (validDate(cleanString(inputDate)) ? cleanString(inputDate) : null)
+  return (validDate(cleanString(inputDate)) ? cleanString(inputDate) : null)
+    || autonomyIntentDate(text, baseDate)
     || contextualDate(text, context)
     || parseIntentDate("今天", baseDate);
 }
@@ -337,12 +343,13 @@ export function evaluateAutonomy(input, options = {}) {
     return result("unknown", "L2", "ask", "The request has no usable intent.", "你希望我具体做什么？", baseInput);
   }
 
-  if (isInformationQuestion(rawText)) {
+  const explicitTaskIntent = cleanString(source.type) === "task" || hasExplicitTaskIntent(rawText);
+  if (!explicitTaskIntent && isInformationQuestion(rawText)) {
     return result("information", "L1", "information", "The request asks for information and does not request a write.", null, baseInput);
   }
 
   const preference = splitPreference(rawText);
-  if (preference.preferenceText && !preference.mixed) {
+  if (!explicitTaskIntent && preference.preferenceText && !preference.mixed) {
     const planInput = {
       ...baseInput,
       type: "plan",
@@ -388,7 +395,7 @@ export function evaluateAutonomy(input, options = {}) {
 
   const route = classifyAction(actionText, { baseDate });
   const explicitType = INTAKE_TYPES.has(cleanString(source.type)) ? cleanString(source.type) : null;
-  const establishedNonTask = explicitType ? explicitType !== "task" : route.type !== "task" && (route.type !== "knowledge" || route.confidence >= 0.9);
+  const establishedNonTask = explicitType ? explicitType !== "task" : !explicitTaskIntent && route.type !== "task" && (route.type !== "knowledge" || route.confidence >= 0.9);
   if (establishedNonTask) {
     return result(
       preference.mixed ? "mixed" : "action",
@@ -401,7 +408,7 @@ export function evaluateAutonomy(input, options = {}) {
     );
   }
 
-  if (!isAction(actionText)) {
+  if (!explicitTaskIntent && !isAction(actionText)) {
     return result("unknown", "L2", "ask", "The request does not identify an action to execute.", "你希望我具体做什么？", actionBaseInput, preference.preferenceText);
   }
 

@@ -194,3 +194,30 @@ test("mixed current action and lasting preference reports a partial result", { c
     harness.restore();
   }
 });
+
+for (const type of [undefined, "task"]) {
+  test(`voice reminder traverses intake write and readback (type=${type})`, { concurrency: false }, async () => {
+    const harness = await loadIntakeHandler();
+    try {
+      const raw_text = "提醒一下我今天下午四点半有陈明学长的分享，关于怎么做好圆桌的邀约人，如果有时间就参与一下";
+      const response = await harness.request({ raw_text, type, title: "参与圆桌邀约人分享",
+        due: "2026-10-02", requested_date: "2026-10-02", requested_time: "16:30",
+        fixed_time: true, reminder_policy: "smart", timezone: "Asia/Shanghai" });
+      const body = await response.json();
+      assert.equal(body.write_success, true);
+      assert.equal(body.verified, true);
+      assert.equal(body.destination, "google_tasks");
+      assert.deepEqual(taskStatusWrites(harness).map(call => call.body.action || "create"), ["autonomy_context", "create", "read_task"]);
+    } finally { harness.restore(); }
+  });
+}
+for (const raw_text of ["下午四点半有什么安排？", "陈明学长这个分享是什么？", "怎么创建任务？"]) {
+  test(`voice information query has zero writes: ${raw_text}`, { concurrency: false }, async () => {
+    const harness = await loadIntakeHandler();
+    try {
+      const body = await (await harness.request({ raw_text })).json();
+      assert.equal(body.code, "INFORMATION_ONLY");
+      assert.equal(harness.writes.length, 0);
+    } finally { harness.restore(); }
+  });
+}

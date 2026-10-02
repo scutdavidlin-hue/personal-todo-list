@@ -322,3 +322,45 @@ test("partial cancellation also removes dinner only recorded in notes", () => {
   assert.equal(result.input.update_patch.title, undefined);
   assert.equal(result.input.update_patch.notes, "下午核对资料");
 });
+
+const voiceRegressionDate = "2026-10-02T09:16:21+08:00";
+for (const raw_text of [
+  "提醒一下我下午四点半有个分享，如果有时间就参与一下",
+  "提醒一下我今天下午四点半有陈明学长的分享，关于怎么做好圆桌的邀约人，如果有时间就参与一下",
+  "提醒我明天处理财务功能",
+  "写到我的 Task 里面",
+  "帮我记一下如何做好邀约人",
+  "加到Task：学习怎么组织分享，如果有时间就处理",
+  "创建任务：研究为什么会议效率低",
+  "写进去",
+]) {
+  test(`Chinese voice persistence intent: ${raw_text}`, () => {
+    const result = evaluateAutonomy({ raw_text }, { baseDate: voiceRegressionDate });
+    assert.equal(result.intent, "action");
+    assert.equal(result.decision, "execute");
+    assert.equal(result.input.type, "task");
+    assert.equal(result.input.raw_text, raw_text);
+  });
+}
+for (const raw_text of ["下午四点半有什么安排？", "陈明学长这个分享是什么？", "怎么创建任务？"]) {
+  test(`Chinese voice question remains read-only: ${raw_text}`, () => {
+    assert.equal(evaluateAutonomy({ raw_text }, { baseDate: voiceRegressionDate }).intent, "information");
+  });
+}
+test("explicit task type preserves question-shaped task content and scheduling", () => {
+  const result = evaluateAutonomy({
+    raw_text: "陈明学长这个分享是什么？", type: "task", title: "了解分享内容",
+    requested_date: "2026-10-02", requested_time: "16:30", fixed_time: true,
+    timezone: "Asia/Shanghai", reminder_policy: "smart",
+  }, { baseDate: voiceRegressionDate });
+  assert.equal(result.intent, "action");
+  assert.equal(result.decision, "execute");
+  assert.equal(result.input.type, "task");
+  assert.equal(result.input.requested_date, "2026-10-02");
+  assert.equal(result.input.requested_time, "16:30");
+  assert.equal(result.input.fixed_time, true);
+});
+test("explicit resolved date preserves production priority over relative wording", () => {
+  const result = evaluateAutonomy({ raw_text: "提醒我今天处理财务功能", type: "task", requested_date: "2026-10-02" }, { baseDate: "2026-10-03T01:00:00+08:00" });
+  assert.equal(result.input.requested_date, "2026-10-02");
+});
