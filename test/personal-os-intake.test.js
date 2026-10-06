@@ -65,6 +65,23 @@ test("normalizes a scheduled task for Task creation plus Calendar projection", (
   assert.equal(intake.schedule.reminders[0].type, "preparation");
 });
 
+test("daily, weekly, monthly, and yearly tasks carry one supported recurrence contract", () => {
+  const daily = normalizeIntake({ raw_text: "每天15:00提醒我交材料", type: "task" }, { baseDate: "2026-09-24T16:00:00+08:00" });
+  assert.deepEqual(daily.recurrence, { kind: "daily", interval: 1 });
+  assert.equal(daily.due, "2026-09-25");
+  assert.deepEqual(taskDispatchPayload(daily).recurrence, { kind: "daily", interval: 1 });
+  const weekly = normalizeIntake({ raw_text: "每周五15:00提醒我交材料", type: "task" }, { baseDate: "2026-09-24T08:00:00+08:00" });
+  assert.deepEqual(weekly.recurrence, { kind: "weekly", interval: 1, weekday: 5 });
+  assert.equal(weekly.due, "2026-09-25");
+  const overdueWeekly = normalizeIntake({ raw_text: "每周五15:00提醒我交材料", type: "task", due: "2026-08-07", requested_date: "2026-08-07" },
+    { baseDate: "2026-09-24T16:00:00+08:00" });
+  assert.equal(overdueWeekly.due, "2026-09-25");
+  const monthly = normalizeIntake({ raw_text: "每月30号复盘", type: "task", due: "2026-09-30", requested_date: "2026-09-30" }, { baseDate });
+  assert.deepEqual(monthly.recurrence, { kind: "monthly", interval: 1, month_day: 30 });
+  const yearly = normalizeIntake({ raw_text: "每年9月30号复盘", type: "task", due: "2026-09-30", requested_date: "2026-09-30" }, { baseDate });
+  assert.deepEqual(yearly.recurrence, { kind: "yearly", interval: 1, month: 9, month_day: 30 });
+});
+
 test("a timed flight becomes one Task schedule with Smart Reminder context", () => {
   const intake = normalizeIntake({ raw_text: "15:00去机场" }, { baseDate });
   assert.equal(intake.type, "task");

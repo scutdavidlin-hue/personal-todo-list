@@ -1,3 +1,4 @@
+import { bindRecurrencePanel } from "./src/recurrence-panel.js";
 import { createCalendarView } from "./src/calendar-view.js";
 import {
   escapeHtml,
@@ -124,6 +125,22 @@ function updatePrimaryAction(view = activeViewName()) {
   $("#addGoalButton").hidden = !visible || view !== "goals";
 }
 
+function taskSaveMessage(task, fallback) {
+  if (task?.write_receipt?.message) return task.write_receipt.message;
+  if (task?.projection_error || task?.projection?.sync_required || task?.projection?.success === false) return "任务已保存，提醒待恢复";
+  return fallback;
+}
+
+function reminderStatusMarkup(schedule, task) {
+  if (!schedule) return "";
+  const failed = schedule.sync_required === true || schedule.notification_status === "projection_failed";
+  const disabled = task.done || schedule.notification_status === "disabled" || schedule.scheduling_status === "cancelled";
+  const label = failed ? "提醒待恢复" : disabled ? "提醒已停用" : schedule.notification_status === "projected" ? "提醒已配置 · 设备未验证" : "未配置提醒";
+  const times = (schedule.reminders || []).map(item => item.at).filter(Boolean).join("、");
+  const detail = [label, times ? `提醒时间 ${times}` : "", schedule.timezone || "Asia/Shanghai", schedule.last_synced_at ? `最近同步 ${schedule.last_synced_at}` : "尚无同步记录"].filter(Boolean).join(" · ");
+  return `<span class="reminder-status ${failed ? "reminder-pending" : ""}" title="${escapeHtml(detail)}">${escapeHtml(label)}${times ? ` · ${escapeHtml(times.replaceAll("T", " "))}` : ""}</span>`;
+}
+
 function renderTaskItem(task) {
   const syncing = pendingIds.has(task.id);
   const schedule = schedules.find((item) => item.google_task_id === task.id);
@@ -137,6 +154,7 @@ function renderTaskItem(task) {
         <small>
           ${task.carriedFromDate ? `<span class="carry-chip">↪ ${escapeHtml(task.carriedFromDate)} 延续</span>` : ""}
           ${schedule?.scheduled_start ? `<span class="carry-chip">${schedule.scheduling_status === "rescheduled" ? "↪" : "◷"} ${escapeHtml(schedule.scheduled_date)} ${escapeHtml(schedule.scheduled_start.slice(0, 5))}</span>` : ""}
+          ${reminderStatusMarkup(schedule, task)}
           ${linkedGoal ? `<span class="goal-link-chip">目标 · ${escapeHtml(linkedGoal.title)}</span>` : ""}
           <button type="button" class="task-date-chip" aria-label="修改安排日期" title="点击改到明天、后天或其他日期" data-edit-task="${escapeHtml(task.id)}">${escapeHtml(formatDate(task.date || task.dueDate))}</button>
         </small>
@@ -582,8 +600,9 @@ async function mutateTask(id, changes, successMessage) {
       if (scheduleResult.schedule) schedules = [...schedules.filter((item) => item.google_task_id !== id), scheduleResult.schedule];
     }
     updateCachedTasks();
-    setConnection("", `已同步 · ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`);
-    showToast(successMessage);
+    const reminderPending = updated.write_receipt?.reminder_projection_status === "pending" || Boolean(updated.projection_error);
+    setConnection(reminderPending ? "error" : "", reminderPending ? "任务已保存，提醒待恢复" : `已同步 · ${new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}`);
+    showToast(taskSaveMessage(updated, successMessage), reminderPending ? "error" : "normal");
     void calendar.refresh();
   } catch (error) {
     setConnection("error", "同步未完成，正在回读实际状态");
@@ -623,7 +642,8 @@ async function cancelTask(id) {
     setConnection("", "已同步到云端");
     showToast("任务已从 Google Tasks 删除");
   } catch (error) {
-    setConnection("error", "删除失败，任务仍然保留");
+    setConnection("error", "删除结果待核实，正在回读");
+    await refreshTasks({ quiet: true });
     showToast(error.message, "error");
   } finally {
     pendingIds.delete(id);
@@ -640,6 +660,7 @@ function openTaskDialog(task = null, goalId = null) {
   $("#taskDate").value = task ? (task.date || task.dueDate || "") : localDateISO();
   $("#taskNotes").value = task?.notes || "";
   $("#taskTime").value = schedule?.scheduled_start?.slice(0, 5) || "";
+  $("#taskRecurrence").value = "";
   $("#taskDuration").value = schedule?.duration_minutes || 30;
   $("#taskFixedTime").checked = schedule?.fixed_time === true;
   $("#taskDialog").showModal();
@@ -650,6 +671,8 @@ async function saveTask(event) {
   event.preventDefault();
   if (!$("#taskForm").reportValidity()) return;
   if ($("#taskTime").value && !$("#taskDate").value) { showToast("设置时间前，请选择安排日期", "error"); return; }
+  const recurrence = $("#taskRecurrence").value ? {kind:$("#taskRecurrence").value} : null;
+  if(recurrence && !$("#taskDate").value){showToast("循环任务需要明确首次日期","error");return;}
   const button = $("#saveTaskButton");
   button.disabled = true;
   setConnection("syncing", "正在保存到云端…");
@@ -668,10 +691,16 @@ async function saveTask(event) {
   };
   let deduplicated = false;
   let relationWarning = "";
+  let saveReceiptMessage = "";
+  let savedTaskId = null;
+  let reminderPending = false;
   try {
     if (id) {
       const updated = await client.updateTask(id, formData);
       tasks = replaceTask(tasks, updated);
+      savedTaskId = updated.id;
+      saveReceiptMessage = taskSaveMessage(updated, "任务修改已保存");
+      reminderPending = Boolean(updated.projection_error || updated.write_receipt?.reminder_projection_status === "pending");
       const currentSchedule = schedules.find((item) => item.google_task_id === id);
       const scheduleResult = schedule.scheduled_start
         ? await (currentSchedule ? client.rescheduleTask(id, schedule) : client.scheduleTask(id, schedule))
@@ -680,7 +709,11 @@ async function saveTask(event) {
           : await client.scheduleTask(id, schedule);
       if (scheduleResult.schedule) schedules = [...schedules.filter((item) => item.google_task_id !== id), scheduleResult.schedule];
     } else {
-      const created = await client.createTask({ ...formData, schedule, status: "open", source: "manual", originalIntent: formData.title });
+      const created = await client.createTask({ ...formData, schedule, ...(recurrence?{recurrence}:{}), status: "open", source: "manual", originalIntent: formData.title });
+      savedTaskId = created.id;
+      $("#taskId").value = created.id; // retry edits the saved object if a later step fails
+      saveReceiptMessage = taskSaveMessage(created, "新任务已保存到 Google Tasks");
+      reminderPending = Boolean(created.projection_error || created.write_receipt?.reminder_projection_status === "pending");
       deduplicated = created.metadata?.deduplicated === true;
       if (deduplicated) tasks = replaceTask(tasks, created);
       else tasks.push(fromDatabaseTask(created));
@@ -694,16 +727,20 @@ async function saveTask(event) {
         }
       }
     }
+    if(id && recurrence){
+      const series=await client.calendarRequest("create_series",{task_id:id,recurrence});
+      if(series?.series?.status !== "active") {reminderPending=true;saveReceiptMessage="任务已保存，重复提醒系列待恢复";}
+    }
     pendingGoalLinkId = null;
     await refreshTasks({ quiet: true });
     updateCachedTasks();
     $("#taskDialog").close();
     render();
-    setConnection("", "已同步到云端");
-    showToast(relationWarning || (id ? "任务修改已保存" : deduplicated ? "已识别为现有任务并更新" : "新任务已保存到 Google Tasks"), relationWarning ? "error" : "normal");
+    setConnection(reminderPending ? "error" : "", reminderPending ? "任务已保存，提醒待恢复" : "已同步到云端");
+    showToast([relationWarning, saveReceiptMessage].filter(Boolean).join("；") || (id ? "任务修改已保存" : deduplicated ? "已识别为现有任务并更新" : "新任务已保存到 Google Tasks"), relationWarning || reminderPending ? "error" : "normal");
   } catch (error) {
-    setConnection("error", "保存失败");
-    showToast(error.message, "error");
+    setConnection("error", savedTaskId ? "任务已保存，后续同步待恢复" : "保存结果待核实");
+    showToast(savedTaskId ? `任务已保存，后续同步未完成：${error.message}` : `结果待核实，请勿重复创建：${error.message}`, "error");
   } finally {
     button.disabled = false;
   }
@@ -764,6 +801,7 @@ async function refreshTasks({ quiet = false, automatic = false } = {}) {
 
     if (currentUser?.id !== refreshUserId || (automatic && autoRefreshBlocked())) return;
     let taskState = "online";
+    let cacheTime = "未知";
     if (taskResult.status === "fulfilled") {
       tasks = taskResult.value[0];
       schedules = taskResult.value[1].schedules || [];
@@ -772,6 +810,7 @@ async function refreshTasks({ quiet = false, automatic = false } = {}) {
       const cached = client.readCachedTasks(currentUser.id);
       if (Array.isArray(cached?.tasks)) {
         tasks = cached.tasks;
+        cacheTime = cached.savedAt ? new Date(cached.savedAt).toLocaleString("zh-CN") : "未知";
         taskState = "offline";
       } else {
         taskState = "error";
@@ -808,7 +847,7 @@ async function refreshTasks({ quiet = false, automatic = false } = {}) {
       setConnection("offline", `Tasks 已同步 · Goals 暂时只读`);
       if (!quiet) showToast(planningLoadError, "error");
     } else if (taskState === "offline") {
-      setConnection("offline", "离线只读 · 显示上次缓存");
+      setConnection("offline", `非实时缓存 · ${cacheTime} · ${taskResult.reason?.message || "连接暂不可用"}`);
       if (!quiet) showToast("网络不可用；当前为只读缓存，写操作不会假装成功", "error");
     } else {
       const message = taskResult.status === "rejected" ? taskResult.reason?.message : "云端任务读取失败";
@@ -901,6 +940,34 @@ function checkReminders() {
   });
 }
 
+let recurrencePanel;
+let reminderRequests = [];
+const requestLabels = {received:"已接收",needs_input:"需要补充",write_pending:"正在核实写入",outcome_unknown:"结果待核实",task_verified:"任务已核实",projection_pending:"提醒待恢复",reminder_verified:"已核实",request_verified:"任务已核实（无提醒）",auth_required:"需要重新连接",missed:"已错过，待处理",unsupported:"暂不支持",superseded:"已被新操作替代",cancelled:"已取消"};
+function renderReminderRequests() {
+  const filter = $("#reminderRequestFilter").value;
+  const groups = {pending:["received","write_pending","outcome_unknown","task_verified","projection_pending"],arranged:["reminder_verified","request_verified"],missed:["missed"],needs_input:["needs_input","auth_required","unsupported"],closed:["cancelled","superseded"]};
+  const visible = reminderRequests.filter(row=>filter === "all" || groups[filter]?.includes(row.stage));
+  $("#reminderRequestsList").innerHTML = visible.length ? visible.map(row=>`<article class="reminder-request"><strong>${escapeHtml(row.title || "未命名请求")}</strong><span>${escapeHtml(requestLabels[row.stage] || "待核实")}</span><small>${escapeHtml([row.task_date,row.execution_time,row.reminder_time ? `提醒 ${row.reminder_time}` : "",row.timezone].filter(Boolean).join(" · "))}</small><small>${escapeHtml(row.last_verified_at ? `最近核实 ${row.last_verified_at}` : "尚未核实")}</small>${row.error_code ? `<small>${escapeHtml(row.response?.message || "需要处理后再核实")}</small>` : ""}${!["cancelled","superseded","unsupported","needs_input","missed","reminder_verified","request_verified"].includes(row.stage) ? `<button data-recover-request="${escapeHtml(row.request_id)}">核实并重试</button>` : ""}${["needs_input","missed"].includes(row.stage) ? `<div class="request-amend"><label>日期<input type="date" data-request-date="${escapeHtml(row.request_id)}" value="${escapeHtml(row.task_date || "")}"></label><label>时间<input type="time" data-request-time="${escapeHtml(row.request_id)}"></label><button data-amend-request="${escapeHtml(row.request_id)}">补充并重新安排</button></div>` : ""}${row.object_id ? `<button data-locate-request-task="${escapeHtml(row.object_id)}">查看任务</button>` : ""}</article>`).join("") : "<p>当前分类没有请求。</p>";
+}
+async function loadReminderRequests() {
+  $("#reminderRequestsUpdated").textContent = "正在读取真实请求记录…";
+  try {
+    const result = await client.listReminderRequests();
+    reminderRequests = result.requests || [];
+    $("#reminderRequestsUpdated").textContent = `更新于 ${new Date(result.checked_at || Date.now()).toLocaleString("zh-CN")}；提醒配置不代表设备已送达。`;
+    renderReminderRequests();
+  } catch(error) {
+    $("#reminderRequestsUpdated").textContent = error.message;
+    $("#reminderRequestsList").replaceChildren();
+  }
+}
+async function openReminderRequests() {
+  $("#reminderRequestsDialog").showModal();
+  await loadReminderRequests();
+  recurrencePanel ||= bindRecurrencePanel({client,container:$("#recurrencePanel")});
+  await recurrencePanel.refresh();
+}
+
 function switchView(view) {
   const button = $(`.nav-item[data-view="${view}"]`);
   if (!button) return;
@@ -966,6 +1033,17 @@ function bindStaticEvents() {
   $("#notificationButton").addEventListener("click", enableNotifications);
   $("#loginForm").addEventListener("submit", requestLogin);
   $("#connectGoogleButton").addEventListener("click", connectGoogleTasks);
+  $("#reminderRequestsButton").addEventListener("click", openReminderRequests);
+  $("#closeReminderRequests").addEventListener("click",()=>$("#reminderRequestsDialog").close());
+  $("#reminderRequestFilter").addEventListener("change",renderReminderRequests);
+  $("#reminderRequestsList").addEventListener("click",async(event)=>{
+    const amend=event.target.closest("[data-amend-request]");
+    if(amend){const id=amend.dataset.amendRequest;const row=reminderRequests.find(r=>r.request_id===id);const date=$(`[data-request-date="${CSS.escape(id)}"]`).value;const time=$(`[data-request-time="${CSS.escape(id)}"]`).value;if(!date||!time){showToast("请补充日期和时间","error");return;}amend.disabled=true;try{await client.amendReminderRequest(id,row.recovery_version,date,time);await loadReminderRequests();await refreshTasks({quiet:true});}catch(error){showToast(error.message,"error");amend.disabled=false;}return;}
+    const retry=event.target.closest("[data-recover-request]");
+    const locate=event.target.closest("[data-locate-request-task]");
+    if(retry){retry.disabled=true;try{await client.recoverReminderRequest(retry.dataset.recoverRequest);await loadReminderRequests();await refreshTasks({quiet:true});}catch(error){showToast(error.message,"error");retry.disabled=false;}}
+    if(locate){$("#reminderRequestsDialog").close();switchView("tasks");const task=tasks.find(t=>t.id===locate.dataset.locateRequestTask);if(task){$("#taskSearch").value=task.title;renderAllTasks();bindDynamicEvents();}else{showToast("请刷新任务后，在全部任务中按标题查找；该记录可能已完成或删除。","normal");}}
+  });
   $("#refreshButton").addEventListener("click", () => refreshTasks());
   $("#signOutButton").addEventListener("click", signOut);
   $("#migrateButton").addEventListener("click", migrateLegacy);

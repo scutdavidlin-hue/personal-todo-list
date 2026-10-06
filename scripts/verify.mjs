@@ -40,6 +40,7 @@ const requiredFiles = [
   "supabase/migrations/202609050002_task_resolution_layer_v1.sql",
   "supabase/migrations/202609050003_smart_reminder_policy_v1.sql",
   "supabase/functions/google-tasks/index.ts",
+  "supabase/functions/_shared/google-auth-runtime.js",
   "supabase/functions/_shared/google-tasks-core.js",
   "supabase/functions/_shared/calendar-events-core.js",
   "supabase/functions/_shared/calendar-events-runtime.js",
@@ -117,7 +118,9 @@ assert.match(contents.get("supabase/migrations/202609030001_task_sync_v1.sql"), 
 assert.match(contents.get("supabase/migrations/202609030002_google_tasks.sql"), /pgp_sym_encrypt/i);
 assert.match(contents.get("supabase/migrations/202609030002_google_tasks.sql"), /revoke all on table public\.google_tasks_credentials from public, anon, authenticated/i);
 assert.match(contents.get("supabase/functions/google-tasks/index.ts"), /tasks\.googleapis\.com\/tasks\/v1/);
-assert.match(contents.get("supabase/functions/google-tasks/index.ts"), /oauth2\.googleapis\.com\/token/);
+assert.match(contents.get("supabase/functions/google-tasks/index.ts"), /_shared\/google-auth-runtime\.js/);
+assert.match(contents.get("supabase/functions/_shared/google-auth-runtime.js"), /oauth2\.googleapis\.com\/token/);
+assert.match(contents.get("supabase/functions/_shared/google-auth-runtime.js"), /refreshFlights/);
 assert.match(contents.get("supabase/functions/google-tasks/index.ts"), /DEFAULT_TASK_LIST_TITLE/);
 assert.match(contents.get("supabase/functions/action-router/index.ts"), /classifyAction/);
 assert.match(contents.get("supabase/functions/action-router/index.ts"), /functions\/v1\/personal-os-intake/);
@@ -189,7 +192,7 @@ const manifest = JSON.parse(contents.get("manifest.webmanifest"));
 assert.equal(manifest.display, "standalone");
 assert.ok(manifest.icons.some((icon) => icon.sizes === "192x192"));
 assert.ok(manifest.icons.some((icon) => icon.sizes === "512x512" && icon.purpose === "maskable"));
-assert.match(contents.get("sw.js"), /personal-os-shell-v1\.4\.3-growth-logo/);
+assert.match(contents.get("sw.js"), /personal-os-shell-v1\.4\.4-reliability/);
 assert.match(contents.get("sw.js"), /request\.method !== "GET"/);
 
 const config = contents.get("runtime-config.js");

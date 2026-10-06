@@ -22,15 +22,22 @@ export function googleDueToDate(due) {
 
 export function splitTaskNotes(value) {
   const lines = String(value || "").split("\n");
+  const requestLine = lines.find(line => /^\[Personal OS request: [a-zA-Z0-9:_-]+\]$/.test(line.trim()));
+  const recurrenceLine = lines.find(line => /^\[Personal OS recurrence: [a-zA-Z0-9:_-]+\]$/.test(line.trim()));
+  const correlation = {
+    ...(requestLine ? {request_id: requestLine.trim().slice(22,-1)} : {}),
+    ...(recurrenceLine ? {recurrence_key: recurrenceLine.trim().slice(25,-1)} : {}),
+  };
+  for (let i=lines.length-1;i>=0;i--) if (lines[i]===requestLine || lines[i]===recurrenceLine) lines.splice(i,1);
   const cancelled = lines.some((line) => line.trim() === TASK_CANCELLED_MARKER);
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     if (lines[index].trim() === TASK_CANCELLED_MARKER) lines.splice(index, 1);
   }
   const index = lines.findLastIndex((line) => line.startsWith(ORIGINAL_INTENT_PREFIX));
-  if (index < 0) return { notes: lines.join("\n").trim(), originalIntent: "", ...(cancelled ? { cancelled: true } : {}) };
+  if (index < 0) return { ...correlation, notes: lines.join("\n").trim(), originalIntent: "", ...(cancelled ? { cancelled: true } : {}) };
   const originalIntent = lines[index].slice(ORIGINAL_INTENT_PREFIX.length).trim();
   lines.splice(index, 1);
-  return { notes: lines.join("\n").trim(), originalIntent, ...(cancelled ? { cancelled: true } : {}) };
+  return { ...correlation, notes: lines.join("\n").trim(), originalIntent, ...(cancelled ? { cancelled: true } : {}) };
 }
 
 export function markTaskCancelledNotes(notes, originalIntent = "") {
@@ -77,7 +84,7 @@ export function toTaskModel(task, taskListId = "") {
     originalIntent: parsedNotes.originalIntent,
     priority: "medium",
     parent_task_id: task.parent || null,
-    metadata: {},
+    metadata: { ...(parsedNotes.request_id ? { request_id: parsedNotes.request_id } : {}), ...(parsedNotes.recurrence_key ? { recurrence_key: parsedNotes.recurrence_key } : {}) },
     date: dueDate || "",
     time: "",
     category: "Google Tasks",
@@ -92,6 +99,18 @@ export function toTaskModel(task, taskListId = "") {
 
 export const toPublicTask = toTaskModel;
 
+export function preserveTaskCorrelation(payload, task) {
+  if (!Object.hasOwn(payload, "notes")) return payload;
+  const request = task?.requestCorrelationId || task?.metadata?.request_id;
+  const recurrence = task?.metadata?.recurrence_key;
+  const markers = [request && /^[a-zA-Z0-9:_-]+$/.test(request) ? `[Personal OS request: ${request}]` : null,
+    recurrence && /^[a-zA-Z0-9:_-]+$/.test(recurrence) ? `[Personal OS recurrence: ${recurrence}]` : null].filter(Boolean);
+  if (!markers.length) return payload;
+  const suffix = "\n\n" + markers.join("\n");
+  payload.notes = String(payload.notes || "").slice(0, 8192 - suffix.length) + suffix;
+  return payload;
+}
+
 export function createGoogleTaskPayload(input) {
   const title = typeof input?.title === "string" ? input.title.trim() : "";
   if (!title || title.length > 200) throw new Error("title must contain 1-200 characters");
@@ -102,7 +121,7 @@ export function createGoogleTaskPayload(input) {
   };
   if (dueDate) payload.due = dateToGoogleDue(dueDate);
   if (input.status === "completed" || input.status === "done") payload.status = "completed";
-  return payload;
+  return preserveTaskCorrelation(payload, input);
 }
 
 export function updateGoogleTaskPayload(changes) {
@@ -126,7 +145,7 @@ export function updateGoogleTaskPayload(changes) {
     payload.status = completed ? "completed" : "needsAction";
     if (!completed) payload.completed = null;
   }
-  return payload;
+  return preserveTaskCorrelation(payload, changes);
 }
 
 export function normalizeTaskTitle(value) {

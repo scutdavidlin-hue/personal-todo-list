@@ -323,6 +323,7 @@ test("partial cancellation also removes dinner only recorded in notes", () => {
   assert.equal(result.input.update_patch.notes, "下午核对资料");
 });
 
+
 const voiceRegressionDate = "2026-10-02T09:16:21+08:00";
 for (const raw_text of [
   "提醒一下我下午四点半有个分享，如果有时间就参与一下",

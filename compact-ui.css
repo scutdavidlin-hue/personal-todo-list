@@ -256,3 +256,8 @@ dialog.calendar-event-form[open] { display:block; margin:auto; width:min(520px,c
 
 /* Approved growth-ring identity; keep the app layout and functional colors. */
 img.brand-mark { display: block; object-fit: contain; background: #17654f; flex-shrink: 0; }
+
+.reminder-status { font-size: 11px; color: #52655e; }
+.reminder-pending { color: #a14c0f; font-weight: 600; }
+
+#reminderRequestsDialog{width:min(620px,calc(100vw - 24px));max-height:85dvh;overflow:auto;padding:18px;border:1px solid #d9dedb;border-radius:16px} .reminder-request{display:grid;gap:6px;padding:12px 0;border-bottom:1px solid #e3e8e5}.reminder-request small{color:#5c6962}.reminder-request button{justify-self:start;min-height:40px}.reminder-request span{font-size:13px;color:#17654f}

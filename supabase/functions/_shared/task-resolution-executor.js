@@ -1,3 +1,4 @@
+import { verifyTaskFields } from "./write-receipt.js";
 import {
   INCOMING_TASK_REF,
   buildResolutionMutationPlan,
@@ -55,6 +56,16 @@ export async function executeTaskResolution(incoming, resolution, adapter) {
   const auditId = String(audit?.id || audit?.audit_id || audit || "").trim();
   if (!auditId) throw new Error("Resolution audit did not return an id");
 
+  async function readWrittenTask(written, expected) {
+    const current = resultTask(await getTask(taskId(written)));
+    if (!current || taskId(current) !== taskId(written)) {
+      const error = new Error("Task write result requires readback reconciliation");
+      error.code = "WRITE_UNVERIFIED";
+      throw error;
+    }
+    verifyTaskFields(current, expected);
+    return current;
+  }
   const createdByTempId = {};
   const resultingTasks = [];
   let previousState = null;
@@ -76,6 +87,7 @@ export async function executeTaskResolution(incoming, resolution, adapter) {
         }));
         if (!taskId(task)) throw new Error("Task update did not return the canonical task");
         resultingTasks.push(task);
+        resultingTasks[resultingTasks.length - 1] = await readWrittenTask(task, operation.changes);
         continue;
       }
       if (operation.type === "create") {
@@ -90,8 +102,10 @@ export async function executeTaskResolution(incoming, resolution, adapter) {
           resolution_audit_id: auditId,
         }));
         if (!taskId(task)) throw new Error("Task creation did not return a provider id");
-        createdByTempId[operation.temp_id] = task;
-        resultingTasks.push(task);
+        resultingTasks.push(task); // retain the provider id even if readback fails
+        const verified = await readWrittenTask(task, operation.task);
+        createdByTempId[operation.temp_id] = verified;
+        resultingTasks[resultingTasks.length - 1] = verified;
       }
     }
 

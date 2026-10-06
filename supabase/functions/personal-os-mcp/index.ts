@@ -45,7 +45,17 @@ const REMINDER_ZOD_FIELDS = {
   notification_channel: z.enum(["google_calendar_popup", "google_calendar_email"]).optional(),
 };
 
+const RecurrenceInput = z.object({
+  kind: z.enum(["daily", "weekly", "monthly", "yearly"]),
+  interval: z.number().int().min(1).max(365).default(1),
+  weekday: z.number().int().min(0).max(6).optional(),
+  month_day: z.number().int().min(1).max(31).optional(),
+  month: z.number().int().min(1).max(12).optional(),
+  rrule: z.string().max(200).optional(),
+});
+
 const TaskInput = z.object({
+  recurrence: RecurrenceInput.optional(),
   context: z.record(z.string(), z.unknown()).optional().describe("Known conversation context: conversation_trips and current_task.id. Server re-reads the task before updates."),
   existing_task_id: z.string().min(1).max(1024).optional(),
   raw_text: z.string().min(1).max(10_000).describe("The user's original wording, preserved for audit."),
@@ -109,6 +119,28 @@ const LifecycleMutationInput = LifecycleIdInput.extend({
   clear_fields: z.array(z.enum(["notes", "due", "deadline", "requested_date", "requested_time", "parent_task_id", "follow_up_of"])).optional(), raw_text: z.string().max(10_000).optional(), request_id: z.string().max(200).optional(), idempotency_key: z.string().min(8).max(200),
 });
 const LifecycleStateInput = LifecycleIdInput.extend({ raw_text: z.string().max(10_000).optional(), request_id: z.string().max(200).optional(), idempotency_key: z.string().min(8).max(200), reason: z.string().max(1_000).optional() });
+const ListRecurrenceSeriesInput = z.object({});
+const CancelRecurrenceSeriesInput = z.object({ series_id: z.string().regex(UUID_PATTERN) });
+const PauseRecurrenceSeriesInput = CancelRecurrenceSeriesInput;
+const ResumeRecurrenceSeriesInput = CancelRecurrenceSeriesInput;
+const SkipRecurrenceSeriesInput = CancelRecurrenceSeriesInput.extend({ recurrence_instance_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() });
+const UpdateRecurrenceSeriesInput = CancelRecurrenceSeriesInput.extend({
+  recurrence: RecurrenceInput,
+  effective_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  timezone: z.string().min(1).max(80).optional(),
+  local_time: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/).nullable().optional(),
+});
+const ListReminderRequestsInput = z.object({
+  stage: z.enum(["received", "needs_input", "unsupported", "missed", "write_pending", "outcome_unknown", "task_verified", "projection_pending", "reminder_verified", "request_verified", "auth_required", "cancelled", "superseded"]).optional(),
+  limit: z.number().int().min(1).max(100).default(50),
+  offset: z.number().int().min(0).max(100_000).default(0),
+});
+const RecoverReminderRequestInput = z.object({ request_id: z.string().regex(UUID_PATTERN) });
+const AmendReminderRequestInput = RecoverReminderRequestInput.extend({
+  recovery_version: z.number().int().min(0),
+  requested_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  requested_time: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/),
+});
 const SearchTasksInput = z.object({ query: z.string().max(500).optional(), task_id: z.string().max(1024).optional(), status: z.enum(["open", "completed", "all"]).default("open"), priority: z.enum(["low", "medium", "high", "urgent"]).optional(), task_type: z.enum(["task", "follow_up"]).optional(), date_from: z.string().optional(), date_to: z.string().optional(), deadline_from: z.string().optional(), deadline_to: z.string().optional(), created_from: z.string().max(40).optional(), created_to: z.string().max(40).optional(), updated_from: z.string().max(40).optional(), updated_to: z.string().max(40).optional(), limit: z.number().int().min(1).max(100).default(20) });
 const CalendarSearchInput = z.object({
   calendar_id: z.string().min(1).max(200).default("primary"),
@@ -136,6 +168,7 @@ const CalendarEventUpdateInput = CalendarEventInput.extend({
 });
 
 const UnifiedIntakeInput = z.object({
+  recurrence: RecurrenceInput.optional().describe("Recurring Task rule. For 每天/每周/每月/每年 requests, pass this instead of claiming recurrence is unsupported."),
   context: z.record(z.string(), z.unknown()).optional(),
   existing_task_id: z.string().min(1).max(1024).optional(),
   raw_text: z.string().min(1).max(10_000).describe("The user's exact original wording. Personal OS preserves it."),
@@ -265,13 +298,28 @@ const REMINDER_TOOL_PROPERTIES = {
   notification_channel: { type: "string", enum: ["google_calendar_popup", "google_calendar_email"], default: "google_calendar_popup" },
 };
 
+const RECURRENCE_TOOL_SCHEMA = {
+  type: "object",
+  properties: {
+    kind: { type: "string", enum: ["daily", "weekly", "monthly", "yearly"] },
+    interval: { type: "integer", minimum: 1, maximum: 365, default: 1 },
+    weekday: { type: "integer", minimum: 0, maximum: 6 },
+    month_day: { type: "integer", minimum: 1, maximum: 31 },
+    month: { type: "integer", minimum: 1, maximum: 12 },
+    rrule: { type: "string", maxLength: 200 },
+  },
+  required: ["kind"],
+  additionalProperties: false,
+};
+
 const CREATE_TASK_TOOL = {
   name: "create_task",
   title: "Create a Personal OS task",
-  description: "Execute clear low-risk actions immediately without asking for optional date, hotel, repetition or confirmation. One action is one Google Task. Infer reasonable Date from conversation, Calendar or Travel Plan; never invent Deadline. Search and update existing tasks before creating. Pass context.current_task.id for short corrections such as 改成四点; the server reads current truth. Information questions do not create tasks. High-risk transactions require key parameters and confirmation and are never executed by this task tool. Report persistence only with write_success=true and verified=true; use returned message. Calendar is the same task's projection. GPT automation is only for future GPT work, not ordinary reminders.",
+  description: "Create or update a one-time or recurring Personal OS task in Google Tasks. For natural-language repetition such as 每天, 每周三, 每月5号, or 每年9月30号, use recurrence (daily/weekly/monthly/yearly) and create the first current instance; never say recurring tasks are unsupported. One action is one Google Task, while the recurrence rule owns future instances. Infer a reasonable Date from the request or context; never invent Deadline. Search and update an existing matching task before creating. Report persistence only with write_success=true and verified=true; use the returned message. Calendar remains the same task's projection.",
   inputSchema: {
     type: "object",
     properties: {
+      recurrence: RECURRENCE_TOOL_SCHEMA,
       context: { type: "object", additionalProperties: true, description: "Known context: conversation_trips [{title,start_date,end_date}], current_task {id}. Server refreshes provider state." },
       existing_task_id: { type: "string", minLength: 1, maxLength: 1024 },
       raw_text: { type: "string", minLength: 1, maxLength: 10_000, description: "The user's original wording, preserved for audit." },
@@ -489,10 +537,11 @@ const EXPLAIN_TASK_RESOLUTION_TOOL = {
 const CAPTURE_ITEM_TOOL = {
   name: "capture_personal_os_item",
   title: "Capture a Personal OS item",
-  description: "Infer → Execute → Verify → Report. Clear reversible life/work actions go directly to Google Tasks without optional-field questions or reconfirmation. Information questions create nothing; lasting preferences go to Goals & Plans; a lasting rule plus current action is saved in both existing layers. Preserve raw_text and known conversation context. Semantic search precedes create, short corrections update context.current_task.id, and partial cancellation keeps unrelated arrangements. Ask only about outcome-changing ambiguity or high-risk acts. Use returned message; never claim persistence without write_success=true and verified=true.",
+  description: "Infer → Execute → Verify → Report. Clear reversible life/work actions, including recurring tasks, go directly to Google Tasks without optional-field questions or reconfirmation. For 每天/每周三/每月5号/每年 requests, pass recurrence and create the first current Task instance; never claim Personal OS only supports one-time tasks. The recurrence rule owns future instances and Google Tasks owns current content/completion state. Information questions create nothing; lasting preferences go to Goals & Plans. Preserve raw_text and known conversation context. Use returned message; never claim persistence without write_success=true and verified=true.",
   inputSchema: {
     type: "object",
     properties: {
+      recurrence: RECURRENCE_TOOL_SCHEMA,
       context: { type: "object", additionalProperties: true, description: "Known conversation_trips [{title,start_date,end_date}], current_task {id}; readback refreshes the current Task." },
       existing_task_id: { type: "string", minLength: 1, maxLength: 1024 },
       raw_text: { type: "string", minLength: 1, maxLength: 10_000, description: "The user's exact original wording." },
@@ -733,6 +782,7 @@ async function createTask(args: z.infer<typeof TaskInput>) {
       },
       body: JSON.stringify({
         source: "chatgpt",
+        recurrence: args.recurrence,
         context: args.context,
         existing_task_id: args.existing_task_id,
         raw_text: args.raw_text,
@@ -1063,6 +1113,64 @@ const TASK_CONVERSATION_TOOL = lifecycleTool("converse_task", "Continue a task c
 TASK_CONVERSATION_TOOL.description = "Use for task-bound natural-language updates. Server stores a preview first, then executes only after the user's actual confirmation of that proposal. Send corrections to replace the preview. Low-risk notes may append directly. Always display returned diff and message, including partial failures. Never use update_task to bypass this conversation confirmation workflow.";
 const GET_TASK_CONVERSATION_TOOL = lifecycleTool("get_task_conversation", "Read task conversation and pending changes", { type: "object", properties: { task_id: ID_FIELD }, required: ["task_id"], additionalProperties: false }, true);
 
+function reminderManagementTool(name: string, title: string, description: string, inputSchema: Record<string, unknown>, readOnly = false, destructive = false) {
+  return {
+    name, title, description, inputSchema,
+    outputSchema: { type: "object", properties: { success: { type: "boolean" }, code: { type: "string" }, error: { type: "string" } }, required: ["success"], additionalProperties: true },
+    securitySchemes: AUTH_SCHEMES,
+    annotations: { readOnlyHint: readOnly, destructiveHint: destructive, idempotentHint: true, openWorldHint: true },
+    _meta: { securitySchemes: AUTH_SCHEMES, "openai/visibility": "public" },
+  };
+}
+
+const LIST_RECURRENCE_SERIES_TOOL = reminderManagementTool(
+  "list_recurrence_series", "List repeating reminder series",
+  "Read all Schedule-backed daily, weekly, monthly, and yearly task series, including paused and stopped series. Google Tasks remains the source of task content and completion status.",
+  { type: "object", properties: {}, additionalProperties: false }, true,
+);
+const UPDATE_RECURRENCE_SERIES_TOOL = reminderManagementTool(
+  "update_recurrence_series", "Change future occurrences in a repeating task series",
+  "Change only future occurrences. Historical Google Tasks and the current instance remain unchanged. Supply effective_date when changing the weekday or calendar date.",
+  { type: "object", properties: { series_id: { type: "string", pattern: UUID_PATTERN.source }, recurrence: RECURRENCE_TOOL_SCHEMA,
+    effective_date: DATE_FIELD, timezone: { type: "string", minLength: 1, maxLength: 80 },
+    local_time: { anyOf: [TIME_FIELD, { type: "null" }] } }, required: ["series_id", "recurrence"], additionalProperties: false },
+);
+const PAUSE_RECURRENCE_SERIES_TOOL = reminderManagementTool(
+  "pause_recurrence_series", "Pause future occurrences in a repeating task series",
+  "Pause generation of future instances. The current Google Task and history remain unchanged.",
+  { type: "object", properties: { series_id: { type: "string", pattern: UUID_PATTERN.source } }, required: ["series_id"], additionalProperties: false },
+);
+const RESUME_RECURRENCE_SERIES_TOOL = reminderManagementTool(
+  "resume_recurrence_series", "Resume a paused repeating task series",
+  "Resume future instance generation and catch up to the next valid future occurrence without duplicating history.",
+  { type: "object", properties: { series_id: { type: "string", pattern: UUID_PATTERN.source } }, required: ["series_id"], additionalProperties: false },
+);
+const SKIP_RECURRENCE_SERIES_TOOL = reminderManagementTool(
+  "skip_recurrence_occurrence", "Skip the next occurrence in a repeating task series",
+  "Skip exactly the next recurrence instance and retain a skipped-history ledger entry. This never deletes the current Google Task.",
+  { type: "object", properties: { series_id: { type: "string", pattern: UUID_PATTERN.source }, recurrence_instance_date: DATE_FIELD }, required: ["series_id"], additionalProperties: false },
+);
+const CANCEL_RECURRENCE_SERIES_TOOL = reminderManagementTool(
+  "cancel_recurrence_series", "Stop an entire repeating reminder series",
+  "Use only when the user explicitly asks to stop the entire repeating series. Stops future occurrences and disables the current Calendar reminder; it does not cancel or delete the Google Task. Do not use for a single occurrence.",
+  { type: "object", properties: { series_id: { type: "string", pattern: UUID_PATTERN.source } }, required: ["series_id"], additionalProperties: false }, false, true,
+);
+const LIST_REMINDER_REQUESTS_TOOL = reminderManagementTool(
+  "list_reminder_requests", "List reminder and synchronization requests",
+  "Read the durable Personal OS request ledger, including pending, missed, unsupported, completed, and cancelled requests. Results are paged; follow has_more and next_offset to see all matching requests.",
+  { type: "object", properties: { stage: { type: "string", enum: ["received", "needs_input", "unsupported", "missed", "write_pending", "outcome_unknown", "task_verified", "projection_pending", "reminder_verified", "request_verified", "auth_required", "cancelled", "superseded"] }, limit: { type: "integer", minimum: 1, maximum: 100, default: 50 }, offset: { type: "integer", minimum: 0, maximum: 100_000, default: 0 } }, additionalProperties: false }, true,
+);
+const RECOVER_REMINDER_REQUEST_TOOL = reminderManagementTool(
+  "recover_reminder_request", "Recheck and recover one reminder request",
+  "Continue one existing durable request by request_id. This does not create a new intent; pending, leased, missed, and authorization-blocked results must not be reported as arranged reminders.",
+  { type: "object", properties: { request_id: { type: "string", pattern: UUID_PATTERN.source } }, required: ["request_id"], additionalProperties: false },
+);
+const AMEND_REMINDER_REQUEST_TOOL = reminderManagementTool(
+  "amend_reminder_request", "Supply the date and time for a pending reminder",
+  "Use only when the user supplied the missing or corrected local date and time for an existing request. Pass its current recovery_version from list_reminder_requests; a version conflict requires another read.",
+  { type: "object", properties: { request_id: { type: "string", pattern: UUID_PATTERN.source }, recovery_version: { type: "integer", minimum: 0 }, requested_date: DATE_FIELD, requested_time: TIME_FIELD }, required: ["request_id", "recovery_version", "requested_date", "requested_time"], additionalProperties: false },
+);
+
 function calendarTool(name: string, title: string, description: string, inputSchema: Record<string, unknown>, readOnly = false) {
   return {
     name,
@@ -1162,6 +1270,115 @@ async function calendarResult(action: string, args: Record<string, unknown>) {
   }
 }
 
+function managementFailure(label: string, code: string, error: string, details: Record<string, unknown> = {}) {
+  const result = { success: false, code, error, ...details };
+  return { isError: true, content: [{ type: "text", text: `${label}待核实：${error}` }], structuredContent: result };
+}
+
+async function internalJson(url: string, init: RequestInit) {
+  const response = await fetch(url, { ...init, signal: AbortSignal.timeout(30_000) });
+  const text = await response.text();
+  let result: Record<string, unknown>;
+  try { result = text ? JSON.parse(text) : {}; }
+  catch { result = { success: false, code: "INVALID_GATEWAY_RESPONSE", error: "Personal OS returned invalid JSON" }; }
+  return { response, result };
+}
+
+function publicSeries(row: Record<string, unknown>) {
+  return Object.fromEntries([
+    "id", "anchor_task_id", "current_task_id", "current_date", "recurrence_kind", "rrule", "recurrence_interval",
+    "by_weekday", "by_month_day", "by_month", "next_date_override", "skip_date", "timezone",
+    "local_time", "status", "created_at", "updated_at", "paused_at", "resumed_at", "cancelled_at",
+  ].map((key) => [key, row[key]]));
+}
+
+async function recurrenceSeriesResult(action: "list_series" | "update_series" | "pause_series" | "resume_series" | "skip_series_once" | "cancel_series", args: Record<string, unknown> = {}) {
+  try {
+    const { response, result } = await internalJson(`${SUPABASE_URL}/functions/v1/task-scheduler`, {
+      method: "POST", headers: { Authorization: `Bearer ${WRITE_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ action, ...args }),
+    });
+    if (!response.ok || result.success !== true) return managementFailure("重复提醒系列", String(result.code || "SERIES_UNVERIFIED"), String(result.error || "服务未核实结果"));
+    if (action === "list_series") {
+      if (!Array.isArray(result.series)) return managementFailure("重复提醒系列", "SERIES_READBACK_INVALID", "系列列表格式无效");
+      const output = { success: true, series: result.series.map((row: Record<string, unknown>) => publicSeries(row)) };
+      return { content: [{ type: "text", text: `已读取 ${result.series.length} 个循环任务系列，包含暂停和已停止的系列。` }], structuredContent: output };
+    }
+    const readback = await internalJson(`${SUPABASE_URL}/functions/v1/task-scheduler`, {
+      method: "POST", headers: { Authorization: `Bearer ${WRITE_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "list_series" }),
+    });
+    const series = Array.isArray(readback.result.series)
+      ? readback.result.series.find((item: Record<string, unknown>) => item.id === args.series_id) : null;
+    if (!readback.response.ok || readback.result.success !== true || !series) {
+      return managementFailure("循环任务系列", "SERIES_READBACK_PENDING", "操作已发送，但系列状态回读失败", { series_id: args.series_id });
+    }
+    if (action === "update_series") {
+      if (result.updated !== true || series.rrule !== (result.series as Record<string, unknown> | undefined)?.rrule) {
+        return managementFailure("循环规则修改", "SERIES_UPDATE_READBACK_PENDING", "未来循环规则未能回读核实", { series_id: args.series_id });
+      }
+      return { content: [{ type: "text", text: "已修改未来循环规则；当前实例和历史任务保持不变。" }], structuredContent: { success: true, updated: true, series: publicSeries(series) } };
+    }
+    if (action === "pause_series" || action === "resume_series") {
+      const expected = action === "pause_series" ? "paused" : "active";
+      if (series.status !== expected) return managementFailure("循环系列状态", "SERIES_STATUS_READBACK_PENDING", "系列状态未能回读核实", { series_id: args.series_id });
+      return { content: [{ type: "text", text: expected === "paused" ? "已暂停未来循环实例；当前 Google Task 与历史保留。" : "已恢复循环系列，并核对下一次实例。" }],
+        structuredContent: { success: true, status: expected, series: publicSeries(series), advancement: result.advancement } };
+    }
+    if (action === "skip_series_once") {
+      if (result.skipped !== true || series.skip_date !== result.recurrence_instance_date) {
+        return managementFailure("跳过一次", "SERIES_SKIP_READBACK_PENDING", "跳过日期未能回读核实", { series_id: args.series_id });
+      }
+      return { content: [{ type: "text", text: `已跳过 ${result.recurrence_instance_date} 这一次；系列之后继续。` }],
+        structuredContent: { success: true, skipped: true, recurrence_instance_date: result.recurrence_instance_date, series: publicSeries(series) } };
+    }
+    if (result.cancelled !== true || series.status !== "cancelled") {
+      return managementFailure("重复提醒系列停止", "SERIES_CANCEL_READBACK_PENDING", "系列停止结果未能回读核实", { series_id: args.series_id });
+    }
+    const currentReminderDisabled = (result.projection as Record<string, unknown> | undefined)?.notification_status === "disabled";
+    const output = { success: true, cancelled: true, series_id: args.series_id, series: publicSeries(series),
+      current_task_id: result.current_task_id, current_reminder_verified_disabled: currentReminderDisabled };
+    return { content: [{ type: "text", text: currentReminderDisabled
+      ? "已停止整个重复提醒系列，并核实当前日历提醒已关闭；原 Google Task 保留。"
+      : "已核实整个重复提醒系列停止；当前日历提醒状态仍需核实，原 Google Task 保留。" }], structuredContent: output };
+  } catch (error) {
+    return managementFailure("重复提醒系列", "SERIES_SERVICE_UNAVAILABLE", error instanceof Error ? error.message : "服务暂不可用");
+  }
+}
+
+async function reminderRequestResult(action: "list" | "recover" | "amend", args: Record<string, unknown>) {
+  try {
+    const url = new URL(`${SUPABASE_URL}/functions/v1/personal-os-intake`);
+    if (action === "list") for (const key of ["stage", "limit", "offset"]) {
+      if (args[key] !== undefined) url.searchParams.set(key, String(args[key]));
+    }
+    const { response, result } = await internalJson(url.toString(), {
+      method: action === "list" ? "GET" : "POST",
+      headers: { Authorization: `Bearer ${WRITE_TOKEN}`, "Content-Type": "application/json" },
+      ...(action === "list" ? {} : { body: JSON.stringify({ action: action === "recover" ? "recover" : "amend_request", ...args }) }),
+    });
+    if (!response.ok) return managementFailure("提醒请求", String(result.code || "REQUEST_SERVICE_ERROR"), String(result.error || "请求服务暂不可用"));
+    if (action === "list") {
+      if (!Array.isArray(result.requests) || typeof result.has_more !== "boolean") return managementFailure("提醒请求", "REQUEST_LIST_INVALID", "请求列表格式无效");
+      const output = { ...result, success: true };
+      return { content: [{ type: "text", text: `已读取 ${result.requests.length} 条提醒请求${result.has_more ? "；还有下一页，请按 next_offset 继续读取" : ""}。` }], structuredContent: output };
+    }
+    if (action === "recover") {
+      const item = Array.isArray(result.results) ? result.results.find((row: Record<string, unknown>) => row.request_id === args.request_id) : null;
+      if (!item || item.success !== true || item.verified !== true) {
+        return managementFailure("提醒请求恢复", String(item?.code || item?.decision || "RECOVERY_PENDING"), "请求仍待核实或需要进一步处理", { request_id: args.request_id, result: item || result });
+      }
+      return { content: [{ type: "text", text: "该请求的写入和所需投影已核实；如有设备提醒，送达仍需真机确认。" }], structuredContent: { success: true, request_id: args.request_id, result: item, checked_at: result.checked_at } };
+    }
+    if (result.success !== true || result.verified !== true) {
+      return managementFailure("提醒请求补充", String(result.code || "AMENDMENT_PENDING"), String(result.message || "补充已接收，结果仍待核实"), { request_id: args.request_id, result });
+    }
+    return { content: [{ type: "text", text: "补充时间后的任务与提醒配置已核实；设备送达仍需真机确认。" }], structuredContent: result };
+  } catch (error) {
+    return managementFailure("提醒请求", "REQUEST_SERVICE_UNAVAILABLE", error instanceof Error ? error.message : "服务暂不可用");
+  }
+}
+
 function rpcResult(id: unknown, result: unknown) {
   return Response.json({ jsonrpc: "2.0", id: id ?? null, result });
 }
@@ -1198,15 +1415,24 @@ async function handleMcp(request: Request) {
     const requestedVersion = typeof params.protocolVersion === "string" ? params.protocolVersion : "2025-06-18";
     return rpcResult(id, {
       protocolVersion: requestedVersion,
-      serverInfo: { name: "personal-os", title: "Personal OS", version: "1.6.0" },
+      serverInfo: { name: "personal-os", title: "Personal OS", version: "1.7.0" },
       capabilities: { tools: { listChanged: false } },
-      instructions: "For task-bound conversational changes, use get_task_conversation and converse_task: preview, clarify, await actual human confirmation, then execute. This specific workflow overrides the general low-risk intake default for date/time/status/follow-up changes; never synthesize confirmation or bypass with CRUD. Google Tasks is Task status truth. Clear low-risk reversible actions are authorized by natural-language intent: infer missing optional fields and execute without asking for date, hotel name, repetition or reconfirmation. Resolve Before Create and update first. Questions create nothing; durable preferences use Goals & Plans; mixed rules and current actions save both. Pass known conversation_trips and current_task.id for short corrections; re-read provider state before changing it. Infer Date from explicit wording, conversation, Calendar, Travel Plan, current context, then a reasonable default. Never invent Deadline. One action is one Task; unfinished tasks remain visible through Today/Overdue, not duplicate daily inserts. L2 asks only about outcome-changing ambiguity; L3 transactions require critical parameters and confirmation and cannot execute through these Task tools. For timed actions perform Smart Reminder reasoning, attach reminders to the same Schedule and stable Calendar Event, and use update_task_reminder for existing reminders. Ordinary reminders go to Google Tasks; automation is for future GPT search, analysis or generated content. Only write_success=true plus verified=true permits 已经写进去了. Prefer the returned short message and report Calendar projection failures separately; projection is not phone delivery. For an existing independent Calendar event, search or get it through this Personal OS server, then update the exact event_id in place with expected_updated; never create a replacement when an update fails. Task projection events must still be changed through the original Google Task.",
+      instructions: "For task-bound conversational changes, use get_task_conversation and converse_task: preview, clarify, await actual human confirmation, then execute. This specific workflow overrides the general low-risk intake default for date/time/status/follow-up changes; never synthesize confirmation or bypass with CRUD. Google Tasks is Task status truth. Clear low-risk reversible actions are authorized by natural-language intent: infer missing optional fields and execute without asking for date, hotel name, repetition or reconfirmation. Resolve Before Create and update first. Questions create nothing; durable preferences use Goals & Plans; mixed rules and current actions save both. Pass known conversation_trips and current_task.id for short corrections; re-read provider state before changing it. Infer Date from explicit wording, conversation, Calendar, Travel Plan, current context, then a reasonable default. Never invent Deadline. One action is one Task; unfinished tasks remain visible through Today/Overdue, not duplicate daily inserts. L2 asks only about outcome-changing ambiguity; L3 transactions require critical parameters and confirmation and cannot execute through these Task tools. For timed actions perform Smart Reminder reasoning, attach reminders to the same Schedule and stable Calendar Event, and use update_task_reminder for existing reminders. Ordinary reminders go to Google Tasks; automation is for future GPT search, analysis or generated content. Only write_success=true plus verified=true permits 已经写进去了. Prefer the returned short message and report Calendar projection failures separately; projection is not phone delivery. Natural-language recurring tasks are supported: 每天=daily; 每周三=weekly with weekday 3; 每月5号=monthly with month_day 5; 每年9月30号=yearly with month 9 and month_day 30. Pass recurrence to create_task or capture_personal_os_item and create only the first current instance; never say recurrence is unsupported. Use list_recurrence_series to identify a series. Recurrence supports DAILY, WEEKLY, MONTHLY, and YEARLY RRULE-compatible rules. Modify only future instances, pause/resume without changing Google Task history, skip exactly the next instance, and stop an entire series only on explicit intent. Use list_reminder_requests to find pending or missed requests, then recover_reminder_request or amend_reminder_request with the exact request_id and recovery_version; pending recovery is not arranged success. For an existing independent Calendar event, search or get it through this Personal OS server, then update the exact event_id in place with expected_updated; never create a replacement when an update fails. Task projection events must still be changed through the original Google Task.",
     });
   }
   if (method === "ping") return rpcResult(id, {});
   if (method === "tools/list") return rpcResult(id, { tools: [
     TASK_CONVERSATION_TOOL,
     GET_TASK_CONVERSATION_TOOL,
+    LIST_RECURRENCE_SERIES_TOOL,
+    UPDATE_RECURRENCE_SERIES_TOOL,
+    PAUSE_RECURRENCE_SERIES_TOOL,
+    RESUME_RECURRENCE_SERIES_TOOL,
+    SKIP_RECURRENCE_SERIES_TOOL,
+    CANCEL_RECURRENCE_SERIES_TOOL,
+    LIST_REMINDER_REQUESTS_TOOL,
+    RECOVER_REMINDER_REQUEST_TOOL,
+    AMEND_REMINDER_REQUEST_TOOL,
     CREATE_TASK_TOOL,
     SEARCH_TASKS_TOOL,
     GET_TASK_TOOL,
@@ -1231,6 +1457,15 @@ async function handleMcp(request: Request) {
     const schemas: Record<string, z.ZodTypeAny> = {
       converse_task: TaskConversationInput,
       get_task_conversation: LifecycleIdInput,
+      list_recurrence_series: ListRecurrenceSeriesInput,
+      update_recurrence_series: UpdateRecurrenceSeriesInput,
+      pause_recurrence_series: PauseRecurrenceSeriesInput,
+      resume_recurrence_series: ResumeRecurrenceSeriesInput,
+      skip_recurrence_occurrence: SkipRecurrenceSeriesInput,
+      cancel_recurrence_series: CancelRecurrenceSeriesInput,
+      list_reminder_requests: ListReminderRequestsInput,
+      recover_reminder_request: RecoverReminderRequestInput,
+      amend_reminder_request: AmendReminderRequestInput,
       create_task: TaskInput,
       search_tasks: SearchTasksInput,
       get_task: LifecycleIdInput,
@@ -1263,6 +1498,15 @@ async function handleMcp(request: Request) {
     }
     if (name === "converse_task") return rpcResult(id, await conversationResult(request, parsed.data as z.infer<typeof TaskConversationInput>));
     if (name === "get_task_conversation") return rpcResult(id, await conversationResult(request, parsed.data as z.infer<typeof LifecycleIdInput>, true));
+    if (name === "list_recurrence_series") return rpcResult(id, await recurrenceSeriesResult("list_series"));
+    if (name === "update_recurrence_series") return rpcResult(id, await recurrenceSeriesResult("update_series", parsed.data as z.infer<typeof UpdateRecurrenceSeriesInput>));
+    if (name === "pause_recurrence_series") return rpcResult(id, await recurrenceSeriesResult("pause_series", parsed.data as z.infer<typeof PauseRecurrenceSeriesInput>));
+    if (name === "resume_recurrence_series") return rpcResult(id, await recurrenceSeriesResult("resume_series", parsed.data as z.infer<typeof ResumeRecurrenceSeriesInput>));
+    if (name === "skip_recurrence_occurrence") return rpcResult(id, await recurrenceSeriesResult("skip_series_once", parsed.data as z.infer<typeof SkipRecurrenceSeriesInput>));
+    if (name === "cancel_recurrence_series") return rpcResult(id, await recurrenceSeriesResult("cancel_series", parsed.data as z.infer<typeof CancelRecurrenceSeriesInput>));
+    if (name === "list_reminder_requests") return rpcResult(id, await reminderRequestResult("list", parsed.data as z.infer<typeof ListReminderRequestsInput>));
+    if (name === "recover_reminder_request") return rpcResult(id, await reminderRequestResult("recover", parsed.data as z.infer<typeof RecoverReminderRequestInput>));
+    if (name === "amend_reminder_request") return rpcResult(id, await reminderRequestResult("amend", parsed.data as z.infer<typeof AmendReminderRequestInput>));
     if (name === "create_task") return rpcResult(id, await createTask(parsed.data as z.infer<typeof TaskInput>));
     if (name === "search_tasks") return rpcResult(id, await lifecycleResult(request, "GET", { action: "search", ...(parsed.data as z.infer<typeof SearchTasksInput>) }));
     if (name === "get_task") return rpcResult(id, await lifecycleResult(request, "GET", { action: "get", task_id: (parsed.data as z.infer<typeof LifecycleIdInput>).task_id }));
