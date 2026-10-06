@@ -7,6 +7,7 @@ import {
 } from "./action-router.js";
 import { normalizeScheduleInput, validScheduleTime } from "./schedule-core.js";
 import { detectFollowUpIntent, ensureFollowUpTitle, followUpTimingText } from "./task-lifecycle-core.js";
+import { nextRuleDate } from "./task-recurrence-core.js";
 
 export const INTAKE_TYPES = Object.freeze([
   "task",
@@ -63,6 +64,46 @@ function validDate(value) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const date = new Date(`${value}T00:00:00Z`);
   return !Number.isNaN(date.valueOf()) && date.toISOString().slice(0, 10) === value;
+}
+
+function recurrenceFrom(input, rawText) {
+  if (input.recurrence && typeof input.recurrence === "object" && !Array.isArray(input.recurrence)) {
+    const kind = String(input.recurrence.kind || input.recurrence.frequency || "").toLowerCase();
+    const interval = Number(input.recurrence.interval ?? 1);
+    if (!["daily", "weekly", "monthly", "yearly"].includes(kind) || !Number.isInteger(interval) || interval < 1 || interval > 365) throw new Error("Unsupported recurrence");
+    if (kind === "daily") return { kind, interval };
+    if (kind === "weekly" && Number.isInteger(input.recurrence.weekday) && input.recurrence.weekday >= 0 && input.recurrence.weekday <= 6) return { kind, interval, weekday: input.recurrence.weekday };
+    if (kind === "monthly" && (input.recurrence.month_day === undefined
+      || (Number.isInteger(input.recurrence.month_day) && input.recurrence.month_day >= 1 && input.recurrence.month_day <= 31))) {
+      return { kind, interval, ...(input.recurrence.month_day === undefined ? {} : { month_day: input.recurrence.month_day }) };
+    }
+    if (kind === "yearly" && (input.recurrence.month === undefined || (Number.isInteger(input.recurrence.month) && input.recurrence.month >= 1 && input.recurrence.month <= 12))
+      && (input.recurrence.month_day === undefined || (Number.isInteger(input.recurrence.month_day) && input.recurrence.month_day >= 1 && input.recurrence.month_day <= 31))) {
+      return { kind, interval, ...(input.recurrence.month === undefined ? {} : { month: input.recurrence.month }),
+        ...(input.recurrence.month_day === undefined ? {} : { month_day: input.recurrence.month_day }) };
+    }
+    throw new Error("Unsupported recurrence");
+  }
+  if (/每天|每日/.test(rawText)) return { kind: "daily", interval: 1 };
+  const weekly = rawText.match(/每(?:周|星期)([日天一二三四五六])/);
+  if (weekly) return { kind: "weekly", interval: 1, weekday: { 日: 0, 天: 0, 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6 }[weekly[1]] };
+  const yearly = rawText.match(/每年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*(?:日|号)/);
+  if (yearly) return { kind: "yearly", interval: 1, month: Number(yearly[1]), month_day: Number(yearly[2]) };
+  const monthly = rawText.match(/每月\s*(\d{1,2})\s*(?:日|号)/);
+  if (monthly) return { kind: "monthly", interval: 1, month_day: Number(monthly[1]) };
+  return null;
+}
+
+function futureRecurringDate(date, time, baseDate, timezone, recurrence) {
+  if (!date || !time || !recurrence) return date;
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: timezone,
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).formatToParts(baseDate).map((part) => [part.type, part.value]));
+  const current = `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+  if (`${date}T${time}` > current) return date;
+  let next = date;
+  for (let attempt = 0; attempt < 2400 && `${next}T${time}` <= current; attempt += 1) next = nextRuleDate(next, recurrence);
+  return next;
 }
 
 function optionalNumber(value, name, { integer = false, min = 0, max = Number.MAX_SAFE_INTEGER } = {}) {
@@ -135,7 +176,23 @@ export function normalizeIntake(input, options = {}) {
   const inferredExecutionTime = !deadline || (parsedTime && deadlineTime && parsedTime !== deadlineTime) ? parsedTime : null;
   const requestedTime = cleanString(input.requested_time || input.requestedTime || nestedSchedule.scheduled_start || nestedSchedule.scheduledStart || route.payload?.requestedTime || inferredExecutionTime, 5) || null;
   if (requestedTime && !validScheduleTime(requestedTime)) throw new Error("requested_time must be HH:MM");
-  const due = requestedDate || (!deadline ? dueCandidate : "");
+  const timezone = cleanString(input.timezone, 80) || "Asia/Shanghai";
+  let recurrence = type === "task" ? recurrenceFrom(input, rawText) : null;
+  const firstDate = futureRecurringDate(requestedDate, requestedTime, baseDate, timezone, recurrence);
+  if (recurrence?.kind === "monthly" && firstDate && recurrence.month_day === undefined) recurrence = { ...recurrence, month_day: Number(firstDate.slice(8, 10)) };
+  if (recurrence?.kind === "yearly" && firstDate) recurrence = { ...recurrence,
+    month: recurrence.month ?? Number(firstDate.slice(5, 7)), month_day: recurrence.month_day ?? Number(firstDate.slice(8, 10)) };
+  if (recurrence?.kind === "weekly" && firstDate && new Date(`${firstDate}T00:00:00Z`).getUTCDay() !== recurrence.weekday) {
+    throw new Error("recurrence weekday does not match first date");
+  }
+  if (recurrence?.kind === "monthly" && firstDate && Number(firstDate.slice(8, 10)) !== recurrence.month_day) {
+    throw new Error("recurrence month_day does not match first date");
+  }
+  if (recurrence?.kind === "yearly" && firstDate
+    && (Number(firstDate.slice(5, 7)) !== recurrence.month || Number(firstDate.slice(8, 10)) !== recurrence.month_day)) {
+    throw new Error("yearly recurrence does not match first date");
+  }
+  const due = firstDate || (!deadline ? dueCandidate : "");
   const defaultDuration = /(?:会议|开会|面谈|见面|会面|聊天|拜访)/.test(rawText) ? 60 : 30;
   const estimatedDuration = Number(input.estimated_duration || input.estimatedDuration || route.payload?.estimatedDuration || parseIntentDuration(rawText, defaultDuration));
   const priority = cleanString(input.priority || route.payload?.priority, 20) || "medium";
@@ -150,7 +207,7 @@ export function normalizeIntake(input, options = {}) {
       parent_task_id: parentTaskId,
       follow_up_of: followUpOf,
       follow_up_sequence: followUpSequence,
-      scheduled_date: requestedDate,
+      scheduled_date: firstDate,
       scheduled_start: requestedTime,
       duration_minutes: estimatedDuration,
       deadline,
@@ -158,7 +215,7 @@ export function normalizeIntake(input, options = {}) {
       priority,
       fixed_time: fixedTime,
       scheduling_source: schedulingSource,
-      timezone: cleanString(input.timezone, 80) || "Asia/Shanghai",
+      timezone,
       raw_text: rawText,
       title,
       notes: cleanString(input.notes || route.payload?.notes),
@@ -227,10 +284,11 @@ export function normalizeIntake(input, options = {}) {
     title,
     notes: cleanString(input.notes || route.payload?.notes),
     due: due || null,
-    timezone: cleanString(input.timezone, 80) || "Asia/Shanghai",
+    timezone,
+    recurrence,
     deadline,
     deadline_time: deadlineTime,
-    requested_date: requestedDate,
+    requested_date: firstDate,
     requested_time: requestedTime,
     estimated_duration: estimatedDuration,
     priority,
@@ -293,6 +351,7 @@ export function canonicalIntake(intake) {
     fixed_time: intake.fixed_time,
     scheduling_source: intake.scheduling_source,
     schedule: intake.schedule,
+    recurrence: intake.recurrence,
     goal_type: intake.goal_type,
     category: intake.category,
     goal_status: intake.goal_status,
@@ -345,6 +404,7 @@ export function taskDispatchPayload(intake) {
     ...(intake.resource_fields?.length ? { resource_fields: intake.resource_fields } : {}),
     ...(intake.depends_on_task_ids?.length ? { depends_on_task_ids: intake.depends_on_task_ids } : {}),
     ...(intake.schedule ? { schedule: intake.schedule } : {}),
+    ...(intake.recurrence ? { recurrence: intake.recurrence } : {}),
   };
 }
 

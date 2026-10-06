@@ -5,6 +5,7 @@ import {
   chooseTaskList,
   composeTaskNotes,
   createGoogleTaskPayload,
+  toTaskModel,
   dateToGoogleDue,
   filterTaskModels,
   findDuplicateTask,
@@ -97,4 +98,13 @@ test("task filters expose today, overdue, upcoming and completed buckets", () =>
   assert.equal(filterTaskModels(tasks, "overdue", "2026-09-04")[0].id, "late");
   assert.equal(filterTaskModels(tasks, "upcoming", "2026-09-04")[0].id, "future");
   assert.equal(filterTaskModels(tasks, "completed", "2026-09-04")[0].id, "done");
+});
+
+test('request and recurrence correlation survive note edits without becoming visible task notes',()=>{
+ const wire=createGoogleTaskPayload({title:'Test',notes:'note',requestCorrelationId:'request-123',metadata:{recurrence_key:'series-123:2026-09-25'}});
+ const task=toTaskModel({id:'task-1',...wire});
+ assert.equal(task.notes,'note');assert.equal(task.metadata.request_id,'request-123');assert.equal(task.metadata.recurrence_key,'series-123:2026-09-25');
+ const updated=updateGoogleTaskPayload({notes:'changed',metadata:task.metadata});
+ const read=toTaskModel({id:'task-1',...updated});
+ assert.equal(read.notes,'changed');assert.deepEqual(read.metadata,task.metadata);
 });

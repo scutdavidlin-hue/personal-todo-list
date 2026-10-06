@@ -1,4 +1,4 @@
-const CACHE_NAME = "personal-os-shell-v1.4.3-growth-logo";
+const CACHE_NAME = "personal-os-shell-v1.4.4-reliability";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -14,6 +14,7 @@ const APP_SHELL = [
   "./src/core.js",
   "./src/goals.js",
   "./src/cloud-client.js",
+  "./src/recurrence-panel.js",
   "./src/task-conversation.js",
   "./task-conversation.css",
   "./manifest.webmanifest",

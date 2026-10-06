@@ -82,3 +82,9 @@ test('ordinary notes cannot inject the reserved cancellation status',async()=>{
   const {normalizeTaskPatch}=await import('../supabase/functions/_shared/task-lifecycle-core.js');
   assert.throws(()=>normalizeTaskPatch({changes:{notes:'note\n[Personal OS status: cancelled]'}}),/reserved cancellation marker/);
 });
+
+test('two confirmation callers share one proposal without duplicate provider mutation',async()=>{
+ const {state,send}=fixture();const p=await send('改四点');const results=await Promise.allSettled([send('对',{proposal_id:p.response.pending.id,request_id:'device-a'}),send('对',{proposal_id:p.response.pending.id,request_id:'device-b'})]);
+ assert.equal(state.calls.length,1);assert.equal(state.task.requested_time,'16:00');
+ assert.equal(state.events.filter(x=>x.event_type==='execution_succeeded').length,1,JSON.stringify(results));
+});

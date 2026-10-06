@@ -1,3 +1,10 @@
+import { writeReceipt, verifyTaskFields } from "../_shared/write-receipt.js";
+import {
+  GoogleProviderError,
+  coordinatedGoogleAccess,
+  googleJsonRequest,
+  providerErrorDiagnostic,
+} from "../_shared/google-auth-runtime.js";
 import { buildStatus, shanghaiDate, validDate } from "./status-core.js";
 import {
   createGoogleTaskPayload,
@@ -40,11 +47,30 @@ const rateBuckets = new Map<string, { count: number; resetAt: number }>();
 class ApiError extends Error {
   status: number;
   code: string;
-  constructor(message: string, status = 503, code = "TASK_SERVICE_UNAVAILABLE") {
+  retryable: boolean;
+  providerLayer: string;
+  providerStatus: number | null;
+  providerCode: string;
+  constructor(message: string, status = 503, code = "TASK_SERVICE_UNAVAILABLE", diagnostic: Record<string, unknown> = {}) {
     super(message);
     this.status = status;
     this.code = code;
+    this.retryable = diagnostic.retryable === true;
+    this.providerLayer = String(diagnostic.provider_layer || "");
+    this.providerStatus = Number.isInteger(diagnostic.provider_status) ? Number(diagnostic.provider_status) : null;
+    this.providerCode = String(diagnostic.provider_code || "");
   }
+}
+
+function providerApiError(error: unknown, overrides: Record<string, unknown> = {}) {
+  const diagnostic = providerErrorDiagnostic(error);
+  if (!diagnostic) return null;
+  return new ApiError(
+    String(overrides.message || diagnostic.error),
+    Number(overrides.status || diagnostic.status),
+    String(overrides.code || diagnostic.code),
+    diagnostic,
+  );
 }
 
 function json(body: unknown, status = 200) {
@@ -126,46 +152,35 @@ async function readSchedules() {
 }
 
 async function googleContext() {
-  const rows = await restRpc("read_google_tasks_credentials", {
-    target_owner: OWNER_USER_ID,
-    encryption_key: TOKEN_ENCRYPTION_KEY,
+  const result = await coordinatedGoogleAccess({
+    ownerId: OWNER_USER_ID,
+    encryptionKey: TOKEN_ENCRYPTION_KEY,
+    rpc: restRpc,
+    clientId: GOOGLE_CLIENT_ID,
+    clientSecret: GOOGLE_CLIENT_SECRET,
   });
-  const credentials = rows?.[0];
-  if (!credentials?.refresh_token || !credentials?.tasklist_id) throw new ApiError("Google Tasks is not connected", 428, "GOOGLE_NOT_CONNECTED");
-  const response = await requestWithTimeout("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      client_id: GOOGLE_CLIENT_ID,
-      client_secret: GOOGLE_CLIENT_SECRET,
-      refresh_token: credentials.refresh_token,
-      grant_type: "refresh_token",
-    }),
-  });
-  const token = await payload(response);
-  if (!response.ok || !token?.access_token) throw new ApiError("Google authorization expired", 401, "GOOGLE_REAUTH_REQUIRED");
-  return { accessToken: token.access_token, taskListId: credentials.tasklist_id };
+  return { accessToken: result.accessToken, taskListId: result.taskListId,
+    accountSubject: result.googleSubject || null };
 }
 
 async function googleRequest(accessToken: string, path: string, init: RequestInit = {}) {
-  const response = await requestWithTimeout(`https://tasks.googleapis.com/tasks/v1${path}`, {
-    ...init,
-    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json", ...(init.headers || {}) },
-  });
-  const data = await payload(response);
-  if (!response.ok) {
-    const message = data?.error?.message || `Google Tasks request failed (${response.status})`;
-    const reason = data?.error?.errors?.[0]?.reason || "";
-    if (response.status === 401) throw new ApiError("Google authorization expired", 401, "GOOGLE_REAUTH_REQUIRED");
-    if (response.status === 404) throw new ApiError("Task was deleted externally", 404, "TASK_NOT_FOUND");
-    if (response.status === 429 || /rateLimit/i.test(reason)) throw new ApiError("Google rate limit reached", 429, "RATE_LIMITED");
-    if (response.status === 403 && /disabled|not been used|accessnotconfigured/i.test(`${reason} ${message}`)) {
-      throw new ApiError("Google Tasks API is disabled", 503, "TASKS_API_DISABLED");
+  try {
+    return await googleJsonRequest({
+      accessToken,
+      url: `https://tasks.googleapis.com/tasks/v1${path}`,
+      init,
+      providerLayer: "tasks",
+      timeoutMs: 10_000,
+    });
+  } catch (error) {
+    if (error instanceof GoogleProviderError && error.code === "GOOGLE_OBJECT_NOT_FOUND") {
+      throw providerApiError(error, { message: "Task was deleted externally", code: "TASK_NOT_FOUND" });
     }
-    if (response.status === 403) throw new ApiError("Google Tasks scope is missing", 403, "SCOPE_MISSING");
-    throw new ApiError(message, response.status, "GOOGLE_TASKS_ERROR");
+    if (error instanceof GoogleProviderError && error.code === "GOOGLE_RATE_LIMITED") {
+      throw providerApiError(error, { message: "Google rate limit reached", code: "RATE_LIMITED" });
+    }
+    throw providerApiError(error) || error;
   }
-  return data;
 }
 
 function tasksPath(taskListId: string, taskId = "") {
@@ -173,7 +188,7 @@ function tasksPath(taskListId: string, taskId = "") {
 }
 
 async function allTasks(showCompleted = true, options: Record<string, unknown> = {}) {
-  const { accessToken, taskListId } = await googleContext();
+  const { accessToken, taskListId, accountSubject } = await googleContext();
   const tasks = [];
   let pageToken = "";
   const maxTasks = Math.max(1, Math.min(5_000, Number(options.maxTasks || 5_000)));
@@ -194,7 +209,7 @@ async function allTasks(showCompleted = true, options: Record<string, unknown> =
     pageToken = page?.nextPageToken || "";
   } while (pageToken && tasks.length < maxTasks);
   if (pageToken) throw new ApiError("Task candidate retrieval was truncated; refusing unsafe creation", 503, "TASK_SEARCH_INCOMPLETE");
-  return { accessToken, taskListId, tasks };
+  return { accessToken, taskListId, accountSubject, tasks };
 }
 
 async function readStatus(targetDate: string) {
@@ -207,7 +222,7 @@ async function readCanonicalTask(id: string) {
   const google = await googleContext();
   const task = toTaskModel(await googleRequest(google.accessToken, tasksPath(google.taskListId, id)), google.taskListId);
   const schedule = (await readSchedules()).find((row: Record<string, unknown>) => row.google_task_id === id) || null;
-  return { task, schedule };
+  return { task, schedule, account_subject: google.accountSubject || null };
 }
 
 async function readAutonomyContext(input: Record<string, unknown>) {
@@ -256,22 +271,24 @@ async function updateCanonicalTask(input: Record<string, unknown>) {
   const google = await googleContext();
   let task = current.task;
   if (Object.keys(changes).length) {
-    const body = updateGoogleTaskPayload({ ...changes, originalIntent: current.task.originalIntent });
+    const body = updateGoogleTaskPayload({ ...changes, originalIntent: current.task.originalIntent, metadata: current.task.metadata });
     task = toTaskModel(await googleRequest(google.accessToken, tasksPath(google.taskListId, id), {
       method: "PATCH", body: JSON.stringify(body),
     }), google.taskListId);
   }
+  task = toTaskModel(await googleRequest(google.accessToken, tasksPath(google.taskListId, id)), google.taskListId);
+  verifyTaskFields(task, changes);
   const schedulePatch = applyTaskSchedulePatch(current.schedule, patch, task.dueDate);
   const scheduleInput = schedulePatch.schedule;
   let schedule = null;
   let projectionError = null;
   try { schedule = await scheduleProjection(id, scheduleInput); }
-  catch { projectionError = "Calendar projection pending; retry the same task id"; }
+  catch (error) { projectionError = { code: error instanceof ApiError ? error.code : "CALENDAR_SYNC_PENDING", retryable: error instanceof ApiError ? error.retryable : true, provider_layer: error instanceof ApiError ? error.providerLayer : "calendar" }; }
   const expectedSchedule = Object.fromEntries([
     ...(Object.hasOwn(patch, "requested_time") ? [["scheduled_start", patch.requested_time]] : []),
     ...(Object.hasOwn(patch, "requested_date") ? [["scheduled_date", patch.requested_date]] : []),
   ]);
-  return json({ task, schedule, expected_schedule: expectedSchedule, projection_error: projectionError, write_success: Object.keys(changes).length > 0 || Boolean(schedule) || schedulePatch.touched, resolution: { decision: "UPDATE" } });
+  return json({ task, schedule, receipt: writeReceipt({ taskId: id, taskVerified: true, schedule: schedule?.schedule, scheduleRequested: Boolean(scheduleInput), projection: schedule, error: projectionError }), expected_schedule: expectedSchedule, projection_error: projectionError, write_success: Object.keys(changes).length > 0 || Boolean(schedule) || schedulePatch.touched, resolution: { decision: "UPDATE" } });
 }
 
 async function readTaskGraph() {
@@ -357,7 +374,60 @@ async function previewTaskResolution(input: Record<string, unknown>) {
   return { success: true, resolution: taskResolutionPreview(incoming, context) };
 }
 
-async function scheduleProjection(taskId: string, schedule: unknown) {
+async function reconcileIntake(input: Record<string, any>) {
+  const auditId = String(input.intake_audit_id || "");
+  if (!/^[a-zA-Z0-9_-]{1,100}$/.test(auditId)) throw new ApiError("Invalid request identity",400,"INVALID_REQUEST");
+  const query = new URLSearchParams({owner_id:`eq.${OWNER_USER_ID}`,intake_audit_id:`eq.${auditId}`,select:"*",order:"created_at.desc",limit:"20"});
+  const audits = await serviceRest(`task_resolution_audit?${query}`) || [];
+  const google = await allTasks(true);
+  const ids = new Set<string>(audits.flatMap((a: any)=>a.result_task_ids || []));
+  const matches = google.tasks.filter((task: any)=>ids.has(task.id) || task.metadata?.request_id === auditId);
+  if (matches.length !== 1) return {outcome:"unknown",account_subject:google.accountSubject || null,code:matches.length > 1 ? "MULTIPLE_REQUEST_OBJECTS" : "WRITE_OUTCOME_UNKNOWN"};
+  const task = toTaskModel(await googleRequest(google.accessToken,tasksPath(google.taskListId,matches[0].id)),google.taskListId);
+  try { verifyTaskFields(task,input.expected_task || {}); }
+  catch { return {outcome:"unknown",account_subject:google.accountSubject || null,code:"TASK_CHANGED_SINCE_REQUEST",task}; }
+  const schedule = (await readSchedules()).find((s: any)=>s.google_task_id===task.id) || null;
+  return {outcome:"verified",task,schedule,account_subject: (google as any).accountSubject || null,receipt:writeReceipt({requestId:auditId,taskId:task.id,taskVerified:true,schedule})};
+}
+
+async function ensureRecoveredSeries(taskId: string, recurrence: any) {
+  if(!recurrence) return null;
+  const response=await requestWithTimeout(`${SUPABASE_URL}/functions/v1/task-scheduler`,{method:"POST",headers:{Authorization:`Bearer ${WRITE_TOKEN}`,"Content-Type":"application/json"},body:JSON.stringify({action:"create_series",task_id:taskId,recurrence})});
+  const result=await payload(response);
+  if(!response.ok || result?.series?.status!=="active") throw new ApiError("任务已保存，重复系列仍待恢复",503,result?.code || "SERIES_PENDING",result || {});
+  return result.series;
+}
+
+async function retryProjection(input: Record<string, any>) {
+  const current = await readCanonicalTask(String(input.task_id || ""));
+  if (current.task.status !== "open") return {success:false,code:"TASK_NO_LONGER_ACTIVE",task:current.task,schedule:current.schedule};
+  const expected = input.schedule || {};
+  if(input.expected_task){try{verifyTaskFields(current.task,input.expected_task);}catch{return {success:false,code:"TASK_CHANGED_SINCE_REQUEST",task:current.task,schedule:current.schedule};}}
+  // Recovery never overwrites a newer user schedule; only synchronize existing metadata.
+  if (!current.schedule) {
+    const requestId = String(input.intake_audit_id || "");
+    if (!requestId || current.task.metadata?.request_id !== requestId || !input.expected_task) return {success:false,code:"SCHEDULE_NOT_WRITTEN",task:current.task};
+    try { verifyTaskFields(current.task,input.expected_task); }
+    catch { return {success:false,code:"TASK_CHANGED_SINCE_REQUEST",task:current.task}; }
+    const response = await requestWithTimeout(`${SUPABASE_URL}/functions/v1/task-scheduler`,{method:"POST",headers:{Authorization:`Bearer ${WRITE_TOKEN}`,"Content-Type":"application/json"},body:JSON.stringify({action:"schedule",task_id:current.task.id,schedule:expected,only_if_absent:true})});
+    const result = await payload(response);
+    if (!response.ok || result?.success !== true) throw new ApiError(result?.error || "Reminder recovery pending",response.status || 503,result?.code || "CALENDAR_SYNC_PENDING",result || {});
+    if (result.skipped_existing) return {success:false,code:"SCHEDULE_SUPERSEDED",task:current.task,schedule:result.schedule};
+    const series=await ensureRecoveredSeries(current.task.id,input.recurrence);
+    return {...result,series,task:current.task,receipt:writeReceipt({taskId:current.task.id,taskVerified:true,schedule:result.schedule,projection:result})};
+  }
+  const comparable=(key:string,value:any)=>value==null?null:["scheduled_start","scheduled_end"].includes(key)?String(value).slice(0,5):key==="reminder_at"?String(value).slice(0,16):value;
+  for (const key of ["scheduled_date","scheduled_start","scheduled_end","reminder_policy","reminder_at","timezone"]) {
+    if (Object.hasOwn(expected,key) && JSON.stringify(comparable(key,expected[key])) !== JSON.stringify(comparable(key,current.schedule[key]))) return {success:false,code:"SCHEDULE_SUPERSEDED",task:current.task,schedule:current.schedule};
+  }
+  const response = await requestWithTimeout(`${SUPABASE_URL}/functions/v1/task-scheduler`,{method:"POST",headers:{Authorization:`Bearer ${WRITE_TOKEN}`,"Content-Type":"application/json"},body:JSON.stringify({action:"sync_task",task_id:current.task.id})});
+  const result = await payload(response);
+  if (!response.ok || result?.success !== true) throw new ApiError(result?.error || "Reminder recovery pending",response.status || 503,result?.code || "CALENDAR_SYNC_PENDING",result || {});
+  const series=await ensureRecoveredSeries(current.task.id,input.recurrence);
+  return {...result,series,task:current.task,receipt:writeReceipt({taskId:current.task.id,taskVerified:true,schedule:result.schedule || current.schedule,projection:result})};
+}
+
+async function scheduleProjection(taskId: string, schedule: unknown, recurrence: unknown = null) {
   if (!schedule) return null;
   if (typeof schedule !== "object" || Array.isArray(schedule)) throw new ApiError("Invalid schedule", 400, "INVALID_SCHEDULE");
   const response = await requestWithTimeout(`${SUPABASE_URL}/functions/v1/task-scheduler`, {
@@ -367,7 +437,13 @@ async function scheduleProjection(taskId: string, schedule: unknown) {
   });
   const result = await payload(response);
   if (!response.ok || result?.success !== true) {
-    throw new ApiError(result?.error || "Calendar projection failed", response.status || 503, result?.code || "CALENDAR_PROJECTION_FAILED");
+    throw new ApiError(result?.error || "Calendar projection failed", response.status || 503, result?.code || "CALENDAR_PROJECTION_FAILED", result || {});
+  }
+  if (recurrence) {
+    const seriesResponse = await requestWithTimeout(`${SUPABASE_URL}/functions/v1/task-scheduler`,{method:"POST",headers:{Authorization:`Bearer ${WRITE_TOKEN}`,"Content-Type":"application/json"},body:JSON.stringify({action:"create_series",task_id:taskId,recurrence})});
+    const series = await payload(seriesResponse);
+    if (!seriesResponse.ok || series?.series?.status !== "active") throw new ApiError("任务已保存，重复提醒系列待恢复",503,series?.code || "SERIES_PENDING",series || {});
+    result.series = series.series;
   }
   return result;
 }
@@ -405,7 +481,7 @@ async function createTask(input: Record<string, unknown>) {
     ),
     createTask: async (task: Record<string, unknown>, metadata: Record<string, unknown> = {}) => {
       let taskBody;
-      try { taskBody = createGoogleTaskPayload(task); }
+      try { taskBody = createGoogleTaskPayload({ ...task, requestCorrelationId: input.intake_audit_id || input.resolution_idempotency_key }); }
       catch (error) { throw new ApiError(error instanceof Error ? error.message : "Invalid task", 400, "INVALID_TASK"); }
       const params = new URLSearchParams();
       const parentId = metadata.parent_task_id || task.parent_task_id;
@@ -427,6 +503,7 @@ async function createTask(input: Record<string, unknown>) {
       try {
         taskBody = updateGoogleTaskPayload({
           ...changes,
+          metadata: current.metadata,
           notes: Object.hasOwn(changes, "notes") ? changes.notes : current.notes,
           originalIntent: Object.hasOwn(changes, "originalIntent") ? changes.originalIntent : current.originalIntent,
         });
@@ -466,8 +543,12 @@ async function createTask(input: Record<string, unknown>) {
   const projectionInput = result.resolution.decision === "DUPLICATE"
     ? existingSchedule?.sync_required ? existingSchedule : null
     : input.schedule;
-  try { schedule = projectionInput ? await scheduleProjection(task.id, projectionInput) : existingSchedule ? { schedule: existingSchedule } : null; }
-  catch { projectionError = "Calendar projection pending; retry the same task id"; }
+  try { schedule = projectionInput ? await scheduleProjection(task.id, projectionInput, input.recurrence) : existingSchedule ? { schedule: existingSchedule } : null; }
+  catch (error) { projectionError = { code: error instanceof ApiError ? error.code : "CALENDAR_SYNC_PENDING", retryable: error instanceof ApiError ? error.retryable : true, provider_layer: error instanceof ApiError ? error.providerLayer : "calendar" }; }
+  if(input.recurrence && !projectionInput && !projectionError){
+    try { const series=await ensureRecoveredSeries(task.id,input.recurrence); schedule={...(schedule || {}),series}; }
+    catch(error){projectionError={code:error instanceof ApiError ? error.code : "SERIES_PENDING",retryable:true,provider_layer:"calendar"};}
+  }
   const deduplicated = result.resolution.decision === "DUPLICATE";
   console.info("Task Resolved", {
     taskId: task.id,
@@ -485,6 +566,8 @@ async function createTask(input: Record<string, unknown>) {
     context_link: result.context_link,
     schedule,
     projection_error: projectionError,
+    account_subject: google.accountSubject || null,
+    receipt: writeReceipt({ requestId: String(input.intake_audit_id || "") || null, taskId: task.id, taskVerified: true, schedule: schedule?.schedule, scheduleRequested: Boolean(projectionInput), projection: schedule, error: projectionError }),
     write_success: result.created || result.updated || Boolean(projectionInput && schedule),
   }, result.created ? 201 : 200);
 }
@@ -507,6 +590,9 @@ Deno.serve(async (request) => {
       let input: Record<string, unknown>;
       try { input = await request.json(); }
       catch { throw new ApiError("Request body must be valid JSON", 400, "INVALID_JSON"); }
+      if (input.action === "account_context") { const google=await googleContext(); return json({account_subject:google.accountSubject || null}); }
+      if (input.action === "reconcile_intake") return json(await reconcileIntake(input));
+      if (input.action === "retry_projection") return json(await retryProjection(input));
       if (input.action === "preview_resolution") return json(await previewTaskResolution(input));
       if (input.action === "read_task") return json(await readCanonicalTask(String(input.task_id || "")));
       if (input.action === "autonomy_context") return json(await readAutonomyContext(input));
@@ -523,8 +609,14 @@ Deno.serve(async (request) => {
     const timedOut = error instanceof DOMException && error.name === "TimeoutError";
     const apiError = error instanceof ApiError
       ? error
-      : new ApiError(timedOut ? "Google Tasks request timed out" : "Google Tasks service unavailable", 503, timedOut ? "API_TIMEOUT" : "SERVICE_UNAVAILABLE");
-    console.error("Task Sync Failed", apiError.code, apiError.message);
-    return json({ error: apiError.message, code: apiError.code }, apiError.status);
+      : providerApiError(error) || new ApiError(timedOut ? "Google Tasks request timed out" : "Google Tasks service unavailable", 503, timedOut ? "API_TIMEOUT" : "SERVICE_UNAVAILABLE");
+    console.error("Task Sync Failed", { code: apiError.code, status: apiError.status, retryable: apiError.retryable, providerLayer: apiError.providerLayer || undefined });
+    return json({
+      error: apiError.message,
+      code: apiError.code,
+      ...(apiError.providerLayer ? { retryable: apiError.retryable, provider_layer: apiError.providerLayer } : {}),
+      ...(apiError.providerStatus !== null ? { provider_status: apiError.providerStatus } : {}),
+      ...(apiError.providerCode ? { provider_code: apiError.providerCode } : {}),
+    }, apiError.status);
   }
 });

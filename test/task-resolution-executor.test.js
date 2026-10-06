@@ -145,3 +145,18 @@ test("execution failure is audited and never invokes a destructive rollback", as
   assert.equal(adapter.events.some(([type]) => type === "audit:fail"), true);
   assert.equal("deleteTask" in adapter, false);
 });
+
+
+test("provider acknowledgement with stale readback never reports success or discards known id", async () => {
+  const incoming = { title: "唯一测试事项", status: "open" };
+  const resolution = resolveTaskIntent(incoming);
+  const adapter = fakeAdapter();
+  adapter.getTask = async id => ({ id, title: "wrong title", status: "open" });
+  await assert.rejects(executeTaskResolution(incoming, resolution, adapter), error => {
+    assert.equal(error.code, "WRITE_UNVERIFIED");
+    assert.deepEqual(error.partial_result.result_task_ids, ["created-1"]);
+    return true;
+  });
+  assert.equal(adapter.tasks.size, 1);
+  assert.equal(adapter.events.some(([type]) => type === "audit:complete"), false);
+});

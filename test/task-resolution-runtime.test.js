@@ -65,7 +65,7 @@ test("enriched candidates remain valid inputs to the resolver", async () => {
     ownerId: OWNER,
     serviceRest: store.rest,
     provider: {
-      getTask: async () => context.tasks[0],
+      getTask: async () => updated || context.tasks[0],
       createTask: async () => { throw new Error("must not create"); },
       updateTask: async (_id, changes) => (updated = { ...context.tasks[0], ...changes }),
     },
@@ -314,7 +314,7 @@ test("runtime executes one canonical update and persists explainability metadata
     intakeAuditId: "33333333-3333-4333-8333-333333333333",
     serviceRest: store.rest,
     provider: {
-      getTask: async () => existing,
+      getTask: async () => updated || existing,
       createTask: async () => { throw new Error("must not create"); },
       updateTask: async (_id, changes) => {
         updated = { ...existing, ...changes };

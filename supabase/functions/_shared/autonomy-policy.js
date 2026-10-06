@@ -385,7 +385,7 @@ export function evaluateAutonomy(input, options = {}) {
     actionInput.requested_date = requestedDate(actionText, source.requested_date, context, baseDate);
     actionInput.scheduling_source = autonomyIntentDate(actionText, baseDate) || source.requested_date ? "explicit_user" : "gpt_inferred";
   }
-  const time = autonomyIntentTime(actionText) || cleanString(source.requested_time) || null;
+  const time = cleanString(source.requested_time) || autonomyIntentTime(actionText) || null;
   if (time) actionInput.requested_time = time;
 
   const ambiguity = materiallyAmbiguous(actionText, context);

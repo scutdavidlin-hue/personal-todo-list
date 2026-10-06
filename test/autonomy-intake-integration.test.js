@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { normalizeIntake } from "../supabase/functions/_shared/personal-os-intake.js";
 
 let importNumber = 0;
 
@@ -7,7 +8,7 @@ function json(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-async function loadIntakeHandler({ taskResult, readTask, context, failPreference = false } = {}) {
+async function loadIntakeHandler({ taskResult, readTask, context, failPreference = false, unknownCreateOnce = false, contextAuthFailureOnce = false, accountFailureOnCall = 0, projectionFailureOnce = false, projectionReceiptStatus = "disabled", createReceiptStatus = "disabled" } = {}) {
   const previousDeno = globalThis.Deno;
   const previousFetch = globalThis.fetch;
   const writes = [];
@@ -21,6 +22,12 @@ async function loadIntakeHandler({ taskResult, readTask, context, failPreference
   let handler;
   let goalPlanReads = 0;
   let lastTask = null;
+  let lastSchedule = null;
+  let createAttempts = 0;
+  let contextAttempts = 0;
+  let accountAttempts = 0;
+  let projectionAttempts = 0;
+  let audit = null;
 
   globalThis.Deno = {
     env: { get: (name) => environment[name] },
@@ -32,8 +39,23 @@ async function loadIntakeHandler({ taskResult, readTask, context, failPreference
     writes.push({ path: `${requestUrl.pathname}${requestUrl.search}`, method: init.method || "GET", body });
 
     if (requestUrl.pathname.endsWith("/functions/v1/task-status")) {
-      if (body.action === "autonomy_context") return json(context || { current_task: null, calendar_events: [], context_warnings: [] });
-      if (body.action === "read_task") return json(readTask || { task: lastTask });
+      if (body.action === "autonomy_context") {
+        contextAttempts += 1;
+        if (contextAuthFailureOnce && contextAttempts === 1) return json({ error: "Original Google credential expired", code: "GOOGLE_REAUTH_REQUIRED" }, 401);
+        return json(context || { current_task: null, calendar_events: [], context_warnings: [] });
+      }
+      if (body.action === "account_context") {
+        accountAttempts += 1;
+        if (accountAttempts === accountFailureOnCall) return json({ error: "Google authorization expired", code: "GOOGLE_REAUTH_REQUIRED" }, 401);
+        return json({ account_subject: "account-one" });
+      }
+      if (body.action === "read_task") return json(readTask || { task: lastTask, schedule: lastSchedule });
+      if (body.action === "reconcile_intake") return json({ outcome: lastTask ? "verified" : "unknown", task: lastTask, schedule: lastSchedule });
+      if (body.action === "retry_projection") {
+        projectionAttempts += 1;
+        if (projectionFailureOnce && projectionAttempts === 1) return json({ error: "Calendar temporarily unavailable", code: "GOOGLE_PROVIDER_TRANSIENT" }, 503);
+        return json({ receipt: { task_save_status: "verified", reminder_projection_status: projectionReceiptStatus } });
+      }
       if (body.action === "update_task") {
         lastTask = taskResult?.task || {
           id: body.task_id, title: "下午四点开会", notes: "", dueDate: null,
@@ -47,15 +69,31 @@ async function loadIntakeHandler({ taskResult, readTask, context, failPreference
       lastTask = taskResult?.task || {
         id: "task-hotel", title: body.title, notes: body.notes, dueDate: body.dueDate,
       };
+      lastSchedule = body.schedule || null;
+      createAttempts += 1;
+      if (unknownCreateOnce && createAttempts === 1) throw new DOMException("simulated connection timeout", "TimeoutError");
       return json(taskResult || {
         write_success: true,
         task: lastTask,
+        receipt: { task_save_status: "verified", reminder_projection_status: createReceiptStatus },
       });
     }
 
     if (requestUrl.pathname.endsWith("/rest/v1/personal_os_intake_audit")) {
-      if ((init.method || "GET") === "POST") return json([{ id: "audit-1" }]);
-      return json([]);
+      const stageFilter = requestUrl.searchParams.get("stage");
+      if (stageFilter?.startsWith("in.(") && audit && !stageFilter.includes(audit.stage)) return json([]);
+      if ((init.method || "GET") === "POST") {
+        if (audit) return json([]);
+        audit = { id: "11111111-1111-4111-8111-111111111111", recovery_version: 0, retry_count: 0, ...body };
+        return json([audit]);
+      }
+      if ((init.method || "GET") === "PATCH") {
+        const expectedOwner = requestUrl.searchParams.get("lease_owner");
+        if (expectedOwner && expectedOwner !== `eq.${audit?.lease_owner}`) return json([]);
+        audit = { ...audit, ...body };
+        return json([audit]);
+      }
+      return json(audit ? [audit] : []);
     }
     if (requestUrl.pathname.endsWith("/rest/v1/goals_plans")) {
       goalPlanReads += 1;
@@ -72,6 +110,14 @@ async function loadIntakeHandler({ taskResult, readTask, context, failPreference
       writes,
       token,
       goalPlanReads: () => goalPlanReads,
+      createAttempts: () => createAttempts,
+      accountAttempts: () => accountAttempts,
+      mutateAudit: (changes) => { audit = { ...audit, ...changes }; },
+      getAudit: () => audit,
+      mutateTask: (changes) => Object.assign(lastTask, changes),
+      list: async (params = "") => handler(new Request(`https://personal-os.test/intake${params}`, {
+        method: "GET", headers: { authorization: `Bearer ${token}` },
+      })),
       request: async (body) => handler(new Request("https://personal-os.test/intake", {
         method: "POST",
         headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "idempotency-key": "integration-key-1" },
@@ -96,7 +142,7 @@ function taskStatusWrites(harness) {
 test("real intake handler writes, reads back, and returns the verified confirmation", { concurrency: false }, async () => {
   const harness = await loadIntakeHandler();
   try {
-    const response = await harness.request({ raw_text: "明天提醒我订亚朵酒店", type: "task", title: "订亚朵酒店" });
+    const response = await harness.request({ raw_text: "订亚朵酒店", type: "task", title: "订亚朵酒店" });
     const body = await response.json();
 
     assert.equal(response.status, 200);
@@ -104,10 +150,168 @@ test("real intake handler writes, reads back, and returns the verified confirmat
     assert.equal(body.write_success, true);
     assert.equal(body.verified, true);
     assert.equal(body.message, "已经写进去了");
-    assert.deepEqual(taskStatusWrites(harness).map((call) => call.body.action || "create"), ["autonomy_context", "create", "read_task"]);
+    assert.deepEqual(taskStatusWrites(harness).map((call) => call.body.action || "create"), ["autonomy_context", "account_context", "create", "read_task"]);
   } finally {
     harness.restore();
   }
+});
+
+test("a timed-out successful provider write is reconciled and ten replays create only once", { concurrency: false }, async () => {
+  const harness = await loadIntakeHandler({ unknownCreateOnce: true });
+  const input = { raw_text: "订亚朵酒店", type: "task", title: "订亚朵酒店" };
+  try {
+    const first = await (await harness.request(input)).json();
+    assert.equal(first.success, false);
+    assert.equal(first.code, "INTAKE_TIMEOUT");
+    harness.mutateAudit({ next_retry_at: null, lease_expires_at: null });
+    const recovered = await (await harness.request(input)).json();
+    assert.equal(recovered.success, true);
+    assert.equal(recovered.id, "task-hotel");
+    for (let count = 0; count < 10; count += 1) {
+      const replay = await (await harness.request(input)).json();
+      assert.equal(replay.id, "task-hotel");
+    }
+    assert.equal(harness.createAttempts(), 1);
+  } finally { harness.restore(); }
+});
+
+test("Calendar failure resumes projection on the same task", { concurrency: false }, async () => {
+  const task = { id: "task-reminder", title: "交材料", notes: "2099-01-01 15:00提醒我交材料", dueDate: "2099-01-01" };
+  const harness = await loadIntakeHandler({
+    taskResult: { write_success: true, task, projection_error: { code: "CALENDAR_SYNC_PENDING" },
+      receipt: { task_save_status: "verified", reminder_projection_status: "pending" } },
+    projectionReceiptStatus: "configured",
+  });
+  const input = { raw_text: "2099-01-01 15:00提醒我交材料", type: "task", title: "交材料",
+    due: "2099-01-01", requested_date: "2099-01-01", requested_time: "15:00" };
+  try {
+    const first = await (await harness.request(input)).json();
+    assert.equal(first.success, false);
+    assert.equal(first.id, "task-reminder");
+    harness.mutateAudit({ next_retry_at: null, lease_expires_at: null });
+    const second = await (await harness.request(input)).json();
+    assert.equal(second.success, true, JSON.stringify(second));
+    assert.equal(second.id, "task-reminder");
+    assert.equal(harness.createAttempts(), 1);
+    assert.equal(taskStatusWrites(harness).filter((call) => call.body.action === "retry_projection").length, 1);
+  } finally { harness.restore(); }
+});
+
+test("date-only reminder creates and verifies one task without a timed projection", { concurrency: false }, async () => {
+  const harness = await loadIntakeHandler({ createReceiptStatus: "not_requested" });
+  const input = { raw_text: "明天提醒我落实重点人群退抵税系统", type: "task", title: "落实重点人群退抵税系统",
+    due: "2026-09-25", requested_date: "2026-09-25", fixed_time: false, priority: "high" };
+  try {
+    const first = await (await harness.request(input)).json();
+    assert.equal(first.success, true, JSON.stringify(first));
+    const schedule = harness.getAudit().request_payload.schedule;
+    assert.equal(schedule.scheduled_date, "2026-09-25");
+    assert.equal(schedule.scheduled_start, null);
+    assert.equal(schedule.fixed_time, false);
+    assert.equal(schedule.priority, "high");
+    const replay = await (await harness.request(input)).json();
+    assert.equal(replay.id, first.id);
+    assert.equal(harness.createAttempts(), 1);
+  } finally { harness.restore(); }
+});
+
+test("a missing reminder time is listed and amended under the same request identity", { concurrency: false }, async () => {
+  const harness = await loadIntakeHandler({ createReceiptStatus: "configured" });
+  try {
+    const first = await (await harness.request({ raw_text: "提醒我交材料", type: "task", title: "交材料", fixed_time: true })).json();
+    assert.equal(first.code, "REMINDER_TIME_REQUIRED");
+    assert.equal(harness.createAttempts(), 0);
+    const list = await (await harness.list("?limit=1&offset=0")).json();
+    assert.equal(list.requests.length, 1);
+    assert.equal(list.requests[0].stage, "needs_input");
+    assert.equal(list.has_more, false);
+    const amended = await (await harness.request({ action: "amend_request", request_id: first.request_id,
+      recovery_version: list.requests[0].recovery_version, requested_date: "2099-01-01", requested_time: "15:00" })).json();
+    assert.equal(amended.id, "task-hotel");
+    assert.equal(harness.createAttempts(), 1);
+    assert.equal(harness.getAudit().id, first.request_id);
+  } finally { harness.restore(); }
+});
+
+test("a prewrite authorization interruption resumes the same request after account verification", { concurrency: false }, async () => {
+  const harness = await loadIntakeHandler();
+  try {
+    const first = await (await harness.request({ raw_text: "提醒我交材料", type: "task", title: "交材料", fixed_time: true })).json();
+    assert.equal(first.code, "REMINDER_TIME_REQUIRED");
+    const payload = normalizeIntake({ raw_text: "交材料", type: "task", title: "交材料", due: "2099-01-01" });
+    harness.mutateAudit({ stage: "auth_required", provider_attempted: false, request_payload: payload,
+      account_subject: "account-one", lease_expires_at: null, next_retry_at: null });
+    const recovered = await (await harness.request({ action: "recover", request_id: first.request_id })).json();
+    assert.equal(recovered.results[0].success, true);
+    assert.equal(harness.createAttempts(), 1);
+    assert.equal(harness.getAudit().stage, "request_verified");
+  } finally { harness.restore(); }
+});
+
+test("an expired credential during the first context read leaves a frozen request and resumes it once", { concurrency: false }, async () => {
+  const harness = await loadIntakeHandler({ contextAuthFailureOnce: true });
+  const input = { raw_text: "2099-01-01 提醒我交材料", type: "task", title: "交材料", requested_date: "2099-01-01" };
+  try {
+    const firstResponse = await harness.request(input);
+    const first = await firstResponse.json();
+    assert.equal(firstResponse.status, 202);
+    assert.equal(first.code, "GOOGLE_REAUTH_REQUIRED");
+    assert.equal(harness.getAudit().stage, "auth_required");
+    assert.equal(harness.getAudit().provider_attempted, false);
+    assert.equal(harness.getAudit().request_payload.context_pending, true);
+    assert.equal(harness.createAttempts(), 0);
+    const recovered = await (await harness.request({ action: "recover", request_id: first.request_id })).json();
+    assert.equal(recovered.results[0].success, true, JSON.stringify(recovered));
+    assert.equal(harness.getAudit().request_payload.context_pending, undefined);
+    assert.equal(harness.getAudit().account_subject, "account-one");
+    assert.equal(harness.createAttempts(), 1);
+    assert.equal(harness.getAudit().id, first.request_id);
+  } finally { harness.restore(); }
+});
+
+test("recovery authorization failure releases its lease and waits for reconnect", { concurrency: false }, async () => {
+  const harness = await loadIntakeHandler({ accountFailureOnCall: 2 });
+  try {
+    const initial = await (await harness.request({ raw_text: "提醒我交材料", type: "task", title: "交材料", fixed_time: true })).json();
+    assert.equal(initial.code, "REMINDER_TIME_REQUIRED");
+    const payload = normalizeIntake({ raw_text: "交材料", type: "task", title: "交材料", due: "2099-01-01" });
+    harness.mutateAudit({ stage: "received", status: "processing", request_payload: payload,
+      lease_owner: null, lease_expires_at: null, next_retry_at: null });
+    const recovered = await (await harness.request({ action: "recover", request_id: initial.request_id })).json();
+    assert.equal(recovered.results[0].code, "GOOGLE_REAUTH_REQUIRED");
+    assert.equal(harness.getAudit().stage, "auth_required");
+    assert.equal(harness.getAudit().lease_owner, null);
+    assert.equal(harness.getAudit().lease_expires_at, null);
+    assert.equal(harness.getAudit().next_retry_at, null);
+    assert.equal(harness.createAttempts(), 0);
+    const accountAttempts = harness.accountAttempts();
+    const background = await (await harness.request({ action: "recover_due" })).json();
+    assert.deepEqual(background.results, []);
+    assert.equal(harness.accountAttempts(), accountAttempts);
+  } finally { harness.restore(); }
+});
+
+test("transient projection recovery keeps the verified Task ID and a bounded retry", { concurrency: false }, async () => {
+  const task = { id: "task-reminder", title: "交材料", notes: "2099-01-01 15:00提醒我交材料", dueDate: "2099-01-01" };
+  const harness = await loadIntakeHandler({ taskResult: { write_success: true, task,
+    projection_error: { code: "CALENDAR_SYNC_PENDING" },
+    receipt: { task_save_status: "verified", reminder_projection_status: "pending" } },
+    projectionFailureOnce: true });
+  const input = { raw_text: "2099-01-01 15:00提醒我交材料", type: "task", title: "交材料",
+    due: "2099-01-01", requested_date: "2099-01-01", requested_time: "15:00" };
+  try {
+    const first = await (await harness.request(input)).json();
+    assert.equal(first.id, "task-reminder");
+    harness.mutateAudit({ next_retry_at: null, lease_expires_at: null });
+    const retry = await (await harness.request({ action: "recover", request_id: first.request_id })).json();
+    assert.equal(retry.results[0].code, "GOOGLE_PROVIDER_TRANSIENT");
+    assert.equal(retry.results[0].object_id, "task-reminder");
+    assert.equal(harness.getAudit().stage, "projection_pending");
+    assert.equal(harness.getAudit().object_id, "task-reminder");
+    assert.equal(harness.getAudit().lease_owner, null);
+    assert.ok(Date.parse(harness.getAudit().next_retry_at) > Date.now());
+    assert.equal(harness.createAttempts(), 1);
+  } finally { harness.restore(); }
 });
 
 test("real intake handler answers pure questions without provider or audit writes", { concurrency: false }, async () => {
@@ -144,7 +348,7 @@ test("short corrections use the provider update route and retain the current tas
   const task = { id: "task-current", title: "下午三点开会", notes: "", dueDate: null };
   const harness = await loadIntakeHandler({
     context: { current_task: { ...task, requested_date: "2026-09-06", requested_time: "15:00" }, calendar_events: [], context_warnings: [] },
-    taskResult: { write_success: true, task, resolution: { decision: "UPDATE" } },
+    taskResult: { write_success: true, task, resolution: { decision: "UPDATE" }, receipt: { reminder_projection_status: "configured" } },
     readTask: { task },
   });
   try {
@@ -195,19 +399,20 @@ test("mixed current action and lasting preference reports a partial result", { c
   }
 });
 
+
 for (const type of [undefined, "task"]) {
   test(`voice reminder traverses intake write and readback (type=${type})`, { concurrency: false }, async () => {
-    const harness = await loadIntakeHandler();
+    const harness = await loadIntakeHandler({ createReceiptStatus: "configured" });
     try {
       const raw_text = "提醒一下我今天下午四点半有陈明学长的分享，关于怎么做好圆桌的邀约人，如果有时间就参与一下";
       const response = await harness.request({ raw_text, type, title: "参与圆桌邀约人分享",
-        due: "2026-10-02", requested_date: "2026-10-02", requested_time: "16:30",
+        due: "2099-10-02", requested_date: "2099-10-02", requested_time: "16:30",
         fixed_time: true, reminder_policy: "smart", timezone: "Asia/Shanghai" });
       const body = await response.json();
-      assert.equal(body.write_success, true);
+      assert.equal(body.write_success, true, JSON.stringify(body));
       assert.equal(body.verified, true);
       assert.equal(body.destination, "google_tasks");
-      assert.deepEqual(taskStatusWrites(harness).map(call => call.body.action || "create"), ["autonomy_context", "create", "read_task"]);
+      assert.deepEqual(taskStatusWrites(harness).map(call => call.body.action || "create"), ["autonomy_context", "account_context", "create", "read_task"]);
     } finally { harness.restore(); }
   });
 }
@@ -221,3 +426,13 @@ for (const raw_text of ["下午四点半有什么安排？", "陈明学长这个
     } finally { harness.restore(); }
   });
 }
+
+for(const status of ['completed','cancelled'])test(`actual recover_due marks ${status} terminal and cannot revive Task or Event`,{concurrency:false},async()=>{
+ const h=await loadIntakeHandler();try{
+ await h.request({raw_text:'明天下午五点处理合成事项',type:'task',title:'Synthetic terminal recovery',requested_date:'2099-10-07',requested_time:'17:00',fixed_time:true,reminder_policy:'custom',reminder_policy_source:'user_explicit',reminder_at:'2099-10-07T17:00',timezone:'Asia/Shanghai'});
+ assert.equal(h.getAudit().stage,'projection_pending');h.mutateTask({status});h.mutateAudit({next_retry_at:'2000-01-01T00:00:00Z'});
+ const first=await (await h.request({action:'recover_due'})).json();assert.equal(first.results[0].code,'TASK_NO_LONGER_ACTIVE');assert.equal(h.getAudit().stage,'cancelled');
+ const writes=h.writes.filter(x=>x.path.endsWith('/functions/v1/task-status')&&['create','retry_projection','update_task'].includes(x.body?.action));
+ await h.request({action:'recover_due'});assert.equal(h.createAttempts(),1);assert.equal(h.writes.filter(x=>x.path.endsWith('/functions/v1/task-status')&&['create','retry_projection','update_task'].includes(x.body?.action)).length,writes.length);
+ }finally{h.restore()}
+});

@@ -392,7 +392,7 @@ export function resolveReminderPolicy(input = {}, { preserveReminderPolicy = fal
   }
 
   const disabledByText = /(?:不用|不要|无需|取消)(?:再)?提醒|别提醒/.test(text);
-  const disabledByInput = suppliedPolicy === "none" && suppliedSource !== "system_default";
+  const disabledByInput = suppliedPolicy === "none" && (!suppliedSource || suppliedSource === "user_explicit");
   if (disabledByText || disabledByInput) {
     return policyResult({ policy: "none", source: "user_explicit", reason: suppliedReason || "用户明确要求不提醒", specs: [], context, channel, disabled: true });
   }
