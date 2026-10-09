@@ -368,18 +368,25 @@ function contextId(input, snake, camel) {
   return cleanString(input?.[snake] || input?.[camel], 1024) || null;
 }
 
-// Operation authority comes from current user wording, never generated notes.
-function operationWording(input) {
+// This is a conservative command gate, not a general natural-language negation parser.
+// Strong sentence boundaries may start a new instruction; commas cannot reset negation.
+function operationAuthority(input) {
   const current = cleanString(input.raw_text || input.input) || cleanString(input.title);
-  return current.replace(/“[^”]*”|「[^」]*」|『[^』]*』|"[^"\n]*"|'[^'\n]*'/g, "")
-    .split(/[，,。；;\n]/)
-    .filter(clause => !/(?:不|别|勿|无需|不要|不能|禁止|不得|不用|没有|未)(?:.{0,10})(?:改|更新|合并|补充|扩展)/.test(clause))
-    .join(" ");
+  const quoted = current.replace(/```[\s\S]*?```|`[^`]*`|“[^”]*”|‘[^’]*’|「[^」]*」|『[^』]*』|"[^"\n]*"|'[^'\n]*'/g, "");
+  const operationCue = text => EXPLICIT_UPDATE_CUE.test(text) || EXPLICIT_MERGE_CUE.test(text) || ADDITIVE_CUE.test(text);
+  const hasChangeCue = text => EXPLICIT_UPDATE_CUE.test(text) || EXPLICIT_MERGE_CUE.test(text);
+  const metaOnly = /(?:只(?:是|需|要)?(?:记录|说明|引用|讨论)|(?:不要|不|勿|禁止)(?:.{0,8})(?:执行|操作|写入))/.test(current);
+  const unmatchedQuote = /[`“”‘’「」『』"]/.test(quoted);
+  const clauses = quoted.split(/[。；;\n]/);
+  const affirmative = clauses.filter(clause => !/(?:不|别|勿|无需|不要|不能|禁止|不得|不用|没有|未)/.test(clause));
+  const text = metaOnly || unmatchedQuote ? "" : affirmative.join(" ");
+  return { text, requires_clarification: hasChangeCue(current) && (!hasChangeCue(text) || metaOnly || unmatchedQuote), has_operation: operationCue(text) };
 }
 
 export function extractIntentProfile(input = {}) {
   const text = semanticCorpus(input);
-  const operationText = operationWording(input);
+  const authority = operationAuthority(input);
+  const operationText = authority.text;
   const resources = resourcesFor(text, input);
   const topics = topicsFor(text);
   const normalizedText = normalizeResolutionText(text);
@@ -403,6 +410,7 @@ export function extractIntentProfile(input = {}) {
     additive: ADDITIVE_CUE.test(operationText),
     explicit_merge: EXPLICIT_MERGE_CUE.test(operationText),
     explicit_update: EXPLICIT_UPDATE_CUE.test(operationText),
+    operation_requires_clarification: authority.requires_clarification,
     dependency_cue: DEPENDENCY_CUE.test(text),
     parent_child_cue: PARENT_CHILD_CUE.test(text),
   };
@@ -813,6 +821,14 @@ export function resolveTaskIntent(incoming, context = {}) {
       status: semanticStatus(candidate),
       updated_at: candidate.updated_at || candidate.updatedAt || "",
       ...scored,
+    });
+  }
+  const explicitTargetWithoutCommand = cleanString(incoming?.existing_task_id, 1024)
+    && (!cleanString(incoming?.raw_text || incoming?.input) || !profile.explicit_update);
+  if (profile.operation_requires_clarification || explicitTargetWithoutCommand) {
+    return baseResult(profile, ranked, "NEW", 0, "Quoted, negated or uncertain modification wording does not authorize a write; clarify the intended action.", {
+      automatic_action: "CLARIFY", should_create: false, requires_clarification: true,
+      existing_task_id: null, canonical_task_id: null, relationships: [], shared_resources: [],
     });
   }
   const top = ranked[0] || null;

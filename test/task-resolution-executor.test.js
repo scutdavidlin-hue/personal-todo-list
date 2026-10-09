@@ -172,3 +172,14 @@ test('preview and execution agree for the same normalized fee input and provider
  const input={title:'跟进九月份费用到账',raw_text:'月底提醒合伙人支付九月份费用，放到十月底。',notes:'不擅自改为十月初。',due:'2026-10-31'};
  const context={tasks:[task]};const preview=taskResolutionPreview(input,context);const adapter=fakeAdapter([task]);const result=await resolveAndExecuteTask(input,context,adapter);assert.equal(preview.decision,'NEW');assert.equal(result.resolution.decision,preview.decision);assert.deepEqual(adapter.tasks.get(task.id),task);assert.equal(adapter.events.filter(x=>x[0]==='task:update').length,0);
 });
+
+test('independent QA negation and quotation counterexamples stop before every write',async()=>{
+ const phrases=['不要把这条费用任务提前到10月1日','不要把这条费用任务推迟到10月31日','不要把这条费用任务调整为10月31日','不要在未核实所有相关信息并经过用户明确确认之前把日期改到10月31日','原话是‘改到10月31日’，现在只是记录这句话','请记录代码片段 `改到10月31日`，不要执行','不要把费用任务，改到10月31日','只是讨论：把日期改到10月31日','记录 ```把日期调整为10月31日```','引用“改到月底'];
+ for(const raw_text of phrases){const fee={id:'fee',title:'费用到账',status:'open',due:'2026-10-15'};const adapter=fakeAdapter([fee]);const input={title:fee.title,raw_text,existing_task_id:'fee',due:'2026-10-31'};const r=resolveTaskIntent(input,{tasks:[fee]});assert.equal(r.requires_clarification,true,raw_text);await assert.rejects(executeTaskResolution(input,r,adapter),e=>e.code==='TASK_TARGET_AMBIGUOUS');assert.deepEqual(adapter.tasks.get('fee'),fee);assert.equal(adapter.events.length,0,raw_text);}
+});
+test('an affirmative sentence after a negated title instruction can update the exact task',async()=>{
+ const fee={id:'fee',title:'费用到账',status:'open',due:'2026-10-15'};const input={title:fee.title,raw_text:'不要改已有标题；把日期改到10月31日',existing_task_id:'fee',due:'2026-10-31'};const r=resolveTaskIntent(input,{tasks:[fee]});assert.equal(r.decision,'UPDATE');const adapter=fakeAdapter([fee]);await executeTaskResolution(input,r,adapter);assert.equal(adapter.tasks.get('fee').due,'2026-10-31');assert.equal(adapter.tasks.get('fee').title,fee.title);
+});
+test('exact target id alone or unknown instruction cannot authorize a semantic fallback write',async()=>{
+ for(const raw_text of [undefined,'费用到账','将费用挪至月底','只记录此任务，不操作']){const fee={id:'fee',title:'费用到账',status:'open',due:'2026-10-15'};const adapter=fakeAdapter([fee]);const input={title:fee.title,existing_task_id:'fee',raw_text,due:'2026-10-31'};const r=resolveTaskIntent(input,{tasks:[fee]});assert.equal(r.requires_clarification,true);await assert.rejects(executeTaskResolution(input,r,adapter));assert.equal(adapter.events.length,0);assert.deepEqual(adapter.tasks.get('fee'),fee);}
+});
