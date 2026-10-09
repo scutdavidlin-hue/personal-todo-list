@@ -376,11 +376,18 @@ function operationAuthority(input) {
   const operationCue = text => EXPLICIT_UPDATE_CUE.test(text) || EXPLICIT_MERGE_CUE.test(text) || ADDITIVE_CUE.test(text);
   const hasChangeCue = text => EXPLICIT_UPDATE_CUE.test(text) || EXPLICIT_MERGE_CUE.test(text);
   const metaOnly = /(?:只(?:是|需|要)?(?:记录|说明|引用|讨论)|(?:不要|不|勿|禁止)(?:.{0,8})(?:执行|操作|写入))/.test(current);
-  const unmatchedQuote = /[`“”‘’「」『』"]/.test(quoted);
+  const unmatchedQuote = /[`“”‘’「」『』"']/.test(quoted);
   const clauses = quoted.split(/[。；;\n]/);
   const affirmative = clauses.filter(clause => !/(?:不|别|勿|无需|不要|不能|禁止|不得|不用|没有|未)/.test(clause));
   const text = metaOnly || unmatchedQuote ? "" : affirmative.join(" ");
-  return { text, requires_clarification: hasChangeCue(current) && (!hasChangeCue(text) || metaOnly || unmatchedQuote), has_operation: operationCue(text) };
+  const createCommand = /(?:新建|新增|另建|创建|做个提醒|提醒(?:我|一下)|记得)/.test(text)
+    || /^(?:请)?(?:新建|新增|另建|创建)/.test(quoted.trim());
+  const deniedMutation = clauses.some(clause => /(?:不|别|勿|无需|不要|不能|禁止|不得|不用|没有|未)/.test(clause)
+    && /(?:改|更新|提前|推迟|调整|合并|补充|扩展|挪|移|操作|执行|写入)/.test(clause));
+  const unclearMutation = !hasChangeCue(text) && /(?:^(?:请)?(?:把|将).*(?:挪|移|改|调整)|^(?:请)?(?:修改|更改|补充|调整|延期))/m.test(text.trim());
+  return { text, requires_clarification: metaOnly || unmatchedQuote || unclearMutation
+    || (deniedMutation && !hasChangeCue(text) && !createCommand)
+    || (hasChangeCue(current) && !hasChangeCue(text) && !createCommand), has_operation: operationCue(text) };
 }
 
 export function extractIntentProfile(input = {}) {
