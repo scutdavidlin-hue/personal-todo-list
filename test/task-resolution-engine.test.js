@@ -52,6 +52,7 @@ test("PRD Test 2: additive month wording updates the existing Task", () => {
   assert.equal(resolution.should_create, false);
   assert.equal(resolution.existing_task_id, "finance-2");
   assert.equal(resolution.update.title, "分析6、7、8月财务数据");
+  assert.ok(resolution.confidence <= resolution.candidates[0].score);
   assert.deepEqual(extractIntentProfile(resolution.update).months, [6, 7, 8]);
 });
 
@@ -501,4 +502,31 @@ test("title merge preserves existing meaning while adding new scope", () => {
     mergeTaskTitle(openTask("x", "分析六月七月财务数据"), { title: "八月份也一起分析" }),
     "分析6、7、8月财务数据",
   );
+});
+
+test('generated explanatory notes cannot authorize an update or merge', () => {
+ const p=extractIntentProfile({title:'跟进合伙人支付九月份费用',raw_text:'月底提醒合伙人支付九月份费用，现金流不足放到十月底。',notes:'原付款时间四月初待核；不擅自改为十月初。不要合并，也一起补充说明。'});
+ assert.equal(p.explicit_update,false);assert.equal(p.explicit_merge,false);assert.equal(p.additive,false);
+});
+test('negated and quoted update language is not an operation instruction', () => {
+ for(const raw of ['不要改为十月初','不擅自改为十月初','别把已有任务改到月底','原话是“改为十月初”，现在只是记录这句话','他说「改到月底」，请记录说明'])assert.equal(extractIntentProfile({raw_text:raw,title:'记录费用说明'}).explicit_update,false,raw);
+ assert.equal(extractIntentProfile({raw_text:'不要改已有标题；把日期改到10月31日',title:'已有任务'}).explicit_update,true);
+});
+test('shared fees and months cannot establish an unrelated update target', () => {
+ const tasks=[{id:'trip',title:'10月香港行：开户与设备购买',notes:'核对开户费用及资金安排',status:'open',due:'2026-10-15',originalIntent:'10月15日香港行，核对费用'}];
+ const incoming={title:'跟进合伙人支付九月份费用',raw_text:'月底做个提醒，九月份费用因为现金流不足放到十月底。',notes:'原付款时间四月初待核；不擅自改为十月初。十一月份费用正常支付。',due:'2026-10-31'};
+ const r=resolveTaskIntent(incoming,{tasks});assert.equal(r.decision,'NEW');assert.equal(r.existing_task_id,null);assert.equal(r.normalized_intent.explicit_update,false);
+ const explicit=resolveTaskIntent({...incoming,raw_text:'把九月份费用到账日期改到十月底'},{tasks});assert.notEqual(explicit.decision,'UPDATE');assert.notEqual(explicit.decision,'MERGE');
+});
+test('a clearly identified same task retains date update and ordinary duplicate behavior',()=>{
+ const task={id:'fee',title:'核对合伙人九月份费用到账',status:'open',due:'2026-10-15'};
+ const input={title:task.title,raw_text:'把这条费用任务日期改到10月31日',existing_task_id:'fee',due:'2026-10-31'};
+ const r=resolveTaskIntent(input,{tasks:[task]});assert.equal(r.decision,'UPDATE');assert.equal(r.existing_task_id,'fee');assert.equal(r.update.due,'2026-10-31');
+ const d=resolveTaskIntent({title:task.title,due:task.due},{tasks:[task]});assert.equal(d.decision,'DUPLICATE');
+});
+test('an explicit id cannot fall back to another task when missing or closed',()=>{
+ for(const tasks of [[{id:'other',title:'费用核对',status:'open'}],[{id:'target',title:'费用核对',status:'completed'}]])assert.throws(()=>resolveTaskIntent({title:'费用核对',raw_text:'把日期改到月底',existing_task_id:'target',due:'2026-10-31'},{tasks}),/missing or closed/);
+});
+test('weak update keyword candidates are not promoted to high-confidence updates',()=>{
+ const r=resolveTaskIntent({title:'九月费用到账',raw_text:'将九月费用日期改为十月底',due:'2026-10-31'},{tasks:[{id:'trip',title:'10月香港行核对开户费用',status:'open',due:'2026-10-15'}]});assert.notEqual(r.decision,'UPDATE');assert.notEqual(r.decision,'MERGE');
 });

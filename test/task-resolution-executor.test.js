@@ -160,3 +160,15 @@ test("provider acknowledgement with stale readback never reports success or disc
   assert.equal(adapter.tasks.size, 1);
   assert.equal(adapter.events.some(([type]) => type === "audit:complete"), false);
 });
+
+test('fee intake with explanatory negative wording never writes the unrelated trip',async()=>{
+ const trip={id:'trip-fixture',title:'10月香港行：开户与设备购买',notes:'核对开户费用及资金安排',status:'open',due:'2026-10-15',originalIntent:'10月15日香港行，核对费用'};
+ const incoming={title:'跟进合伙人支付九月份费用',raw_text:'月底做个提醒，九月份费用因为现金流不足放到十月底。',notes:'原付款时间四月初待核；不擅自改为十月初。十一月份费用正常支付。',due:'2026-10-31'};
+ const adapter=fakeAdapter([trip]);const resolution=resolveTaskIntent(incoming,{tasks:[trip]});assert.equal(resolution.decision,'NEW');await executeTaskResolution(incoming,resolution,adapter);assert.deepEqual(adapter.tasks.get(trip.id),trip);assert.equal(adapter.events.filter(x=>x[0]==='task:update').length,0);assert.equal(adapter.events.filter(x=>x[0]==='task:create').length,1);
+});
+test('preview and execution agree for the same normalized fee input and provider snapshot',async()=>{
+ const {taskResolutionPreview,resolveAndExecuteTask}=await import('../supabase/functions/_shared/task-resolution-runtime.js');
+ const task={id:'trip',title:'10月香港行：开户与设备购买',notes:'核对开户费用',status:'open',due:'2026-10-15'};
+ const input={title:'跟进九月份费用到账',raw_text:'月底提醒合伙人支付九月份费用，放到十月底。',notes:'不擅自改为十月初。',due:'2026-10-31'};
+ const context={tasks:[task]};const preview=taskResolutionPreview(input,context);const adapter=fakeAdapter([task]);const result=await resolveAndExecuteTask(input,context,adapter);assert.equal(preview.decision,'NEW');assert.equal(result.resolution.decision,preview.decision);assert.deepEqual(adapter.tasks.get(task.id),task);assert.equal(adapter.events.filter(x=>x[0]==='task:update').length,0);
+});

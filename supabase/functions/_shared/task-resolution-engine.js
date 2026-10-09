@@ -368,8 +368,18 @@ function contextId(input, snake, camel) {
   return cleanString(input?.[snake] || input?.[camel], 1024) || null;
 }
 
+// Operation authority comes from current user wording, never generated notes.
+function operationWording(input) {
+  const current = cleanString(input.raw_text || input.input) || cleanString(input.title);
+  return current.replace(/“[^”]*”|「[^」]*」|『[^』]*』|"[^"\n]*"|'[^'\n]*'/g, "")
+    .split(/[，,。；;\n]/)
+    .filter(clause => !/(?:不|别|勿|无需|不要|不能|禁止|不得|不用|没有|未)(?:.{0,10})(?:改|更新|合并|补充|扩展)/.test(clause))
+    .join(" ");
+}
+
 export function extractIntentProfile(input = {}) {
   const text = semanticCorpus(input);
+  const operationText = operationWording(input);
   const resources = resourcesFor(text, input);
   const topics = topicsFor(text);
   const normalizedText = normalizeResolutionText(text);
@@ -390,9 +400,9 @@ export function extractIntentProfile(input = {}) {
     read_resources: resources.reads,
     write_resources: resources.writes,
     resource_fields: fieldsFor(input),
-    additive: ADDITIVE_CUE.test(text),
-    explicit_merge: EXPLICIT_MERGE_CUE.test(text),
-    explicit_update: EXPLICIT_UPDATE_CUE.test(text),
+    additive: ADDITIVE_CUE.test(operationText),
+    explicit_merge: EXPLICIT_MERGE_CUE.test(operationText),
+    explicit_update: EXPLICIT_UPDATE_CUE.test(operationText),
     dependency_cue: DEPENDENCY_CUE.test(text),
     parent_child_cue: PARENT_CHILD_CUE.test(text),
   };
@@ -715,9 +725,12 @@ function additiveUpdateCandidate(profile, ranked) {
     const sharedEntity = setOverlap(profile.entities, item.profile.entities) > 0;
     const sharedResource = setOverlap(profile.resources, item.profile.resources) > 0;
     const incomingNamesDomain = profile.topics.length > 0 || profile.entities.length > 0 || profile.resources.length > 0;
+    // Month shape alone never establishes the target subject.
+    const domainIdentity = sharedTopic && overlapCoefficient(profile.topics, item.profile.topics) >= 0.75 && item.score >= 0.45;
+    const ellipticalIdentity = !incomingNamesDomain && profile.action === item.profile.action && !["act", "update"].includes(profile.action);
     const monthExtension = profile.months.length > 0 && item.profile.months.length > 0
-      && (!incomingNamesDomain || sharedContext || sharedTopic || sharedEntity || sharedResource);
-    const explicitUpdate = profile.explicit_update && item.score >= 0.38;
+      && (sharedContext || (sharedEntity && sharedTopic) || domainIdentity || ellipticalIdentity);
+    const explicitUpdate = profile.explicit_update && item.score >= 0.78 && (sharedEntity || sharedContext || domainIdentity);
     const strongSemanticMatch = item.score >= 0.58;
     const entityBackedMatch = sharedEntity && sharedTopic && item.score >= 0.45;
     return sameAction && (monthExtension || sharedContext || explicitUpdate || strongSemanticMatch || entityBackedMatch);
@@ -859,6 +872,20 @@ export function resolveTaskIntent(incoming, context = {}) {
     }), profile, dependencyCandidates, explicitDependencyIds);
   }
 
+  // The supported existing_task_id parameter identifies a specific provider Task.
+  // A write instruction still has to come from current user wording.
+  const explicitTargetId = cleanString(incoming?.existing_task_id, 1024);
+  if (explicitTargetId && profile.explicit_update) {
+    const target = candidatePool.find(candidate => taskId(candidate) === explicitTargetId);
+    if (!target || CLOSED_STATUSES.has(semanticStatus(target))) throw new Error("Explicit update target is missing or closed; no semantic fallback allowed");
+    return baseResult(profile, ranked, "UPDATE", 1, "Current user update instruction names one exact existing Task id.", {
+      automatic_action: "UPDATE_CANONICAL", should_create: false,
+      existing_task_id: explicitTargetId, canonical_task_id: explicitTargetId,
+      update: { title: target.title, notes: mergeNotes(target, incoming), ...(profile.due ? { due: profile.due } : {}) },
+      relationships: [], shared_resources: [],
+    });
+  }
+
   const duplicate = duplicateConfidence(profile, top);
   const addsOrChangesDue = Boolean(top && profile.due && profile.due !== top.profile.due);
   const incomingNotes = materialIncomingNotes(incoming);
@@ -893,7 +920,7 @@ export function resolveTaskIntent(incoming, context = {}) {
       notes: mergeNotes(match.task, incoming),
       ...(profile.due && profile.due !== match.profile.due ? { due: profile.due } : {}),
     };
-    const confidence = profile.explicit_update || sameIdentityNewDate ? 0.97 : 0.94;
+    const confidence = sameIdentityNewDate || sameIdentityNewNotes ? 0.97 : Math.min(0.94, match.score);
     const reason = sameIdentityNewDate || sameIdentityNewNotes
       ? "The same canonical action received additional date or note information, so the existing task is patched."
       : "The new wording is an additive scope change to one unambiguous existing atomic task.";
