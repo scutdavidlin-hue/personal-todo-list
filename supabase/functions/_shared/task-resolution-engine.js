@@ -151,6 +151,22 @@ function canonicalizeMonthWords(value) {
     .replace(/(1[0-2]|0?[1-9])月份/g, (_, month) => `${Number(month)}月`);
 }
 
+// Only remove a leading calendar qualifier when it agrees with the structured
+// date. Keep the rest of the title exact; product/action changes are identities.
+function datedActionTitle(title, date) {
+  const text = canonicalizeMonthWords(title);
+  const parsed = /^(\d{4})-(\d{2})-(\d{2})$/.exec(cleanString(date));
+  if (!parsed) return normalizeResolutionText(text);
+  const prefix = /^(?:(\d{4})年)?(1[0-2]|0?[1-9])月(?:(上旬|中旬|下旬)|(\d{1,2})[日号])?(?:左右)?[\s：:、，,-]*/.exec(text);
+  if (!prefix) return normalizeResolutionText(text);
+  const day = Number(parsed[3]);
+  const agrees = (!prefix[1] || prefix[1] === parsed[1])
+    && Number(prefix[2]) === Number(parsed[2])
+    && (!prefix[4] || Number(prefix[4]) === day)
+    && (!prefix[3] || (prefix[3] === "上旬" ? day <= 10 : prefix[3] === "中旬" ? day >= 11 && day <= 20 : day >= 21));
+  return normalizeResolutionText(agrees ? text.slice(prefix[0].length) : text);
+}
+
 export function extractMonths(value) {
   const text = canonicalizeMonthWords(value);
   const months = [];
@@ -855,7 +871,7 @@ export function resolveTaskIntent(incoming, context = {}) {
   if (profile.independent_create && profile.due) {
     const identical = candidatePool.filter(candidate => !CLOSED_STATUSES.has(semanticStatus(candidate))
       && dueDate(candidate) === profile.due
-      && normalizeResolutionText(candidate.title) === normalizeResolutionText(incoming.title));
+      && datedActionTitle(candidate.title, dueDate(candidate)) === datedActionTitle(incoming.title, profile.due));
     if (identical.length > 1) return baseResult(profile, ranked, "CONFLICT", 1, "Multiple identical open tasks share the requested date; clarify the canonical task.", {
       automatic_action: "ASK", should_create: false, requires_clarification: true,
     });
