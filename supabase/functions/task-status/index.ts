@@ -382,6 +382,21 @@ async function reconcileIntake(input: Record<string, any>) {
   const google = await allTasks(true);
   const ids = new Set<string>(audits.flatMap((a: any)=>a.result_task_ids || []));
   const matches = google.tasks.filter((task: any)=>ids.has(task.id) || task.metadata?.request_id === auditId);
+  if (!matches.length && !audits.length) {
+    const requests = await serviceRest(`personal_os_intake_audit?${new URLSearchParams({
+      owner_id: `eq.${OWNER_USER_ID}`, id: `eq.${auditId}`,
+      select: "error_code,object_id,target_object_id,response", limit: "1",
+    })}`) || [];
+    const rejected = requests[0];
+    // This exact code is emitted by the executor before its audit or any
+    // provider mutation. Unknown transport/provider failures never qualify.
+    if (rejected?.error_code === "TASK_TARGET_AMBIGUOUS"
+      && rejected.response?.code === "TASK_TARGET_AMBIGUOUS"
+      && rejected.response?.write_success === false && rejected.response?.verified === false
+      && !rejected.object_id && !rejected.target_object_id) {
+      return { outcome: "not_written", code: "PREWRITE_REJECTED", account_subject: google.accountSubject || null };
+    }
+  }
   if (matches.length !== 1) return {outcome:"unknown",account_subject:google.accountSubject || null,code:matches.length > 1 ? "MULTIPLE_REQUEST_OBJECTS" : "WRITE_OUTCOME_UNKNOWN"};
   const task = toTaskModel(await googleRequest(google.accessToken,tasksPath(google.taskListId,matches[0].id)),google.taskListId);
   try { verifyTaskFields(task,input.expected_task || {}); }

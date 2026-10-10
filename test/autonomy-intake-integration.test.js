@@ -8,7 +8,7 @@ function json(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-async function loadIntakeHandler({ taskResult, readTask, context, failPreference = false, unknownCreateOnce = false, contextAuthFailureOnce = false, accountFailureOnCall = 0, projectionFailureOnce = false, projectionReceiptStatus = "disabled", createReceiptStatus = "disabled" } = {}) {
+async function loadIntakeHandler({ taskResult, readTask, context, failPreference = false, unknownCreateOnce = false, contextAuthFailureOnce = false, accountFailureOnCall = 0, projectionFailureOnce = false, projectionReceiptStatus = "disabled", createReceiptStatus = "disabled", reconciliationResult = null } = {}) {
   const previousDeno = globalThis.Deno;
   const previousFetch = globalThis.fetch;
   const writes = [];
@@ -50,7 +50,7 @@ async function loadIntakeHandler({ taskResult, readTask, context, failPreference
         return json({ account_subject: "account-one" });
       }
       if (body.action === "read_task") return json(readTask || { task: lastTask, schedule: lastSchedule });
-      if (body.action === "reconcile_intake") return json({ outcome: lastTask ? "verified" : "unknown", task: lastTask, schedule: lastSchedule });
+      if (body.action === "reconcile_intake") return json(reconciliationResult || { outcome: lastTask ? "verified" : "unknown", task: lastTask, schedule: lastSchedule });
       if (body.action === "retry_projection") {
         projectionAttempts += 1;
         if (projectionFailureOnce && projectionAttempts === 1) return json({ error: "Calendar temporarily unavailable", code: "GOOGLE_PROVIDER_TRANSIENT" }, 503);
@@ -436,3 +436,17 @@ for(const status of ['completed','cancelled'])test(`actual recover_due marks ${s
  await h.request({action:'recover_due'});assert.equal(h.createAttempts(),1);assert.equal(h.writes.filter(x=>x.path.endsWith('/functions/v1/task-status')&&['create','retry_projection','update_task'].includes(x.body?.action)).length,writes.length);
  }finally{h.restore()}
 });
+
+ test("only explicit recovery can retry proven prewrite rejection with the original request identity",{concurrency:false},async()=>{
+  for (const action of ["recover","recover_due"]) {
+   const h=await loadIntakeHandler({reconciliationResult:{outcome:"not_written",code:"PREWRITE_REJECTED",account_subject:"account-one"}});
+   try {
+    const first=await(await h.request({raw_text:"提醒我交材料",type:"task",title:"交材料",fixed_time:true})).json();
+    const payload=normalizeIntake({raw_text:"交材料",type:"task",title:"交材料",due:"2099-01-01"});
+    h.mutateAudit({stage:"outcome_unknown",status:"processing",provider_attempted:true,account_subject:"account-one",request_payload:payload,object_id:null,target_object_id:null,next_retry_at:null,lease_owner:null,lease_expires_at:null});
+    await h.request({action,request_id:first.request_id});
+    assert.equal(h.createAttempts(),action==="recover"?1:0);
+    assert.equal(h.getAudit().id,first.request_id);
+   }finally{h.restore();}
+  }
+ });

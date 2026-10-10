@@ -10,7 +10,7 @@ function json(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-async function loadHandler() {
+async function loadHandler({empty = false, rejection = null, auditPresent = false} = {}) {
   const priorDeno = globalThis.Deno;
   const priorFetch = globalThis.fetch;
   const schedulerCalls = [];
@@ -33,9 +33,10 @@ async function loadHandler() {
     if (parsed.pathname.endsWith("/rest/v1/rpc/claim_google_auth_refresh")) {
       return json([{ outcome: "cached", access_token: "test-access", tasklist_id: "list-one", google_subject: "subject-one" }]);
     }
-    if (parsed.pathname.endsWith("/rest/v1/task_resolution_audit")) return json([{ intake_audit_id: requestId, result_task_ids: [rawTask.id] }]);
+    if (parsed.pathname.endsWith("/rest/v1/task_resolution_audit")) return json(empty ? (auditPresent ? [{intake_audit_id: requestId, result_task_ids: []}] : []) : [{ intake_audit_id: requestId, result_task_ids: [rawTask.id] }]);
+    if (parsed.pathname.endsWith("/rest/v1/personal_os_intake_audit")) return json(rejection ? [rejection] : []);
     if (parsed.pathname.endsWith("/rest/v1/task_schedule_metadata")) return json([]);
-    if (parsed.hostname === "tasks.googleapis.com" && parsed.pathname.endsWith("/tasks")) return json({ items: [rawTask] });
+    if (parsed.hostname === "tasks.googleapis.com" && parsed.pathname.endsWith("/tasks")) return json({ items: empty ? [] : [rawTask] });
     if (parsed.hostname === "tasks.googleapis.com" && parsed.pathname.endsWith(`/tasks/${rawTask.id}`)) return json(rawTask);
     if (parsed.pathname.endsWith("/functions/v1/task-scheduler")) {
       const body = JSON.parse(init.body);
@@ -77,3 +78,10 @@ test("actual task-status handler reconciles exact request marker and restores on
     assert.equal(harness.schedulerCalls[0].only_if_absent, true);
   } finally { harness.restore(); }
 });
+
+ test("prewrite rejection proof requires no marker/audit/object and the exact durable rejection", {concurrency:false}, async()=>{
+  const rejection={error_code:"TASK_TARGET_AMBIGUOUS",response:{code:"TASK_TARGET_AMBIGUOUS",write_success:false,verified:false},object_id:null,target_object_id:null};
+  for (const [options, outcome] of [[{empty:true,rejection},"not_written"],[{empty:true,rejection,auditPresent:true},"unknown"],[{empty:true,rejection:{...rejection,error_code:"OUTCOME_UNKNOWN"}},"unknown"],[{empty:true,rejection:{...rejection,object_id:"some-task"}},"unknown"],[{empty:true,rejection:{...rejection,response:{...rejection.response,verified:true}}},"unknown"]]) {
+   const h=await loadHandler(options);try {const result=await(await h.request({action:"reconcile_intake",intake_audit_id:requestId})).json();assert.equal(result.outcome,outcome);assert.equal(h.schedulerCalls.length,0);}finally{h.restore();}
+  }
+ });

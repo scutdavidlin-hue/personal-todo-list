@@ -350,7 +350,7 @@ function expectedTaskFields(intake: Record<string, any>) {
   return { title: intake.title, notes: intake.notes, dueDate: intake.due };
 }
 
-async function resumeTask(row: Record<string, any>, leaseOwner: string) {
+async function resumeTask(row: Record<string, any>, leaseOwner: string, allowPrewriteRetry = false) {
   let intake = row.request_payload;
   if (!intake || row.classification !== "task") {
     const result = { success: false, request_id: row.id, object_id: row.object_id || null,
@@ -432,6 +432,18 @@ async function resumeTask(row: Record<string, any>, leaseOwner: string) {
     }
   }
   const reconciled = await reconcileTask(row);
+  if (!allowPrewriteRetry && reconciled?.outcome === "not_written" && reconciled.code === "PREWRITE_REJECTED") {
+    // Background reconciliation preserves the original no-write evidence;
+    // only an explicit recover action may re-evaluate the original intent.
+    await updateAudit(row.id, { lease_owner: null, lease_expires_at: null }, leaseOwner);
+    return { success: false, request_id: row.id, code: "PREWRITE_REJECTED", verified: false,
+      write_success: false, message: "原请求在写入前被拦截，可按原请求编号恢复。" };
+  }
+  if (allowPrewriteRetry && reconciled?.outcome === "not_written" && reconciled.code === "PREWRITE_REJECTED"
+    && !row.object_id && !row.target_object_id
+    && (!row.account_subject || row.account_subject === reconciled.account_subject)) {
+    return await resumeTask({ ...row, stage: "received", provider_attempted: false }, leaseOwner);
+  }
   if (reconciled?.outcome === "changed") {
     const result = { success: false, code: "SUPERSEDED", request_id: row.id, object_id: row.object_id,
       message: "任务内容已更新，旧请求不会覆盖当前内容。" };
@@ -620,7 +632,7 @@ Deno.serve(async (request) => {
         try {
           claimed = await claimAudit(row);
           results.push(claimed.row.classification === "task"
-            ? await resumeTask(claimed.row, claimed.leaseOwner)
+            ? await resumeTask(claimed.row, claimed.leaseOwner, input.action === "recover")
             : await resumeNonTask(claimed.row, claimed.leaseOwner));
         } catch (error) {
           if (!claimed) {
