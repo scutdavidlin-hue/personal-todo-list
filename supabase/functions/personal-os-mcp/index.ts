@@ -88,6 +88,8 @@ const TaskOutput = z.object({
   request_id: z.string().optional(),
   outcome: z.string().optional(),
   retry_requires_user_intent: z.boolean().optional(),
+  partial: z.boolean().optional(),
+  receipt: z.record(z.string(), z.unknown()).nullable().optional(),
   message: z.string().optional(),
   decision: z.string().optional(),
   question: z.string().optional(),
@@ -367,6 +369,8 @@ const CREATE_TASK_TOOL = {
       request_id: { type: "string" },
       outcome: { type: "string" },
       retry_requires_user_intent: { type: "boolean" },
+      partial: { type: "boolean" },
+      receipt: { anyOf: [{ type: "object", additionalProperties: true }, { type: "null" }] },
       idempotency_key: { type: "string" },
       replayed: { type: "boolean" },
       schedule: { anyOf: [{ type: "object", additionalProperties: true }, { type: "null" }] },
@@ -632,6 +636,8 @@ const CAPTURE_ITEM_TOOL = {
       request_id: { type: "string" },
       outcome: { type: "string" },
       retry_requires_user_intent: { type: "boolean" },
+      partial: { type: "boolean" },
+      receipt: { anyOf: [{ type: "object", additionalProperties: true }, { type: "null" }] },
       idempotency_key: { type: "string" },
       replayed: { type: "boolean" },
       code: { type: "string" },
@@ -798,14 +804,15 @@ function uncertainIntakeResult(key: string, error: unknown, correlation: Record<
 
 function normalizeIntakeReceipt(result: Record<string, unknown>, key: string, taskReceipt: boolean) {
   const nonempty = (value: unknown) => typeof value === "string" && value.trim().length > 0;
-  const refusal = result.success === false && ["USER_CANCELLED", "ACTION_DENIED", "POLICY_DENIED", "UNAUTHORIZED", "PERMISSION_DENIED", "INVALID_IDEMPOTENCY_KEY", "IDEMPOTENCY_CONFLICT", "CLARIFICATION_REQUIRED", "INFORMATION_ONLY", "TASK_TARGET_AMBIGUOUS"].includes(String(result.code || ""));
+  const refusal = result.success === false && (result.write_success === undefined || result.write_success === false)
+    && (result.verified === undefined || result.verified === false) && ["USER_CANCELLED", "ACTION_DENIED", "POLICY_DENIED", "UNAUTHORIZED", "PERMISSION_DENIED", "INVALID_IDEMPOTENCY_KEY", "IDEMPOTENCY_CONFLICT", "CLARIFICATION_REQUIRED", "INFORMATION_ONLY", "TASK_TARGET_AMBIGUOUS"].includes(String(result.code || ""));
   if (refusal) return { ...result, outcome: "rejected", write_success: false, verified: false, idempotency_key: key, retry_requires_user_intent: true,
     message: result.message || "请求已拒绝或需要澄清，未自动重试。" };
   const receipt = result.receipt as Record<string, unknown> | undefined;
   const saved = nonempty(result.request_id) && nonempty(result.id) && result.write_success === true && result.verified === true
     && (!taskReceipt || receipt?.task_save_status === "verified");
-  if (saved && result.success === true) return { ...result, idempotency_key: key };
-  if (saved && result.success === false && nonempty(result.code)) return { ...result, outcome: "partial", idempotency_key: key, message: result.message || "任务已保存，后续步骤仍待核实。" };
+  if (saved && result.success === true && result.outcome !== "unknown" && result.partial !== true) return { ...result, idempotency_key: key };
+  if (saved) return { ...result, success: false, outcome: "partial", idempotency_key: key, message: "任务已保存，提醒或后续步骤仍待核实。" };
   if (result.success === false && result.outcome === "unknown" && nonempty(result.request_id) && nonempty(result.code)
     && result.write_success === false && result.verified === false) return { ...result, idempotency_key: key, message: "写入结果未知；请按原 request_id 或 idempotency_key 只读核实。" };
   return null;

@@ -26,7 +26,7 @@ Readonly production source inspection on 2026-10-12 found:
 
 ## Isolated validation
 
-`npm run verify`: 471 tests, 469 passed, 2 skipped, 0 failed. Tests use simulated records and fetch responses only.
+`npm run verify`: 476 tests, 474 passed, 2 skipped, 0 failed. Tests use simulated records and fetch responses only.
 
 Actual intake handlers cover reservation-response loss, original request ID retention after provider-write interruption, read-only exact lookup and wrong keys, pending same-key concurrent requests creating once, malformed input and cancelled ledger lookup. Actual gateway functions are type-stripped and executed against isolated fetch responses for timeout, AbortError, malformed/empty/interrupted bodies, verified receipts and explicit cancellation/denial. Existing recovery tests retain account, lease and uncertain-write guards.
 
@@ -39,3 +39,5 @@ This draft provides traceable receipts when service code executes and exact-key 
 Independent review follow-up: same-key different-content conflict retains the original request ID while returning `IDEMPOTENCY_CONFLICT` / `outcome=rejected`. It does not modify the original ledger or permit a retry under changed content.
 
 Additional independent-review follow-up: incomplete structured JSON is treated as unknown, including missing request ID, missing task receipt, missing failure code, and bare success=false. Explicit prewrite denial/cancellation remains rejected; a fully verified task with projection pending remains partial. Unknown outcomes take priority over generic confirmation wording.
+
+Cloud review follow-up (01a13128-b0a7-77a6-afe2-ec1291cef0d8): gateways are connected to the actual intake handler in four coupled probes. A verified saved task with pending reminders retains task ID, flags and receipt as partial even when the real response has no error code. Contradictory success/unknown never reports tool success. Explicit context USER_CANCELLED and ACTION_DENIED are terminal and cannot be resumed by recover_due. Opaque prewrite interruptions remain unknown and require explicit continuation; they are not labelled user cancellation. The task type hint cannot authorize a pure information question, while a genuine reminder directive containing a question still persists.

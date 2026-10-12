@@ -344,7 +344,7 @@ export function evaluateAutonomy(input, options = {}) {
   }
 
   const explicitTaskIntent = cleanString(source.type) === "task" || hasExplicitTaskIntent(rawText);
-  if (!explicitTaskIntent && isInformationQuestion(rawText)) {
+  if (!hasExplicitTaskIntent(rawText) && isInformationQuestion(rawText)) {
     return result("information", "L1", "information", "The request asks for information and does not request a write.", null, baseInput);
   }
 

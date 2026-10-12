@@ -301,6 +301,7 @@ test("write confirmation requires strict success, verification, and an id", () =
   assert.equal(confirmationForWrite({ write_success: "true", verified: true, id: "task-789" }), "写入结果尚未核实");
   assert.equal(confirmationForWrite({ write_success: true }), "写入结果尚未核实");
   assert.equal(confirmationForWrite({ success: true, verified: true, id: "task-789" }), "写入结果尚未核实");
+  assert.equal(confirmationForWrite({ outcome: "unknown", write_success: true, verified: true, id: "task-789" }), "写入结果尚未核实");
   assert.equal(confirmationForWrite({ noop: true }), "没有执行写入");
   assert.equal(confirmationForWrite({ write_success: false, error: "API rejected the write" }), "写入结果尚未核实：API rejected the write");
 });
@@ -348,9 +349,9 @@ for (const raw_text of ["下午四点半有什么安排？", "陈明学长这个
     assert.equal(evaluateAutonomy({ raw_text }, { baseDate: voiceRegressionDate }).intent, "information");
   });
 }
-test("explicit task type preserves question-shaped task content and scheduling", () => {
+test("explicit user reminder preserves question-shaped task content and scheduling", () => {
   const result = evaluateAutonomy({
-    raw_text: "陈明学长这个分享是什么？", type: "task", title: "了解分享内容",
+    raw_text: "提醒我去了解陈明学长这个分享是什么？", type: "task", title: "了解分享内容",
     requested_date: "2026-10-02", requested_time: "16:30", fixed_time: true,
     timezone: "Asia/Shanghai", reminder_policy: "smart",
   }, { baseDate: voiceRegressionDate });
@@ -364,4 +365,8 @@ test("explicit task type preserves question-shaped task content and scheduling",
 test("explicit resolved date preserves production priority over relative wording", () => {
   const result = evaluateAutonomy({ raw_text: "提醒我今天处理财务功能", type: "task", requested_date: "2026-10-02" }, { baseDate: "2026-10-03T01:00:00+08:00" });
   assert.equal(result.input.requested_date, "2026-10-02");
+});
+
+test("a task hint and scheduled fields cannot turn a bare question into persistence",()=>{
+ const r=evaluateAutonomy({raw_text:"陈明学长这个分享是什么？",type:"task",title:"了解分享内容",requested_date:"2026-10-02",requested_time:"16:30",fixed_time:true});assert.equal(r.intent,"information");assert.equal(r.decision,"information");
 });

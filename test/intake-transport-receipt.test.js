@@ -36,6 +36,7 @@ test('verified receipts and explicit denial preserve request identity and do not
 test('incomplete structured JSON is unknown while preserving available request correlation', async()=>{
  for(const method of ['createTask','captureItem'])for(const body of [
   {success:false}, {success:false,error:'upstream interrupted'},
+  {success:false,code:'USER_CANCELLED',write_success:true,verified:true,id:'task',request_id:'known-request'},
   {success:false,request_id:'known-request'},
   {success:false,request_id:'known-request',code:'INTAKE_FAILED'},
   {success:true,verified:true,write_success:true,id:'task',receipt:{task_save_status:'verified'}},
