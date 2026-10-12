@@ -85,6 +85,9 @@ const TaskOutput = z.object({
   success: z.boolean(),
   write_success: z.boolean().optional(),
   verified: z.boolean().optional(),
+  request_id: z.string().optional(),
+  outcome: z.string().optional(),
+  retry_requires_user_intent: z.boolean().optional(),
   message: z.string().optional(),
   decision: z.string().optional(),
   question: z.string().optional(),
@@ -131,6 +134,7 @@ const UpdateRecurrenceSeriesInput = CancelRecurrenceSeriesInput.extend({
   local_time: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/).nullable().optional(),
 });
 const ListReminderRequestsInput = z.object({
+  idempotency_key: z.string().min(8).max(200).optional(),
   stage: z.enum(["received", "needs_input", "unsupported", "missed", "write_pending", "outcome_unknown", "task_verified", "projection_pending", "reminder_verified", "request_verified", "auth_required", "cancelled", "superseded"]).optional(),
   limit: z.number().int().min(1).max(100).default(50),
   offset: z.number().int().min(0).max(100_000).default(0),
@@ -351,11 +355,18 @@ const CREATE_TASK_TOOL = {
     type: "object",
     properties: {
       success: { type: "boolean" },
+      write_success: { type: "boolean" },
+      verified: { type: "boolean" },
+      message: { type: "string" },
+      stage: { type: "string" },
       destination: { type: "string" },
       id: { type: "string" },
       title: { type: "string" },
       due: { anyOf: [{ type: "string" }, { type: "null" }] },
       deduplicated: { type: "boolean" },
+      request_id: { type: "string" },
+      outcome: { type: "string" },
+      retry_requires_user_intent: { type: "boolean" },
       idempotency_key: { type: "string" },
       replayed: { type: "boolean" },
       schedule: { anyOf: [{ type: "object", additionalProperties: true }, { type: "null" }] },
@@ -592,6 +603,10 @@ const CAPTURE_ITEM_TOOL = {
     type: "object",
     properties: {
       success: { type: "boolean" },
+      write_success: { type: "boolean" },
+      verified: { type: "boolean" },
+      message: { type: "string" },
+      stage: { type: "string" },
       destination: { type: "string" },
       classification: { type: "string" },
       id: { type: "string" },
@@ -614,6 +629,9 @@ const CAPTURE_ITEM_TOOL = {
       target_month: { anyOf: [{ type: "string" }, { type: "null" }] },
       target_year: { anyOf: [{ type: "integer" }, { type: "null" }] },
       amount_remaining: { anyOf: [{ type: "number" }, { type: "null" }] },
+      request_id: { type: "string" },
+      outcome: { type: "string" },
+      retry_requires_user_intent: { type: "boolean" },
       idempotency_key: { type: "string" },
       replayed: { type: "boolean" },
       code: { type: "string" },
@@ -770,6 +788,13 @@ function reminderArguments(args: object) {
   return Object.fromEntries(keys.filter((key) => Object.hasOwn(record, key)).map((key) => [key, record[key]]));
 }
 
+function uncertainIntakeResult(key: string, error: unknown) {
+  const result = { success: false, write_success: false, verified: false, outcome: "unknown", code: "INTAKE_OUTCOME_UNKNOWN", idempotency_key: key,
+    error: error instanceof Error ? error.message : "Intake response unavailable", retry_requires_user_intent: true,
+    message: "未收到可靠回执，写入结果未知；请用原 idempotency_key 只读核实，不要自动重试或新建。" };
+  return { isError: true, content: [{ type: "text", text: result.message }], structuredContent: result };
+}
+
 async function createTask(args: z.infer<typeof TaskInput>) {
   let response: Response;
   try {
@@ -812,14 +837,13 @@ async function createTask(args: z.infer<typeof TaskInput>) {
       signal: AbortSignal.timeout(20_000),
     });
   } catch (error) {
-    const result = { success: false, code: "INTAKE_UNREACHABLE", error: error instanceof Error ? error.message : "Personal OS intake unavailable" };
-    return { isError: true, content: [{ type: "text", text: `任务未写入：${result.error}` }], structuredContent: result };
+    return uncertainIntakeResult(args.idempotency_key, error);
   }
 
-  const text = await response.text();
   let result: z.infer<typeof TaskOutput>;
-  try { result = text ? JSON.parse(text) : { success: false }; }
-  catch { result = { success: false, code: "INVALID_GATEWAY_RESPONSE", error: "Personal OS returned an invalid response" }; }
+  try { result = JSON.parse(await response.text()); if (!result || typeof result.success !== "boolean") throw new Error("Invalid intake receipt"); }
+  catch (error) { return uncertainIntakeResult(args.idempotency_key, error); }
+  result.idempotency_key = args.idempotency_key;
   const succeeded = response.ok && result.success === true && result.verified === true;
   return {
     isError: !succeeded,
@@ -956,14 +980,13 @@ async function captureItem(args: z.infer<typeof UnifiedIntakeInput>) {
       signal: AbortSignal.timeout(20_000),
     });
   } catch (error) {
-    const result = { success: false, code: "INTAKE_UNREACHABLE", error: error instanceof Error ? error.message : "Personal OS intake unavailable" };
-    return { isError: true, content: [{ type: "text", text: `未写入 Personal OS：${result.error}` }], structuredContent: result };
+    return uncertainIntakeResult(args.idempotency_key, error);
   }
 
-  const text = await response.text();
   let result: Record<string, unknown>;
-  try { result = text ? JSON.parse(text) : { success: false }; }
-  catch { result = { success: false, code: "INVALID_GATEWAY_RESPONSE", error: "Personal OS returned an invalid response" }; }
+  try { result = JSON.parse(await response.text()); if (!result || typeof result.success !== "boolean") throw new Error("Invalid intake receipt"); }
+  catch (error) { return uncertainIntakeResult(args.idempotency_key, error); }
+  result.idempotency_key = args.idempotency_key;
   const succeeded = response.ok && result.success === true && result.verified === true;
   return {
     isError: !succeeded,
@@ -1157,8 +1180,8 @@ const CANCEL_RECURRENCE_SERIES_TOOL = reminderManagementTool(
 );
 const LIST_REMINDER_REQUESTS_TOOL = reminderManagementTool(
   "list_reminder_requests", "List reminder and synchronization requests",
-  "Read the durable Personal OS request ledger, including pending, missed, unsupported, completed, and cancelled requests. Results are paged; follow has_more and next_offset to see all matching requests.",
-  { type: "object", properties: { stage: { type: "string", enum: ["received", "needs_input", "unsupported", "missed", "write_pending", "outcome_unknown", "task_verified", "projection_pending", "reminder_verified", "request_verified", "auth_required", "cancelled", "superseded"] }, limit: { type: "integer", minimum: 1, maximum: 100, default: 50 }, offset: { type: "integer", minimum: 0, maximum: 100_000, default: 0 } }, additionalProperties: false }, true,
+  "Read the durable Personal OS request ledger, including pending, missed, unsupported, completed, and cancelled requests. Pass idempotency_key for exact read-only outcome verification; an empty result only means not registered at check time, not proof of no write. Results are paged; follow has_more and next_offset to see all matching requests.",
+  { type: "object", properties: { idempotency_key: IDEMPOTENCY_FIELD, stage: { type: "string", enum: ["received", "needs_input", "unsupported", "missed", "write_pending", "outcome_unknown", "task_verified", "projection_pending", "reminder_verified", "request_verified", "auth_required", "cancelled", "superseded"] }, limit: { type: "integer", minimum: 1, maximum: 100, default: 50 }, offset: { type: "integer", minimum: 0, maximum: 100_000, default: 0 } }, additionalProperties: false }, true,
 );
 const RECOVER_REMINDER_REQUEST_TOOL = reminderManagementTool(
   "recover_reminder_request", "Recheck and recover one reminder request",
@@ -1349,7 +1372,7 @@ async function recurrenceSeriesResult(action: "list_series" | "update_series" | 
 async function reminderRequestResult(action: "list" | "recover" | "amend", args: Record<string, unknown>) {
   try {
     const url = new URL(`${SUPABASE_URL}/functions/v1/personal-os-intake`);
-    if (action === "list") for (const key of ["stage", "limit", "offset"]) {
+    if (action === "list") for (const key of ["idempotency_key", "stage", "limit", "offset"]) {
       if (args[key] !== undefined) url.searchParams.set(key, String(args[key]));
     }
     const { response, result } = await internalJson(url.toString(), {
