@@ -1,6 +1,7 @@
 import { verifyTaskFields } from "./write-receipt.js";
 import {
   INCOMING_TASK_REF,
+  RESOLUTION_THRESHOLDS,
   buildResolutionMutationPlan,
   replaceIncomingTaskRefs,
   resolutionProfileRecord,
@@ -34,7 +35,8 @@ function resourceBindings(task, profile, sourceIntentId) {
 }
 
 export async function executeTaskResolution(incoming, resolution, adapter) {
-  if (resolution.requires_clarification === true) {
+  if (resolution.requires_clarification === true || (["UPDATE", "MERGE"].includes(resolution.decision)
+    && !(Number.isFinite(resolution.confidence) && resolution.confidence >= RESOLUTION_THRESHOLDS.automatic))) {
     const error = new Error(resolution.reason || "Multiple tasks match; choose the intended task");
     error.code = "TASK_TARGET_AMBIGUOUS";
     throw error;
