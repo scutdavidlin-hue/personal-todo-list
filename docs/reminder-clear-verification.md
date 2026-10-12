@@ -18,7 +18,9 @@ The initial example-versus-current-intent parser remains outside this clearing-i
 
 ## Validation
 
-`npm run verify`: 489 tests, 487 passed, 2 skipped, 0 failed. All changed behavior is exercised with simulated records and isolated provider responses. Actual scheduler handlers cover explicit none, stale metadata acknowledgement, ignored Calendar reminder patch, ignored projection removal, foreign identity, missing ETag, and preservation of an unrelated event. Actual gateway code rejects accepted but unverified/uncleared responses. An actual Task handler test proves a bad combined timing plan stops before Google Task mutation.
+`npm run verify`: 493 tests, 491 passed, 2 skipped, 0 failed. All changed behavior is exercised with simulated records and isolated provider responses. Actual scheduler handlers cover explicit none, stale metadata acknowledgement, ignored Calendar reminder patch, ignored projection removal, foreign identity, missing ETag, and preservation of an unrelated event. Actual gateway code rejects accepted but unverified/uncleared responses.
+
+Actual task-status and Google Tasks handler regressions verify schedule validation before provider mutation. The Google Tasks update path validates the combined timing plan after reading the canonical state and before changing Task content; ordinary complete/reopen requests use their existing lifecycle path without referring to update-only variables. A 23:50 start plus 30-minute duration is rejected before Task or scheduler writes. A valid date change with execution time cleared retains the Task ID and open status while clearing reminder fields to none/null/empty. These tests use simulated provider responses only.
 
 ## Release dependency
 
