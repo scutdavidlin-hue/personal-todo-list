@@ -116,7 +116,7 @@ function isInformationQuestion(text) {
   if (asksForAction) return false;
   return /[?？]$/.test(text)
     || /^(?:什么|怎么|如何|为什么|为何|是否|谁|哪|几|多少|何时|什么时候|能否|可不可以)/.test(text)
-    || /(?:有没有|有无|是不是|会不会|能不能|可不可以|为什么|怎么|如何|多少|哪里|哪家|几点|什么时候)/.test(text)
+    || /(?:有没有|有无|是不是|是什么|讲什么|指什么|会不会|能不能|可不可以|为什么|怎么|如何|多少|哪里|哪家|几点|什么时候)/.test(text)
     || /(?:吗|呢)[?？]?$/.test(text);
 }
 
@@ -344,7 +344,7 @@ export function evaluateAutonomy(input, options = {}) {
   }
 
   const explicitTaskIntent = cleanString(source.type) === "task" || hasExplicitTaskIntent(rawText);
-  if (!explicitTaskIntent && isInformationQuestion(rawText)) {
+  if (!hasExplicitTaskIntent(rawText) && isInformationQuestion(rawText)) {
     return result("information", "L1", "information", "The request asks for information and does not request a write.", null, baseInput);
   }
 
@@ -430,8 +430,9 @@ function verifiedId(value) {
 export function confirmationForWrite(resultValue) {
   const value = resultValue && typeof resultValue === "object" && !Array.isArray(resultValue) ? resultValue : {};
   const id = value.id ?? value.task_id ?? value.write_id ?? value.data?.id ?? value.record?.id;
+  if (value.outcome === "unknown") return "写入结果尚未核实";
   if (value.write_success === true && value.verified === true && verifiedId(id)) return "已经写进去了";
   if (value.noop === true || value.no_op === true) return "没有执行写入";
   const detail = cleanString(value.error || value.message);
-  return detail ? `没有写进去：${detail}` : "没有写进去";
+  return detail ? `写入结果尚未核实：${detail}` : "写入结果尚未核实";
 }

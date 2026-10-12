@@ -57,6 +57,20 @@ function fakeAdapter(seed = []) {
   return adapter;
 }
 
+test('new family outing executes one isolated create and leaves the original activity untouched', async () => {
+  const existing = {"id":"isolated-chongyang","title":"重阳节带小朋友去白云山登高【或者其他山】","notes":"2026年重阳节为10月18日（周日）。出发前核对景区重阳开放及交通安排、滑道是否开放和儿童乘坐条件；尚未确认2026年重阳滑道开放。用户未指定具体出发或提醒时刻。\n\n原始请求：重阳节那天带我们小朋友去白云山登高，然后还有带他去玩白云山的滑道。就提醒我。","originalIntent":"重阳节那天带我们小朋友去白云山登高，然后还有带他去玩白云山的滑道。就提醒我。","due":"2026-10-18","status":"open"};
+  const incoming = {"title":"周二晚和老婆一起带女儿去长隆万圣节活动","raw_text":"提醒一下我今晚,因为现在已经过凌晨,就今晚周二晚,带我女儿去长隆的万圣节活动,跟我老婆一起带她去。","notes":"安排在2026年10月13日周二晚上。用户未指定具体时刻；出发前确认具体园区当晚活动安排及儿童入场、项目要求。\n\n原始请求：提醒一下我今晚,因为现在已经过凌晨,就今晚周二晚,带我女儿去长隆的万圣节活动,跟我老婆一起带她去。","due":"2026-10-13","requested_date":"2026-10-13"};
+  const resolution = resolveTaskIntent(incoming, {tasks: [existing]});
+  const adapter = fakeAdapter([existing]);
+  const before = JSON.stringify(adapter.tasks.get(existing.id));
+  const result = await executeTaskResolution(incoming, resolution, adapter);
+  assert.equal(result.created, true);
+  assert.notEqual(result.task.id, existing.id);
+  assert.equal(adapter.events.filter(([type]) => type === 'task:create').length, 1);
+  assert.equal(adapter.events.some(([type]) => type === 'task:update'), false);
+  assert.equal(JSON.stringify(adapter.tasks.get(existing.id)), before);
+});
+
 test("duplicate execution reuses the provider Task and writes only metadata/audit", async () => {
   const existing = { id: "existing", title: "明天整理财务数据", due: "2026-09-06", status: "open" };
   const incoming = { title: "明天记得整理一下财务数据", due: "2026-09-06" };
@@ -86,16 +100,15 @@ test("duplicate execution can add dependencies to the canonical Task without cre
   );
 });
 
-test("update execution patches the canonical Task and captures before/after state", async () => {
-  const existing = { id: "existing", title: "分析六月七月财务数据", status: "open" };
-  const incoming = { title: "八月份也一起分析", raw_text: "八月份也一起分析" };
-  const resolution = resolveTaskIntent(incoming, { tasks: [existing] });
-  const adapter = fakeAdapter([existing]);
-  const result = await executeTaskResolution(incoming, resolution, adapter);
-  assert.equal(result.updated, true);
-  assert.equal(result.task.title, "分析6、7、8月财务数据");
-  assert.deepEqual(adapter.events.find(([type]) => type === "task:update").slice(1, 2), ["existing"]);
-  assert.equal(adapter.events.some(([type]) => type === "task:create"), false);
+test("weak elliptical scope updates clarify before any execution", async () => {
+  const existing={id:"existing",title:"分析六月七月财务数据",status:"open"};
+  const incoming={title:"八月份也一起分析",raw_text:"八月份也一起分析"};
+  const resolution=resolveTaskIntent(incoming,{tasks:[existing]});
+  assert.equal(resolution.requires_clarification,true);
+  assert.ok(resolution.confidence<0.9);
+  const adapter=fakeAdapter([existing]);
+  await assert.rejects(()=>executeTaskResolution(incoming,resolution,adapter),e=>e.code==="TASK_TARGET_AMBIGUOUS");
+  assert.deepEqual(adapter.events,[]);
 });
 
 test("parent-child execution creates the parent first and replaces temporary graph ids", async () => {

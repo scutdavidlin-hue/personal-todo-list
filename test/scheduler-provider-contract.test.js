@@ -20,14 +20,14 @@ async function harness(){
    const table=tables[name],match=x=>[...u.searchParams].every(([k,v])=>!v.startsWith('eq.')&&!v.startsWith('neq.')|| (v.startsWith('eq.')?String(x[k])===v.slice(3):String(x[k])!==v.slice(4)));
    if(method==='GET')return j(table.filter(match));
    if(method==='PATCH'){const rows=table.filter(match);rows.forEach(x=>Object.assign(x,b));return j(rows);}
-   if(method==='POST'){const keys=name==='task_schedule_series'?['anchor_task_id']:name==='task_schedule_metadata'?['google_task_id']:['series_id','occurrence_date'];let row=table.find(x=>keys.every(k=>x[k]===b[k]));if(!row){row={id:'row-'+table.length,status:'active',...b};table.push(row);}else if(!String(init.headers?.Prefer).includes('ignore-duplicates'))Object.assign(row,b);return j([row]);}
+   if(method==='POST'){const keys=name==='task_schedule_series'?['anchor_task_id']:name==='task_schedule_metadata'?['google_task_id']:['series_id','occurrence_date'];let row=table.find(x=>keys.every(k=>x[k]===b[k]));if(!row){row={id:'row-'+table.length,status:'active',...b};table.push(row);}else if(!String(init.headers?.Prefer).includes('ignore-duplicates')&&!(name==='task_schedule_metadata'&&state.ignoreScheduleWrite))Object.assign(row,b);return j([row]);}
   }
   if(u.hostname==='tasks.googleapis.com'){
    if(u.pathname.endsWith('/tasks')){if(method==='GET')return j({items:state.tasks});if(method==='POST'){state.posts++;const row={id:'next-'+state.posts,status:'needsAction',...b};state.tasks.push(row);if(state.cancelDuringPost)state.series[0].status='cancelled';if(state.timeoutAfterWrite){state.timeoutAfterWrite=false;throw new Error('Synthetic timeout after stored Task');}return j(row);}}
    const t=state.tasks.find(x=>x.id===name);if(t)return j(t);
   }
   if(u.hostname==='www.googleapis.com'&&u.pathname.includes('/calendar/v3/')){
-   let e=state.events.find(x=>x.id===name);if(method==='GET'){if(!e)return j({error:{message:'not found'}},404);const out=structuredClone(e);if(state.omitOpaque)delete out.transparency;if(state.readbackFault==='reminders')out.reminders={useDefault:false,overrides:[{method:'popup',minutes:15}]};return j(out);}if(method==='PATCH'){if(!e)return j({error:{message:'not found'}},404);Object.assign(e,b);return j(e);}if(method==='POST'){e={...b,status:'confirmed'};state.events.push(e);return j(e);}
+   let e=state.events.find(x=>x.id===name);if(method==='DELETE'){if(!state.ignoreDelete)state.events=state.events.filter(x=>x.id!==name);return j({});}if(method==='GET'){if(!e)return j({error:{message:'not found'}},404);const out=structuredClone(e);if(!state.omitEtag)out.etag="synthetic-etag";if(state.omitOpaque)delete out.transparency;if(state.readbackFault==='reminders')out.reminders={useDefault:false,overrides:[{method:'popup',minutes:15}]};return j(out);}if(method==='PATCH'){if(!e)return j({error:{message:'not found'}},404);if(state.ignoreReminderPatch)delete b.reminders;Object.assign(e,b);return j(e);}if(method==='POST'){e={...b,status:'confirmed'};state.events.push(e);return j(e);}
   }
   throw new Error('Unmocked provider route '+u.pathname);
  };
@@ -84,4 +84,48 @@ test('actual scheduler stop during provider creation cannot revive series or pub
 
 test('existing five-minute scheduler does not consume ordinary recovery backlog',{concurrency:false},async()=>{
  const h=await harness();try{for(let i=0;i<2;i++){const r=await h.request('run_recurrence');assert.equal(r.body.success,true);assert.equal(r.body.recovery,undefined);assert.equal(r.body.recurrence.advanced,0);}assert.equal(h.state.recoveryCalls||0,0);assert.equal(h.state.posts,0);}finally{h.restore()}
+});
+
+test('explicit none survives old example text and inferred provenance and is read back', {concurrency:false},async()=>{
+ const h=await harness();try{
+  let r=await h.request('schedule',{task_id:'original',schedule:{scheduled_date:'2099-01-01',scheduled_start:'12:00',duration_minutes:30,fixed_time:true,reminder_policy:'custom',reminder_policy_source:'user_explicit',reminder_at:'2099-01-01T12:00'}});assert.equal(r.body.success,true);
+  r=await h.request('update_reminder',{task_id:'original',reminder:{reminder_policy:'none',reminder_policy_source:'ai_inferred',reminder_at:null,reminder_offset_minutes:null,reminders:[],raw_text:'举例提醒我12点抢票，提前一小时提醒'}});
+  assert.equal(r.body.success,true);assert.equal(r.body.verified,true);assert.equal(h.state.schedules[0].reminder_policy,'none');assert.equal(h.state.schedules[0].reminder_at,null);assert.deepEqual(h.state.schedules[0].reminders,[]);assert.deepEqual(h.state.events[0].reminders,{useDefault:false,overrides:[]});assert.equal(h.state.posts,0);
+ }finally{h.restore();}
+});
+test('clearing timing removes only the bound simulated projection and preserves unrelated activity', {concurrency:false},async()=>{
+ const h=await harness();try{
+  await h.request('schedule',{task_id:'original',schedule:{scheduled_date:'2099-01-01',scheduled_start:'12:00',duration_minutes:30,fixed_time:true,reminder_policy:'custom',reminder_policy_source:'user_explicit',reminder_at:'2099-01-01T12:00'}});
+  const other={id:'unrelated-calendar-event',summary:'Unrelated real activity',status:'confirmed'};h.state.events.push(other);
+  const r=await h.request('update_task',{task_id:'original',changes:{requested_date:'2099-01-03',requested_time:null,fixed_time:false}});
+  assert.equal(r.body.success,true);assert.equal(h.state.schedules[0].scheduled_date,'2099-01-03');assert.equal(h.state.schedules[0].scheduled_start,null);assert.equal(h.state.schedules[0].reminder_policy,'none');assert.equal(h.state.schedules[0].calendar_event_id,null);assert.deepEqual(h.state.events,[other]);assert.equal(h.state.posts,0);
+ }finally{h.restore();}
+});
+test('Calendar reminder or projection-clear readback mismatch never returns success', {concurrency:false},async()=>{
+ for(const clearTime of [false,true]){
+ const h=await harness();try{
+  await h.request('schedule',{task_id:'original',schedule:{scheduled_date:'2099-01-01',scheduled_start:'12:00',duration_minutes:30,fixed_time:true,reminder_policy:'custom',reminder_policy_source:'user_explicit',reminder_at:'2099-01-01T12:00'}});
+  h.state.ignoreReminderPatch=true;h.state.ignoreDelete=true;
+  const r=clearTime?await h.request('update_task',{task_id:'original',changes:{requested_time:null}}):await h.request('update_reminder',{task_id:'original',reminder:{reminder_policy:'none',reminders:[]}});
+  assert.equal(r.body.success,false);assert.equal(r.body.code,'CALENDAR_WRITE_UNVERIFIED');assert.equal(h.state.events.length,1);
+ }finally{h.restore();}}
+});
+
+test('acknowledged but ignored reminder metadata write is rejected by readback', {concurrency:false},async()=>{
+ const h=await harness();try{
+  await h.request('schedule',{task_id:'original',schedule:{scheduled_date:'2099-01-01',scheduled_start:'12:00',duration_minutes:30,fixed_time:true,reminder_policy:'custom',reminder_policy_source:'user_explicit',reminder_at:'2099-01-01T12:00'}});
+  h.state.ignoreScheduleWrite=true;
+  const r=await h.request('update_reminder',{task_id:'original',reminder:{reminder_policy:'none',reminders:[]}});
+  assert.equal(r.body.success,false);assert.equal(r.body.code,'REMINDER_WRITE_UNVERIFIED');assert.equal(h.state.schedules[0].reminder_policy,'custom');
+ }finally{h.restore();}
+});
+
+test('timing clear refuses unrelated Calendar identity or missing concurrency proof', {concurrency:false},async()=>{
+ for(const noEtag of [false,true]){
+ const h=await harness();try{
+  await h.request('schedule',{task_id:'original',schedule:{scheduled_date:'2099-01-01',scheduled_start:'12:00',duration_minutes:30,fixed_time:true,reminder_policy:'custom',reminder_policy_source:'user_explicit',reminder_at:'2099-01-01T12:00'}});
+  if(noEtag)h.state.omitEtag=true;else h.state.events[0].extendedProperties.private.googleTaskId='another-task';
+  const r=await h.request('update_task',{task_id:'original',changes:{requested_time:null}});
+  assert.equal(r.body.success,false);assert.equal(r.body.code,noEtag?'CALENDAR_ETAG_REQUIRED':'CALENDAR_EVENT_IDENTITY_CHANGED');assert.equal(h.state.events.length,1);
+ }finally{h.restore();}}
 });

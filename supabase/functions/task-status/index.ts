@@ -268,6 +268,7 @@ async function updateCanonicalTask(input: Record<string, unknown>) {
   const patch = (input.changes || {}) as Record<string, unknown>;
   const changes = Object.fromEntries(["title", "notes", "dueDate"].filter((key) => Object.hasOwn(patch, key)).map((key) => [key, patch[key]]));
   if (Object.hasOwn(patch, "requested_date")) changes.dueDate = patch.requested_date;
+  const schedulePatch = applyTaskSchedulePatch(current.schedule, patch, changes.dueDate || current.task.dueDate);
   const google = await googleContext();
   let task = current.task;
   if (Object.keys(changes).length) {
@@ -278,11 +279,10 @@ async function updateCanonicalTask(input: Record<string, unknown>) {
   }
   task = toTaskModel(await googleRequest(google.accessToken, tasksPath(google.taskListId, id)), google.taskListId);
   verifyTaskFields(task, changes);
-  const schedulePatch = applyTaskSchedulePatch(current.schedule, patch, task.dueDate);
   const scheduleInput = schedulePatch.schedule;
   let schedule = null;
   let projectionError = null;
-  try { schedule = await scheduleProjection(id, scheduleInput); }
+  try { schedule = await scheduleProjection(id, scheduleInput, null, true); }
   catch (error) { projectionError = { code: error instanceof ApiError ? error.code : "CALENDAR_SYNC_PENDING", retryable: error instanceof ApiError ? error.retryable : true, provider_layer: error instanceof ApiError ? error.providerLayer : "calendar" }; }
   const expectedSchedule = Object.fromEntries([
     ...(Object.hasOwn(patch, "requested_time") ? [["scheduled_start", patch.requested_time]] : []),
@@ -442,13 +442,13 @@ async function retryProjection(input: Record<string, any>) {
   return {...result,series,task:current.task,receipt:writeReceipt({taskId:current.task.id,taskVerified:true,schedule:result.schedule || current.schedule,projection:result})};
 }
 
-async function scheduleProjection(taskId: string, schedule: unknown, recurrence: unknown = null) {
+async function scheduleProjection(taskId: string, schedule: unknown, recurrence: unknown = null, preserveReminderPolicy = false) {
   if (!schedule) return null;
   if (typeof schedule !== "object" || Array.isArray(schedule)) throw new ApiError("Invalid schedule", 400, "INVALID_SCHEDULE");
   const response = await requestWithTimeout(`${SUPABASE_URL}/functions/v1/task-scheduler`, {
     method: "POST",
     headers: { Authorization: `Bearer ${WRITE_TOKEN}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ action: "schedule", task_id: taskId, schedule }),
+    body: JSON.stringify({ action: "schedule", task_id: taskId, schedule, preserve_reminder_policy: preserveReminderPolicy }),
   });
   const result = await payload(response);
   if (!response.ok || result?.success !== true) {

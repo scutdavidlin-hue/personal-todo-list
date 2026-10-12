@@ -70,9 +70,9 @@ test("enriched candidates remain valid inputs to the resolver", async () => {
       updateTask: async (_id, changes) => (updated = { ...context.tasks[0], ...changes }),
     },
   });
-  const result = await resolveAndExecuteTask({ title: "8月也一起分析", raw_text: "8月也一起分析" }, context, adapter);
-  assert.equal(result.resolution.decision, "UPDATE");
-  assert.match(updated.title, /8月/);
+  await assert.rejects(() => resolveAndExecuteTask({ title: "8月也一起分析", raw_text: "8月也一起分析" }, context, adapter), error => error.code === "TASK_TARGET_AMBIGUOUS");
+  assert.equal(updated, null);
+  assert.equal(store.state.audits.length, 0);
 });
 
 test("closed Goals are not resolution candidates", () => {
@@ -324,16 +324,19 @@ test("runtime executes one canonical update and persists explainability metadata
   });
   const context = buildTaskResolutionContext([existing], [], []);
   const result = await resolveAndExecuteTask({
-    title: "8月也一起分析",
-    raw_text: "8月也一起分析",
+    title: existing.title,
+    raw_text: "把这条财务分析任务日期改到9月6日",
+    existing_task_id: existing.id,
+    due: "2026-09-06",
   }, context, adapter);
 
   assert.equal(result.resolution.decision, "UPDATE");
   assert.equal(result.created, false);
-  assert.equal(updated.title, "分析6、7、8月财务数据");
+  assert.equal(updated.title, existing.title);
+  assert.equal(updated.due, "2026-09-06");
   assert.equal(store.state.audits[0].status, "succeeded");
   assert.equal(store.state.profiles[0].google_task_id, "task-1");
-  assert.match(store.state.profiles[0].normalized_title, /8月/);
+  assert.match(store.state.profiles[0].normalized_title, /67月/);
   assert.equal(Object.hasOwn(store.state.profiles[0], "provider_snapshot"), false);
   assert.equal(store.state.outerPatches[0].resolution_audit_id, AUDIT);
 });

@@ -10,10 +10,11 @@ function json(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-async function loadHandler({empty = false, rejection = null, auditPresent = false} = {}) {
+async function loadHandler({empty = false, rejection = null, auditPresent = false, invalidSchedule = false} = {}) {
   const priorDeno = globalThis.Deno;
   const priorFetch = globalThis.fetch;
   const schedulerCalls = [];
+  const taskWrites = [];
   const token = `unit-${"w".repeat(32)}`;
   const schedule = { scheduled_date: "2099-01-01", scheduled_start: "15:00", scheduled_end: "15:30",
     timezone: "Asia/Shanghai", reminder_policy: "custom", reminder_at: "2099-01-01T15:00", reminders: [{ type: "start", offset_minutes: 0 }] };
@@ -35,9 +36,9 @@ async function loadHandler({empty = false, rejection = null, auditPresent = fals
     }
     if (parsed.pathname.endsWith("/rest/v1/task_resolution_audit")) return json(empty ? (auditPresent ? [{intake_audit_id: requestId, result_task_ids: []}] : []) : [{ intake_audit_id: requestId, result_task_ids: [rawTask.id] }]);
     if (parsed.pathname.endsWith("/rest/v1/personal_os_intake_audit")) return json(rejection ? [rejection] : []);
-    if (parsed.pathname.endsWith("/rest/v1/task_schedule_metadata")) return json([]);
+    if (parsed.pathname.endsWith("/rest/v1/task_schedule_metadata")) return json(invalidSchedule ? [{google_task_id: rawTask.id, scheduled_date:"2099-01-01",scheduled_start:"12:00",scheduled_end:"12:30",duration_minutes:-1}] : []);
     if (parsed.hostname === "tasks.googleapis.com" && parsed.pathname.endsWith("/tasks")) return json({ items: empty ? [] : [rawTask] });
-    if (parsed.hostname === "tasks.googleapis.com" && parsed.pathname.endsWith(`/tasks/${rawTask.id}`)) return json(rawTask);
+    if (parsed.hostname === "tasks.googleapis.com" && parsed.pathname.endsWith(`/tasks/${rawTask.id}`)) { if (init.method === "PATCH") taskWrites.push(JSON.parse(init.body)); return json(rawTask); }
     if (parsed.pathname.endsWith("/functions/v1/task-scheduler")) {
       const body = JSON.parse(init.body);
       schedulerCalls.push(body);
@@ -50,7 +51,7 @@ async function loadHandler({empty = false, rejection = null, auditPresent = fals
   };
   try {
     await import(new URL(`../supabase/functions/task-status/index.ts?recovery=${importNumber += 1}`, import.meta.url));
-    return { schedulerCalls, task: rawTask, schedule,
+    return { schedulerCalls, taskWrites, task: rawTask, schedule,
       request: (body) => handler(new Request("https://personal-os.test/task-status", { method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(body) })),
       restore: () => { globalThis.Deno = priorDeno; globalThis.fetch = priorFetch; } };
@@ -85,3 +86,7 @@ test("actual task-status handler reconciles exact request marker and restores on
    const h=await loadHandler(options);try {const result=await(await h.request({action:"reconcile_intake",intake_audit_id:requestId})).json();assert.equal(result.outcome,outcome);assert.equal(h.schedulerCalls.length,0);}finally{h.restore();}
   }
  });
+
+test("invalid combined timing patch is rejected before Google Task mutation",{concurrency:false},async()=>{
+ const h=await loadHandler({invalidSchedule:true});try{const r=await(await h.request({action:"update_task",task_id:"task-one",changes:{requested_date:"2099-01-03",requested_time:null,fixed_time:false}})).json();assert.notEqual(r.success,true);assert.deepEqual(h.taskWrites,[]);assert.deepEqual(h.schedulerCalls,[]);}finally{h.restore();}
+});

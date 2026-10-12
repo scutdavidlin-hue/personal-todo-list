@@ -1,3 +1,5 @@
+import {readFile} from "node:fs/promises";
+import {stripTypeScriptTypes} from "node:module";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { normalizeIntake } from "../supabase/functions/_shared/personal-os-intake.js";
@@ -8,7 +10,7 @@ function json(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-async function loadIntakeHandler({ taskResult, readTask, context, failPreference = false, unknownCreateOnce = false, contextAuthFailureOnce = false, accountFailureOnCall = 0, projectionFailureOnce = false, projectionReceiptStatus = "disabled", createReceiptStatus = "disabled", reconciliationResult = null } = {}) {
+async function loadIntakeHandler({ taskResult, readTask, context, failPreference = false, unknownCreateOnce = false, contextAuthFailureOnce = false, accountFailureOnCall = 0, projectionFailureOnce = false, projectionReceiptStatus = "disabled", createReceiptStatus = "disabled", reconciliationResult = null, contextGate = null, lostReservationResponse = false, contextRefusalCode = null } = {}) {
   const previousDeno = globalThis.Deno;
   const previousFetch = globalThis.fetch;
   const writes = [];
@@ -41,6 +43,8 @@ async function loadIntakeHandler({ taskResult, readTask, context, failPreference
     if (requestUrl.pathname.endsWith("/functions/v1/task-status")) {
       if (body.action === "autonomy_context") {
         contextAttempts += 1;
+        if (contextGate) await contextGate;
+        if (contextRefusalCode && contextAttempts === 1) return json({error:"Explicit context refusal",code:contextRefusalCode},409);
         if (contextAuthFailureOnce && contextAttempts === 1) return json({ error: "Original Google credential expired", code: "GOOGLE_REAUTH_REQUIRED" }, 401);
         return json(context || { current_task: null, calendar_events: [], context_warnings: [] });
       }
@@ -85,6 +89,7 @@ async function loadIntakeHandler({ taskResult, readTask, context, failPreference
       if ((init.method || "GET") === "POST") {
         if (audit) return json([]);
         audit = { id: "11111111-1111-4111-8111-111111111111", recovery_version: 0, retry_count: 0, ...body };
+        if (lostReservationResponse) throw new DOMException("reservation response lost", "TimeoutError");
         return json([audit]);
       }
       if ((init.method || "GET") === "PATCH") {
@@ -93,7 +98,8 @@ async function loadIntakeHandler({ taskResult, readTask, context, failPreference
         audit = { ...audit, ...body };
         return json([audit]);
       }
-      return json(audit ? [audit] : []);
+      const exactKey = requestUrl.searchParams.get("idempotency_key");
+      return json(audit && (!exactKey || exactKey === `eq.${audit.idempotency_key}`) ? [audit] : []);
     }
     if (requestUrl.pathname.endsWith("/rest/v1/goals_plans")) {
       goalPlanReads += 1;
@@ -118,6 +124,7 @@ async function loadIntakeHandler({ taskResult, readTask, context, failPreference
       list: async (params = "") => handler(new Request(`https://personal-os.test/intake${params}`, {
         method: "GET", headers: { authorization: `Bearer ${token}` },
       })),
+      malformed: async () => handler(new Request("https://personal-os.test/intake", {method:"POST",headers:{authorization:`Bearer ${token}`,"content-type":"application/json","idempotency-key":"integration-key-1"},body:"{invalid"})),
       request: async (body) => handler(new Request("https://personal-os.test/intake", {
         method: "POST",
         headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "idempotency-key": "integration-key-1" },
@@ -450,3 +457,86 @@ for(const status of ['completed','cancelled'])test(`actual recover_due marks ${s
    }finally{h.restore();}
   }
  });
+test("lost reservation response returns key and exact lookup stays read-only",{concurrency:false},async()=>{
+ const h=await loadIntakeHandler({lostReservationResponse:true});try{
+  const r=await(await h.request({raw_text:"订亚朵酒店",type:"task",title:"订亚朵酒店"})).json();
+  assert.equal(r.outcome,"unknown");assert.equal(r.idempotency_key,"integration-key-1");assert.equal(h.createAttempts(),0);
+  const before=h.writes.filter(w=>w.method!=="GET").length;
+  const exact=await(await h.list("?idempotency_key=integration-key-1")).json();assert.equal(exact.lookup_status,"registered");assert.equal(exact.requests[0].request_id,h.getAudit().id);
+  const missing=await(await h.list("?idempotency_key=integration-key-other")).json();assert.equal(missing.lookup_status,"not_registered_at_check");assert.equal(missing.requests.length,0);
+  assert.equal(h.createAttempts(),0);assert.ok(h.writes.slice(before).every(w=>!['create','retry_projection'].includes(w.body?.action)));
+ }finally{h.restore();}
+});
+test("concurrent identical requests reserve before context and create once",{concurrency:false},async()=>{
+ let release;const gate=new Promise(r=>{release=r});const h=await loadIntakeHandler({contextGate:gate});try{
+  const input={raw_text:"订亚朵酒店",type:"task",title:"订亚朵酒店"};const first=h.request(input);
+  for(let n=0;n<50 && !h.getAudit();n++)await new Promise(r=>setTimeout(r,1));
+  assert.ok(h.getAudit());assert.equal(h.getAudit().provider_attempted,false);
+  const second=await(await h.request(input)).json();assert.equal(second.request_id,h.getAudit().id);assert.equal(second.decision,"leased");assert.equal(second.verified,false);assert.equal(h.createAttempts(),0);
+  release();const saved=await(await first).json();assert.equal(saved.verified,true);assert.equal(h.createAttempts(),1);
+ }finally{release();h.restore();}
+});
+test("post-write interruption preserves request id and key for read-only verification",{concurrency:false},async()=>{
+ const h=await loadIntakeHandler({unknownCreateOnce:true});try{
+  const r=await(await h.request({raw_text:"订亚朵酒店",type:"task",title:"订亚朵酒店"})).json();assert.equal(r.request_id,h.getAudit().id);assert.equal(r.outcome,"unknown");assert.equal(r.idempotency_key,"integration-key-1");
+  const before=h.writes.length;const check=await(await h.list("?idempotency_key=integration-key-1")).json();assert.equal(check.requests[0].task_check.outcome,"verified");assert.equal(h.createAttempts(),1);assert.ok(h.writes.slice(before).every(w=>w.method==="GET" || w.body?.action==="reconcile_intake"));
+ }finally{h.restore();}
+});
+test("exact lookup preserves cancelled request and does not resume it",{concurrency:false},async()=>{
+ const h=await loadIntakeHandler();try{
+  await h.request({raw_text:"提醒我交材料",type:"task",title:"交材料",fixed_time:true});h.mutateAudit({stage:"cancelled",status:"failed"});const before=h.writes.length;
+  const check=await(await h.list("?idempotency_key=integration-key-1")).json();assert.equal(check.requests[0].stage,"cancelled");assert.equal(h.createAttempts(),0);assert.ok(h.writes.slice(before).every(w=>w.method==="GET"));
+ }finally{h.restore();}
+});
+
+test("malformed intake JSON has a traceable key but does not claim registration or create",{concurrency:false},async()=>{
+ const h=await loadIntakeHandler();try{const r=await(await h.malformed()).json();assert.equal(r.success,false);assert.equal(r.idempotency_key,"integration-key-1");assert.equal(r.outcome,"unknown");assert.equal(r.request_id,undefined);assert.equal(h.createAttempts(),0);assert.equal(h.getAudit(),null);}finally{h.restore();}
+});
+
+test("same key different input refuses without losing the original request identity or changing its ledger", {concurrency:false}, async()=>{
+ const h=await loadIntakeHandler();try{
+  const first=await(await h.request({raw_text:"订亚朵酒店",type:"task",title:"订亚朵酒店"})).json();
+  const before=JSON.stringify(h.getAudit());
+  const response=await h.request({raw_text:"提醒我准备另一份材料",type:"task",title:"准备另一份材料"});
+  const rejected=await response.json();assert.equal(response.status,409);assert.equal(rejected.code,"IDEMPOTENCY_CONFLICT");assert.equal(rejected.outcome,"rejected");assert.equal(rejected.request_id,first.request_id);assert.equal(rejected.idempotency_key,"integration-key-1");assert.equal(rejected.write_success,false);assert.equal(h.createAttempts(),1);assert.equal(JSON.stringify(h.getAudit()),before);
+ }finally{h.restore();}
+});
+
+test("explicit context cancellation and denial are terminal and recover_due cannot create",{concurrency:false},async()=>{
+ for(const code of ["USER_CANCELLED","ACTION_DENIED"]){
+  const h=await loadIntakeHandler({contextRefusalCode:code});try{
+   const first=await(await h.request({raw_text:"订亚朵酒店",type:"task",title:"订亚朵酒店"})).json();assert.equal(first.code,code);assert.equal(first.request_id,h.getAudit().id);assert.equal(h.getAudit().stage,code==="USER_CANCELLED"?"cancelled":"unsupported");assert.equal(h.getAudit().next_retry_at,null);
+   await h.request({action:"recover_due"});await h.request({action:"recover",request_id:first.request_id});assert.equal(h.createAttempts(),0);assert.equal(h.accountAttempts(),0);
+  }finally{h.restore();}
+ }
+});
+test("pure information questions do not persist even when the caller labels them task",{concurrency:false},async()=>{
+ for(const type of [undefined,"task"]){const h=await loadIntakeHandler();try{
+  const r=await(await h.request({raw_text:"我的提醒功能会不会在手机上提醒？",title:"提醒功能问题",...(type?{type}:{})})).json();assert.equal(r.code,"INFORMATION_ONLY");assert.equal(h.createAttempts(),0);assert.equal(h.getAudit(),null);
+ }finally{h.restore();}}
+});
+
+test("actual gateways connected to actual intake preserve partial task saves and reject contradictory success",{concurrency:false},async()=>{
+ const source=await readFile(new URL("../supabase/functions/personal-os-mcp/index.ts",import.meta.url),"utf8");
+ const code=stripTypeScriptTypes(source.slice(source.indexOf("function uncertainIntakeResult("),source.indexOf("async function updateTaskReminder("))+source.slice(source.indexOf("async function captureItem("),source.indexOf("const GOAL_SELECT")));
+ for(const method of ["createTask","captureItem"])for(const contradiction of [false,true]){
+  const h=await loadIntakeHandler({createReceiptStatus:contradiction?"configured":"not_requested"});try{
+   const gateway=new Function("fetch","SUPABASE_URL","WRITE_TOKEN","reminderArguments","intakeConfirmation",code+";return {createTask,captureItem};")(async(_url,init)=>{
+    const response=await h.request(JSON.parse(init.body));
+    const result=await response.json();assert.equal(result.write_success,true);assert.equal(result.verified,true);assert.equal(result.code,undefined);
+    if(contradiction)result.outcome="unknown";
+    return json(result,response.status);
+   },"https://personal-os.test",h.token,a=>Object.fromEntries(["reminder_policy","reminder_policy_source","reminder_at","reminders"].filter(k=>Object.hasOwn(a,k)).map(k=>[k,a[k]])),()=>"pending");
+   const r=await gateway[method]({raw_text:"提醒我2099年1月1日下午四点交材料",title:"交材料",type:"task",due:"2099-01-01",requested_date:"2099-01-01",requested_time:"16:00",fixed_time:true,reminder_policy:"custom",reminder_policy_source:"user_explicit",reminder_at:"2099-01-01T15:00",timezone:"Asia/Shanghai",idempotency_key:"integration-key-1"});
+   assert.equal(r.isError,true);assert.equal(r.structuredContent.success,false);assert.equal(r.structuredContent.outcome,"partial");assert.equal(r.structuredContent.id,"task-hotel");assert.equal(r.structuredContent.request_id,h.getAudit().id);assert.equal(r.structuredContent.write_success,true);assert.equal(r.structuredContent.verified,true);assert.equal(r.structuredContent.receipt.task_save_status,"verified");assert.equal(h.createAttempts(),1);
+  }finally{h.restore();}
+ }
+});
+
+test("opaque prewrite interruption stays unknown and does not auto-create on background recovery",{concurrency:false},async()=>{
+ const h=await loadIntakeHandler({contextRefusalCode:"INTAKE_INTERRUPTED"});try{
+  const first=await(await h.request({raw_text:"订亚朵酒店",type:"task",title:"订亚朵酒店"})).json();assert.equal(first.outcome,"unknown");assert.equal(h.getAudit().stage,"received");h.mutateAudit({next_retry_at:null,lease_owner:null,lease_expires_at:null});
+  const background=await(await h.request({action:"recover_due"})).json();assert.equal(background.results[0].code,"USER_CONTINUATION_REQUIRED");assert.equal(h.createAttempts(),0);
+  await h.request({action:"recover",request_id:first.request_id});assert.equal(h.createAttempts(),1);
+ }finally{h.restore();}
+});
