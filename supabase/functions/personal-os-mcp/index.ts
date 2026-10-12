@@ -811,7 +811,7 @@ function normalizeIntakeReceipt(result: Record<string, unknown>, key: string, ta
   const receipt = result.receipt as Record<string, unknown> | undefined;
   const saved = nonempty(result.request_id) && nonempty(result.id) && result.write_success === true && result.verified === true
     && (!taskReceipt || receipt?.task_save_status === "verified");
-  if (saved && result.success === true && result.outcome !== "unknown" && result.partial !== true) return { ...result, idempotency_key: key };
+  if (saved && result.success === true && (result.outcome === undefined || result.outcome === "verified") && result.partial !== true) return { ...result, idempotency_key: key };
   if (saved) return { ...result, success: false, outcome: "partial", idempotency_key: key, message: "任务已保存，提醒或后续步骤仍待核实。" };
   if (result.success === false && result.outcome === "unknown" && nonempty(result.request_id) && nonempty(result.code)
     && result.write_success === false && result.verified === false) return { ...result, idempotency_key: key, message: "写入结果未知；请按原 request_id 或 idempotency_key 只读核实。" };

@@ -368,5 +368,5 @@ test("explicit resolved date preserves production priority over relative wording
 });
 
 test("a task hint and scheduled fields cannot turn a bare question into persistence",()=>{
- const r=evaluateAutonomy({raw_text:"陈明学长这个分享是什么？",type:"task",title:"了解分享内容",requested_date:"2026-10-02",requested_time:"16:30",fixed_time:true});assert.equal(r.intent,"information");assert.equal(r.decision,"information");
+ for (const raw_text of ["陈明学长这个分享是什么？","陈明学长这个分享是什么"]) { const r=evaluateAutonomy({raw_text,type:"task",title:"了解分享内容",requested_date:"2026-10-02",requested_time:"16:30",fixed_time:true});assert.equal(r.intent,"information");assert.equal(r.decision,"information"); }
 });
