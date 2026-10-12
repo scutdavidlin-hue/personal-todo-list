@@ -677,20 +677,30 @@ function scheduleAfterProjection(schedule: Record<string, unknown>, projection: 
 
 async function removeCalendarProjection(google: { accessToken: string; taskListId: string }, schedule: Record<string, unknown>) {
   if (!schedule?.calendar_event_id) return false;
+  const taskId = String(schedule.google_task_id || "");
+  if (!taskId || schedule.calendar_event_id !== await stableCalendarEventId(taskId)) throw new ApiError("Refusing to remove a noncanonical Calendar object", 409, "CALENDAR_EVENT_IDENTITY_CHANGED");
+  const path = `/calendars/${encodeURIComponent(String(schedule.calendar_id || "primary"))}/events/${encodeURIComponent(String(schedule.calendar_event_id))}`;
+  let existing;
+  try { existing = await googleRequest(google.accessToken, CALENDAR_BASE, path); }
+  catch (error) { if (error instanceof ApiError && error.status === 404) return true; throw error; }
+  if (existing.extendedProperties?.private?.googleTaskId !== taskId || existing.extendedProperties?.private?.personalOsProjection !== "v1") throw new ApiError("Calendar object is not this Task projection", 409, "CALENDAR_EVENT_IDENTITY_CHANGED");
+  if (typeof existing.etag !== "string" || !existing.etag) throw new ApiError("Calendar projection has no concurrency token", 409, "CALENDAR_ETAG_REQUIRED");
   try {
     await googleRequest(
       google.accessToken,
       CALENDAR_BASE,
       `/calendars/${encodeURIComponent(String(schedule.calendar_id || "primary"))}/events/${encodeURIComponent(String(schedule.calendar_event_id))}`,
-      { method: "DELETE" },
+      { method: "DELETE", headers: { "If-Match": existing.etag } },
     );
   } catch (error) {
     if (!(error instanceof ApiError) || error.status !== 404) throw error;
   }
-  return true;
+  try { await googleRequest(google.accessToken, CALENDAR_BASE, path); }
+  catch (error) { if (error instanceof ApiError && error.status === 404) return true; throw error; }
+  throw new ApiError("Calendar projection removal is not verified", 503, "CALENDAR_WRITE_UNVERIFIED");
 }
 
-async function scheduleTask(ownerId: string, taskId: string, input: Record<string, unknown>, onlyIfAbsent = false) {
+async function scheduleTask(ownerId: string, taskId: string, input: Record<string, unknown>, onlyIfAbsent = false, preserveReminderPolicy = false) {
   if (!taskId) throw new ApiError("task_id is required", 400, "INVALID_TASK");
   const google = await googleContext(ownerId);
   const task = await getTask(google, taskId);
@@ -717,14 +727,15 @@ async function scheduleTask(ownerId: string, taskId: string, input: Record<strin
     title: task.title,
     notes: task.notes,
   };
+  if (!onlyIfAbsent && current?.calendar_event_id && !calendarProjectionWindow(normalizeScheduleInput(proposed, { preserveReminderPolicy }))) await removeCalendarProjection(google, current);
   let schedule;
   if (onlyIfAbsent) {
-    const result = await insertScheduleIfAbsent(ownerId, taskId, proposed);
+    const result = await insertScheduleIfAbsent(ownerId, taskId, proposed, preserveReminderPolicy);
     schedule = result.schedule;
     if (!result.inserted) return { task_id: taskId, schedule, skipped_existing: true,
       projection: { projected: false, reason: "SCHEDULE_ALREADY_EXISTS" } };
   } else {
-    schedule = await writeSchedule(ownerId, taskId, proposed);
+    schedule = await writeSchedule(ownerId, taskId, proposed, preserveReminderPolicy);
   }
   const projection = await projectTask(ownerId, google, task, schedule);
   return { task_id: taskId, schedule: scheduleAfterProjection(schedule, projection), projection };
@@ -751,24 +762,33 @@ async function updateTaskReminder(ownerId: string, taskId: string, input: Record
     title: task.title,
     notes: task.notes,
   };
-  const preview = normalizeScheduleInput(merged);
-  if (!calendarProjectionWindow(preview)) {
+  const disabling = reminderInput.reminder_policy === "none" || reminderInput.reminderPolicy === "none";
+  const preview = normalizeScheduleInput(merged, { preserveReminderPolicy: disabling });
+  if (!calendarProjectionWindow(preview) && !disabling) {
     throw new ApiError("Reminder requires an existing scheduled time or an exact deadline time", 409, "REMINDER_REQUIRES_TIME");
   }
   const expectedEventId = await stableCalendarEventId(taskId);
   if (current?.calendar_event_id && current.calendar_event_id !== expectedEventId) {
     throw new ApiError("Existing Calendar Event identity is not canonical", 409, "CALENDAR_EVENT_IDENTITY_CHANGED");
   }
-  const schedule = await writeSchedule(ownerId, taskId, merged);
+  if (!calendarProjectionWindow(preview) && current?.calendar_event_id) await removeCalendarProjection(google, current);
+  const schedule = await writeSchedule(ownerId, taskId, preview, true);
   if (current?.id && schedule?.id !== current.id) {
     throw new ApiError("Schedule identity changed during reminder update", 500, "SCHEDULE_IDENTITY_CHANGED");
   }
-  if (current?.calendar_event_id && schedule?.calendar_event_id !== current.calendar_event_id) {
+  if (calendarProjectionWindow(preview) && current?.calendar_event_id && schedule?.calendar_event_id !== current.calendar_event_id) {
     throw new ApiError("Calendar Event identity changed during reminder update", 500, "CALENDAR_EVENT_IDENTITY_CHANGED");
   }
   const projection = await projectTask(ownerId, google, task, schedule);
-  const projectedSchedule = scheduleAfterProjection(schedule, projection);
+  const readback = (await schedules(ownerId, taskId))?.[0] || null;
+  const canonicalReadback = readback ? normalizeScheduleInput(readback, { preserveReminderPolicy: true }) : null;
+  if (!readback || !canonicalReadback || ["reminder_policy", "reminder_at", "reminder_offset_minutes", "reminders", "scheduled_date", "scheduled_start"].some(key => JSON.stringify(canonicalReadback[key] ?? null) !== JSON.stringify(preview[key] ?? null))
+    || readback.sync_required !== false || !projection.verified_at) {
+    throw new ApiError("Reminder update did not match canonical readback", 503, "REMINDER_WRITE_UNVERIFIED");
+  }
+  const projectedSchedule = scheduleAfterProjection(readback, projection);
   return {
+    verified: true,
     task_id: taskId,
     schedule_id: schedule.id,
     calendar_event_id: projection.calendar_event_id,
@@ -1044,7 +1064,7 @@ Deno.serve(async (request) => {
     if (action === "list_series") return json({ success: true, series: await seriesRows(ownerId) });
     if (action === "run_recurrence") return json({ success: true, recurrence: await advanceReadySeries(ownerId) });
     if (action === "schedule" || action === "reschedule") {
-      return json({ success: true, ...(await scheduleTask(ownerId, String(input.task_id || ""), input.schedule || input, input.only_if_absent === true)) });
+      return json({ success: true, ...(await scheduleTask(ownerId, String(input.task_id || ""), input.schedule || input, input.only_if_absent === true, input.preserve_reminder_policy === true)) });
     }
     if (action === "update_reminder") {
       return json({ success: true, ...(await updateTaskReminder(ownerId, String(input.task_id || ""), input.reminder || input)) });

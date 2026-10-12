@@ -844,13 +844,18 @@ async function updateTaskReminder(args: z.infer<typeof UpdateTaskReminderInput>)
     let result: Record<string, unknown>;
     try { result = text ? JSON.parse(text) : { success: false }; }
     catch { result = { success: false, code: "INVALID_GATEWAY_RESPONSE", error: "Personal OS returned an invalid response" }; }
-    const succeeded = response.ok && result.success === true;
+    const saved = result.schedule as Record<string, unknown> | undefined;
+    const clearing = args.reminder_policy === "none";
+    const cleared = !clearing || (saved?.reminder_policy === "none" && saved.reminder_at == null
+      && saved.reminder_offset_minutes == null && Array.isArray(saved.reminders) && saved.reminders.length === 0);
+    const succeeded = response.ok && result.success === true && result.verified === true && saved?.sync_required === false && cleared;
+    if (!succeeded && response.ok) Object.assign(result, { success: false, code: "REMINDER_WRITE_UNVERIFIED", error: "提醒修改尚未通过真实回读核实" });
     return {
       isError: !succeeded,
       content: [{
         type: "text",
         text: succeeded
-          ? `已在原 Task / Schedule / Calendar Event 上更新提醒；Task=${result.task_id}，Schedule ID 与 Event ID 均保持稳定，Google Tasks 数量变化 0。`
+          ? clearing ? "提醒已关闭，保存结果已通过回读核实。" : "提醒更新已通过回读核实。"
           : `智能提醒未更新：${result.error || `Personal OS returned ${response.status}`}`,
       }],
       structuredContent: result,
