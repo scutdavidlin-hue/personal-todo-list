@@ -788,11 +788,27 @@ function reminderArguments(args: object) {
   return Object.fromEntries(keys.filter((key) => Object.hasOwn(record, key)).map((key) => [key, record[key]]));
 }
 
-function uncertainIntakeResult(key: string, error: unknown) {
+function uncertainIntakeResult(key: string, error: unknown, correlation: Record<string, unknown> = {}) {
   const result = { success: false, write_success: false, verified: false, outcome: "unknown", code: "INTAKE_OUTCOME_UNKNOWN", idempotency_key: key,
+    ...(typeof correlation.request_id === "string" && correlation.request_id ? { request_id: correlation.request_id } : {}),
     error: error instanceof Error ? error.message : "Intake response unavailable", retry_requires_user_intent: true,
     message: "未收到可靠回执，写入结果未知；请用原 idempotency_key 只读核实，不要自动重试或新建。" };
   return { isError: true, content: [{ type: "text", text: result.message }], structuredContent: result };
+}
+
+function normalizeIntakeReceipt(result: Record<string, unknown>, key: string, taskReceipt: boolean) {
+  const nonempty = (value: unknown) => typeof value === "string" && value.trim().length > 0;
+  const refusal = result.success === false && ["USER_CANCELLED", "ACTION_DENIED", "POLICY_DENIED", "UNAUTHORIZED", "PERMISSION_DENIED", "INVALID_IDEMPOTENCY_KEY", "IDEMPOTENCY_CONFLICT", "CLARIFICATION_REQUIRED", "INFORMATION_ONLY", "TASK_TARGET_AMBIGUOUS"].includes(String(result.code || ""));
+  if (refusal) return { ...result, outcome: "rejected", write_success: false, verified: false, idempotency_key: key, retry_requires_user_intent: true,
+    message: result.message || "请求已拒绝或需要澄清，未自动重试。" };
+  const receipt = result.receipt as Record<string, unknown> | undefined;
+  const saved = nonempty(result.request_id) && nonempty(result.id) && result.write_success === true && result.verified === true
+    && (!taskReceipt || receipt?.task_save_status === "verified");
+  if (saved && result.success === true) return { ...result, idempotency_key: key };
+  if (saved && result.success === false && nonempty(result.code)) return { ...result, outcome: "partial", idempotency_key: key, message: result.message || "任务已保存，后续步骤仍待核实。" };
+  if (result.success === false && result.outcome === "unknown" && nonempty(result.request_id) && nonempty(result.code)
+    && result.write_success === false && result.verified === false) return { ...result, idempotency_key: key, message: "写入结果未知；请按原 request_id 或 idempotency_key 只读核实。" };
+  return null;
 }
 
 async function createTask(args: z.infer<typeof TaskInput>) {
@@ -843,7 +859,9 @@ async function createTask(args: z.infer<typeof TaskInput>) {
   let result: z.infer<typeof TaskOutput>;
   try { result = JSON.parse(await response.text()); if (!result || typeof result.success !== "boolean") throw new Error("Invalid intake receipt"); }
   catch (error) { return uncertainIntakeResult(args.idempotency_key, error); }
-  result.idempotency_key = args.idempotency_key;
+  const receipt = normalizeIntakeReceipt(result as Record<string, unknown>, args.idempotency_key, true);
+  if (!receipt) return uncertainIntakeResult(args.idempotency_key, new Error("Incomplete intake receipt"), result as Record<string, unknown>);
+  result = receipt as z.infer<typeof TaskOutput>;
   const succeeded = response.ok && result.success === true && result.verified === true;
   return {
     isError: !succeeded,
@@ -986,7 +1004,9 @@ async function captureItem(args: z.infer<typeof UnifiedIntakeInput>) {
   let result: Record<string, unknown>;
   try { result = JSON.parse(await response.text()); if (!result || typeof result.success !== "boolean") throw new Error("Invalid intake receipt"); }
   catch (error) { return uncertainIntakeResult(args.idempotency_key, error); }
-  result.idempotency_key = args.idempotency_key;
+  const receipt = normalizeIntakeReceipt(result, args.idempotency_key, result.destination === "google_tasks" || args.type === "task");
+  if (!receipt) return uncertainIntakeResult(args.idempotency_key, new Error("Incomplete intake receipt"), result);
+  result = receipt;
   const succeeded = response.ok && result.success === true && result.verified === true;
   return {
     isError: !succeeded,

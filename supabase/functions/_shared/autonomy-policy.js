@@ -430,8 +430,9 @@ function verifiedId(value) {
 export function confirmationForWrite(resultValue) {
   const value = resultValue && typeof resultValue === "object" && !Array.isArray(resultValue) ? resultValue : {};
   const id = value.id ?? value.task_id ?? value.write_id ?? value.data?.id ?? value.record?.id;
+  if (value.outcome === "unknown") return "写入结果尚未核实";
   if (value.write_success === true && value.verified === true && verifiedId(id)) return "已经写进去了";
   if (value.noop === true || value.no_op === true) return "没有执行写入";
   const detail = cleanString(value.error || value.message);
-  return detail ? `没有写进去：${detail}` : "没有写进去";
+  return detail ? `写入结果尚未核实：${detail}` : "写入结果尚未核实";
 }

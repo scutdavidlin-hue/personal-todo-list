@@ -296,13 +296,13 @@ test("established router destinations remain intact", () => {
 
 test("write confirmation requires strict success, verification, and an id", () => {
   assert.equal(confirmationForWrite({ write_success: true, verified: true, id: "task-789" }), "已经写进去了");
-  assert.equal(confirmationForWrite({ write_success: true, verified: true }), "没有写进去");
-  assert.equal(confirmationForWrite({ write_success: true, id: "task-789" }), "没有写进去");
-  assert.equal(confirmationForWrite({ write_success: "true", verified: true, id: "task-789" }), "没有写进去");
-  assert.equal(confirmationForWrite({ write_success: true }), "没有写进去");
-  assert.equal(confirmationForWrite({ success: true, verified: true, id: "task-789" }), "没有写进去");
+  assert.equal(confirmationForWrite({ write_success: true, verified: true }), "写入结果尚未核实");
+  assert.equal(confirmationForWrite({ write_success: true, id: "task-789" }), "写入结果尚未核实");
+  assert.equal(confirmationForWrite({ write_success: "true", verified: true, id: "task-789" }), "写入结果尚未核实");
+  assert.equal(confirmationForWrite({ write_success: true }), "写入结果尚未核实");
+  assert.equal(confirmationForWrite({ success: true, verified: true, id: "task-789" }), "写入结果尚未核实");
   assert.equal(confirmationForWrite({ noop: true }), "没有执行写入");
-  assert.equal(confirmationForWrite({ write_success: false, error: "API rejected the write" }), "没有写进去：API rejected the write");
+  assert.equal(confirmationForWrite({ write_success: false, error: "API rejected the write" }), "写入结果尚未核实：API rejected the write");
 });
 test("a correction without a current task asks instead of creating a replacement", () => {
   const result = evaluateAutonomy({ raw_text: "改成四点。" });

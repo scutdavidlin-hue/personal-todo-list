@@ -476,3 +476,12 @@ test("exact lookup preserves cancelled request and does not resume it",{concurre
 test("malformed intake JSON has a traceable key but does not claim registration or create",{concurrency:false},async()=>{
  const h=await loadIntakeHandler();try{const r=await(await h.malformed()).json();assert.equal(r.success,false);assert.equal(r.idempotency_key,"integration-key-1");assert.equal(r.outcome,"unknown");assert.equal(r.request_id,undefined);assert.equal(h.createAttempts(),0);assert.equal(h.getAudit(),null);}finally{h.restore();}
 });
+
+test("same key different input refuses without losing the original request identity or changing its ledger", {concurrency:false}, async()=>{
+ const h=await loadIntakeHandler();try{
+  const first=await(await h.request({raw_text:"订亚朵酒店",type:"task",title:"订亚朵酒店"})).json();
+  const before=JSON.stringify(h.getAudit());
+  const response=await h.request({raw_text:"提醒我准备另一份材料",type:"task",title:"准备另一份材料"});
+  const rejected=await response.json();assert.equal(response.status,409);assert.equal(rejected.code,"IDEMPOTENCY_CONFLICT");assert.equal(rejected.outcome,"rejected");assert.equal(rejected.request_id,first.request_id);assert.equal(rejected.idempotency_key,"integration-key-1");assert.equal(rejected.write_success,false);assert.equal(h.createAttempts(),1);assert.equal(JSON.stringify(h.getAudit()),before);
+ }finally{h.restore();}
+});

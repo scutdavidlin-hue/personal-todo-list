@@ -26,7 +26,7 @@ Readonly production source inspection on 2026-10-12 found:
 
 ## Isolated validation
 
-`npm run verify`: 468 tests, 466 passed, 2 skipped, 0 failed. Tests use simulated records and fetch responses only.
+`npm run verify`: 471 tests, 469 passed, 2 skipped, 0 failed. Tests use simulated records and fetch responses only.
 
 Actual intake handlers cover reservation-response loss, original request ID retention after provider-write interruption, read-only exact lookup and wrong keys, pending same-key concurrent requests creating once, malformed input and cancelled ledger lookup. Actual gateway functions are type-stripped and executed against isolated fetch responses for timeout, AbortError, malformed/empty/interrupted bodies, verified receipts and explicit cancellation/denial. Existing recovery tests retain account, lease and uncertain-write guards.
 
@@ -35,3 +35,7 @@ Actual intake handlers cover reservation-response loss, original request ID rete
 An opaque `user cancelled MCP tool call` returned by the platform before a gateway response exposes neither a business request ID nor proof that the service received it. The service cannot retroactively determine whether that cancellation was human intent, approval interruption, connection loss, or platform execution cancellation. A final ledger row with `replayed=false` and `retry_count=0` describes the final registered request only. It does not establish what happened to a prior opaque call.
 
 This draft provides traceable receipts when service code executes and exact-key verification afterward. It cannot promise that the platform will never cancel a call. Production behavior remains unchanged until a separately authorized deployment.
+
+Independent review follow-up: same-key different-content conflict retains the original request ID while returning `IDEMPOTENCY_CONFLICT` / `outcome=rejected`. It does not modify the original ledger or permit a retry under changed content.
+
+Additional independent-review follow-up: incomplete structured JSON is treated as unknown, including missing request ID, missing task receipt, missing failure code, and bare success=false. Explicit prewrite denial/cancellation remains rejected; a fully verified task with projection pending remains partial. Unknown outcomes take priority over generic confirmation wording.
