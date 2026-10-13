@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "source": "personal-os",
+  "generatedAt": 1791871740,
+  "plans": [
+    {
+      "taskId": "synthetic-kpl-only",
+      "title": "模拟 KPL 抢票（不是生产任务）",
+      "timezone": "Asia/Shanghai",
+      "enabled": true,
+      "eventAt": 1792123200,
+      "liveActivityStartAt": 1792119600,
+      "reminderAt": [
+        1792119600
+      ]
+    }
+  ]
+}
