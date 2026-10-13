@@ -17,6 +17,11 @@ struct PersonalOSCompanionApp: App {
                         Button("导入 Personal OS 配置") { importing = true }
                         Button("两分钟模拟验收") { model.demo() }
                     }
+                    Section("设备权限与接入") {
+                        Text(model.permissionState?.displayText ?? "正在读取本机权限…")
+                        Button("重新读取权限") { Task { await model.foreground() } }
+                        Text("后台注册未配置，未采集或上传设备 token。自动一小时前上岛仍不可用。") .font(.caption)
+                    }
                     if let snapshot = model.preview {
                         Section("待安排：请核对") {
                             ForEach(snapshot.plans) { plan in

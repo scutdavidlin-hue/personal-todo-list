@@ -12,6 +12,9 @@ struct CloseCountdownIntent: LiveActivityIntent {
     func perform() async throws -> some IntentResult {
         // Ending the projection has no effect on Task completion or reminders.
         for activity in Activity<CountdownAttributes>.activities where activity.attributes.taskId == taskId {
+            // Closing must still work if protected storage is unavailable while
+            // locked. A failed local record cannot establish server suppression.
+            try? DeviceCloseOutbox.record(taskId: taskId, eventAt: activity.content.state.eventEpoch)
             await activity.end(nil, dismissalPolicy: .immediate)
         }
         return .result()

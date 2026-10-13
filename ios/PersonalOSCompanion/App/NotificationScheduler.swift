@@ -1,4 +1,5 @@
 import Foundation
+import ActivityKit
 import UserNotifications
 
 struct NotificationReceipt {
@@ -13,6 +14,23 @@ struct NotificationScheduler {
 
     func requestPermission() async throws -> Bool {
         try await center.requestAuthorization(options: [.alert, .sound, .badge])
+    }
+
+    func permissionSnapshot() async -> DevicePermissions {
+        let settings = await center.notificationSettings()
+        let state: String
+        switch settings.authorizationStatus {
+        case .notDetermined: state = "notDetermined"
+        case .denied: state = "denied"
+        case .authorized: state = "authorized"
+        case .provisional: state = "provisional"
+        case .ephemeral: state = "ephemeral"
+        @unknown default: state = "unknown"
+        }
+        return DevicePermissions(notificationAuthorization: state, alertsEnabled: settings.alertSetting == .enabled,
+                                 soundEnabled: settings.soundSetting == .enabled,
+                                 liveActivitiesEnabled: ActivityAuthorizationInfo().areActivitiesEnabled,
+                                 observedAt: Date.now.timeIntervalSince1970)
     }
 
     func remove(_ plan: DeviceReminderPlan) async {

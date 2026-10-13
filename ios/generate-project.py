@@ -28,9 +28,9 @@ def encode(value, depth=0):
         return "(\n" + "".join(f'{pad}\t{encode(v, depth+1)},\n' for v in value) + pad + ")"
     return json.dumps(str(value), ensure_ascii=False)
 
-shared = ["Shared/CountdownAttributes.swift", "Shared/CloseCountdownIntent.swift"]
+shared = ["Shared/CountdownAttributes.swift", "Shared/CloseCountdownIntent.swift", "Shared/DeviceCloseOutbox.swift", "Shared/ReminderSnapshot.swift"]
 files = {
-    "app": ["App/PersonalOSCompanionApp.swift", "App/CompanionModel.swift", "App/NotificationScheduler.swift", "Shared/ReminderSnapshot.swift"] + shared,
+    "app": ["App/PersonalOSCompanionApp.swift", "App/CompanionModel.swift", "App/NotificationScheduler.swift", "App/MobileDeviceClient.swift", "Shared/DevicePermissions.swift"] + shared,
     "widget": ["Widget/CountdownWidget.swift"] + shared,
     "tests": ["Tests/ReminderSnapshotTests.swift"],
 }

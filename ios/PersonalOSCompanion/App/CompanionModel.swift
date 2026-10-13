@@ -14,6 +14,7 @@ final class CompanionModel: NSObject, ObservableObject, UNUserNotificationCenter
     @Published var preview: ReminderSnapshot?
     @Published var status = "导入配置、允许通知后，点安排提醒。自动后台上岛尚未接入。"
     @Published var busy = false
+    @Published var permissionState: DevicePermissions?
     let scheduler = NotificationScheduler()
     private let fileURL: URL
 
@@ -48,6 +49,7 @@ final class CompanionModel: NSObject, ObservableObject, UNUserNotificationCenter
     func requestPermission() async {
         do { status = try await scheduler.requestPermission() ? "已允许通知。请安排导入的提醒。" : "未允许通知。" }
         catch { status = error.localizedDescription }
+        permissionState = await scheduler.permissionSnapshot()
     }
 
     func installPreview() async {
@@ -88,6 +90,9 @@ final class CompanionModel: NSObject, ObservableObject, UNUserNotificationCenter
         do {
             try plan.validate()
             guard plan.canStart() else { throw CompanionError.outsideWindow }
+            if let closed = try? DeviceCloseOutbox.pending(), closed.contains(where: { $0.taskId == plan.taskId && $0.eventAt == plan.eventAt }) {
+                status = "本次倒计时已手动关闭，不会恢复此窗口。"; return
+            }
             guard ActivityAuthorizationInfo().areActivitiesEnabled else { throw CompanionError.activitiesDisabled }
             if Activity<CountdownAttributes>.activities.contains(where: { $0.attributes.taskId == plan.taskId && $0.activityState == .active }) {
                 status = "这条任务的倒计时已启动。"; return
@@ -107,8 +112,12 @@ final class CompanionModel: NSObject, ObservableObject, UNUserNotificationCenter
     }
 
     func closeActivity(_ plan: DeviceReminderPlan) async {
+        if let eventAt = plan.eventAt {
+            do { try DeviceCloseOutbox.record(taskId: plan.taskId, eventAt: eventAt) }
+            catch { status = "本机关闭记录未保存：\(error.localizedDescription)"; await endActivity(taskId: plan.taskId); return }
+        }
         await endActivity(taskId: plan.taskId)
-        status = "已结束本机倒计时，任务和定时提醒保持原配置。"
+        status = "已结束本机倒计时并保存关闭记录；后台接入未配置，尚未上传。"
     }
 
     func remove(_ plan: DeviceReminderPlan) async {
@@ -119,9 +128,17 @@ final class CompanionModel: NSObject, ObservableObject, UNUserNotificationCenter
     }
 
     func foreground() async {
+        permissionState = await scheduler.permissionSnapshot()
         // No background timer and no automatic restart after user dismissal.
         for activity in Activity<CountdownAttributes>.activities where activity.content.state.eventDate <= .now {
             await activity.end(nil, dismissalPolicy: .immediate)
+        }
+        // Suppress any reappearing matching window locally. Server suppression
+        // additionally requires the future authenticated close acknowledgement.
+        if let closed = try? DeviceCloseOutbox.pending() {
+            for activity in Activity<CountdownAttributes>.activities where closed.contains(where: {
+                $0.taskId == activity.attributes.taskId && $0.eventAt == activity.content.state.eventEpoch
+            }) { await activity.end(nil, dismissalPolicy: .immediate) }
         }
     }
 
