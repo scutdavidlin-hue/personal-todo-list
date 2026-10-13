@@ -30,6 +30,7 @@ const corsHeaders = {
 class IntakeError extends Error {
   status: number;
   code: string;
+  requestId?: string;
   constructor(message: string, status = 400, code = "INVALID_INTAKE") {
     super(message);
     this.status = status;
@@ -119,7 +120,9 @@ async function reserveAudit(intake: Record<string, unknown>, idempotencyKey: str
   const existing = rows?.[0];
   if (!existing) throw new IntakeError("Idempotency record unavailable", 503, "IDEMPOTENCY_UNAVAILABLE");
   if (existing.request_hash !== requestHash) {
-    throw new IntakeError("Idempotency key was already used for a different request", 409, "IDEMPOTENCY_CONFLICT");
+    const conflict = new IntakeError("Idempotency key was already used for a different request", 409, "IDEMPOTENCY_CONFLICT");
+    conflict.requestId = existing.id;
+    throw conflict;
   }
   return { row: existing, replayed: true, leaseOwner: null };
 }
@@ -160,17 +163,18 @@ async function recordRecoveryFailure(row: Record<string, any>, leaseOwner: strin
   catch { /* The fenced update below still determines whether our lease is valid. */ }
   const authRequired = ["AUTH_RECONNECT_REQUIRED", "GOOGLE_REAUTH_REQUIRED", "GOOGLE_AUTH_REQUIRED",
     "GOOGLE_NOT_CONNECTED", "ACCOUNT_MISMATCH", "ACCOUNT_UNVERIFIED", "GOOGLE_ACCOUNT_UNVERIFIED"].includes(code);
-  const stage = authRequired ? "auth_required"
+  const stoppedStage = code === "USER_CANCELLED" ? "cancelled" : ["ACTION_DENIED", "POLICY_DENIED", "PERMISSION_DENIED"].includes(code) ? "unsupported" : null;
+  const stage = stoppedStage || (authRequired ? "auth_required"
     : ["task_verified", "projection_pending"].includes(current.stage) ? "projection_pending"
     : current.provider_attempted || ["write_pending", "outcome_unknown"].includes(current.stage)
-      ? "outcome_unknown" : "received";
+      ? "outcome_unknown" : "received");
   const result = { success: false, request_id: row.id, object_id: current.object_id || null,
-    code, stage, retryable: !authRequired,
-    message: authRequired ? "原请求已保存；请重连原 Google 账号后核实。"
+    code, stage, retryable: !authRequired && !stoppedStage,
+    message: stoppedStage ? "恢复已取消或拒绝，原有对象仍可只读核实。" : authRequired ? "原请求已保存；请重连原 Google 账号后核实。"
       : "恢复暂未完成；系统将在稍后重试，且不会重复创建任务。" };
-  await updateAudit(row.id, { stage, status: "processing", error_code: code,
+  await updateAudit(row.id, { stage, status: stoppedStage ? "failed" : "processing", error_code: code,
     retry_count: Number(current.retry_count || 0) + 1,
-    next_retry_at: authRequired ? null : retryAt(current.retry_count),
+    next_retry_at: authRequired || stoppedStage ? null : retryAt(current.retry_count),
     response: result, response_status: 202, lease_owner: null, lease_expires_at: null }, leaseOwner);
   return result;
 }
@@ -184,10 +188,26 @@ async function listRequests(url: URL) {
   const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit")) || 50));
   const offset = Math.max(0, Number(url.searchParams.get("offset")) || 0);
   const query = new URLSearchParams({ owner_id: `eq.${OWNER_USER_ID}`, select: "*", order: "received_at.desc,id.desc", limit: String(limit + 1), offset: String(offset) });
+  const key = url.searchParams.get("idempotency_key");
+  if (key !== null) {
+    if (key.length < 8 || key.length > 200) throw new IntakeError("Invalid idempotency_key", 400, "INVALID_IDEMPOTENCY_KEY");
+    query.set("idempotency_key", `eq.${key}`);
+    query.set("offset", "0");
+  }
   const stage = url.searchParams.get("stage");
-  if (stage) query.set("stage", `eq.${stage}`);
+  if (stage && key === null) query.set("stage", `eq.${stage}`);
   const rows = await rest(`personal_os_intake_audit?${query}`);
-  return { requests: rows.slice(0, limit).map(publicRecovery), has_more: rows.length > limit,
+  const requests: Record<string, any>[] = rows.slice(0, limit).map(publicRecovery);
+  if (key !== null) for (let i = 0; i < requests.length; i++) {
+    const row = rows[i];
+    if (row.classification !== "task" || ["cancelled", "superseded", "needs_input"].includes(row.stage)) continue;
+    try {
+      const checked = await reconcileTask(row);
+      const mismatch = row.account_subject && checked.account_subject && row.account_subject !== checked.account_subject;
+      requests[i].task_check = { outcome: mismatch ? "account_mismatch" : checked.outcome, task_id: mismatch ? null : checked.task?.id || null, checked_at: new Date().toISOString() };
+    } catch { requests[i].task_check = { outcome: "unknown", task_id: null, checked_at: new Date().toISOString() }; }
+  }
+  return { requests, ...(key !== null ? { idempotency_key: key, lookup_status: requests.length ? "registered" : "not_registered_at_check", readonly: true } : {}), has_more: rows.length > limit,
     next_offset: rows.length > limit ? offset + limit : null, checked_at: new Date().toISOString() };
 }
 
@@ -601,6 +621,7 @@ Deno.serve(async (request) => {
 
   let auditId = "";
   let leaseOwner = "";
+  let receiptKey = String(request.headers.get("idempotency-key") || "").trim();
   try {
     if (request.method === "GET") return json(await listRequests(new URL(request.url)));
     const input = await request.json();
@@ -623,6 +644,10 @@ Deno.serve(async (request) => {
       const rows = await rest(`personal_os_intake_audit?${query}`);
       const results = [];
       for (const row of rows || []) {
+        if (input.action === "recover_due" && row.stage === "received" && row.provider_attempted !== true) {
+          results.push({ request_id: row.id, success: false, code: "USER_CONTINUATION_REQUIRED", stage: row.stage, message: "未开始写入的请求需明确继续，不会后台新建。" });
+          continue;
+        }
         const decision = recoveryDecision(row);
         if (decision === "complete" || decision === "needs_input" || decision === "later" || decision === "leased") {
           results.push({ request_id: row.id, decision, stage: row.stage });
@@ -654,6 +679,26 @@ Deno.serve(async (request) => {
     if (idempotencyKey.length < 8 || idempotencyKey.length > 200) {
       throw new IntakeError("idempotency_key must contain 8-200 characters", 400, "INVALID_IDEMPOTENCY_KEY");
     }
+    receiptKey = idempotencyKey;
+    const requestHash = await sha256(stableRequest(input));
+    const preliminary = evaluateAutonomy(input, { baseDate: receivedAt });
+    const provisional = preliminary.decision === "execute"
+      ? normalizeIntake(frozenIntake(preliminary.input, receivedAt), { baseDate: receivedAt }) : null;
+    let earlyReservation = null;
+    if (provisional?.type === "task") {
+      earlyReservation = await reserveAudit({ ...provisional, context_pending: true, original_input: input }, idempotencyKey, requestHash, receivedAt);
+      auditId = earlyReservation.row.id;
+      leaseOwner = earlyReservation.leaseOwner || "";
+      if (earlyReservation.replayed) {
+        const row = earlyReservation.row;
+        const decision = recoveryDecision(row);
+        if (["complete", "needs_input", "later", "leased"].includes(decision)) return json({ ...(row.response || { success: false, write_success: false, verified: false, outcome: "unknown" }), request_id: row.id, idempotency_key: idempotencyKey, stage: row.stage, replayed: true, decision }, row.response_status || 202);
+        const claimed = await claimAudit(row);
+        leaseOwner = claimed.leaseOwner;
+        const recovered = await resumeTask(claimed.row, leaseOwner);
+        return json({ ...recovered, idempotency_key: idempotencyKey, replayed: true }, recovered.success ? 200 : 202);
+      }
+    }
     let policy;
     try {
       policy = await prepareAutonomousIntake(input, { resolveContext: resolveAutonomyContext }, { baseDate: receivedAt });
@@ -664,8 +709,7 @@ Deno.serve(async (request) => {
       const provisional = preliminary.decision === "execute"
         ? normalizeIntake(frozenIntake(preliminary.input, receivedAt), { baseDate: receivedAt }) : null;
       if (!provisional || provisional.type !== "task") throw error;
-      const requestHash = await sha256(stableRequest(input));
-      const reservation = await reserveAudit({ ...provisional, context_pending: true,
+      const reservation = earlyReservation || await reserveAudit({ ...provisional, context_pending: true,
         original_input: input }, idempotencyKey, requestHash, receivedAt);
       auditId = reservation.row.id;
       leaseOwner = reservation.leaseOwner || "";
@@ -675,10 +719,16 @@ Deno.serve(async (request) => {
           replayed: true }, previous.response_status || 202);
       }
       const code = safeError(error);
+      const terminalStage = code === "USER_CANCELLED" ? "cancelled" : ["ACTION_DENIED", "POLICY_DENIED", "PERMISSION_DENIED"].includes(code) ? "unsupported" : null;
+      if (terminalStage) {
+        const stopped = { success: false, write_success: false, verified: false, outcome: "rejected", code, request_id: auditId, idempotency_key: idempotencyKey, message: "请求已取消或拒绝，不会自动继续执行。" };
+        await updateAudit(auditId, { stage: terminalStage, status: "failed", error_code: code, next_retry_at: null, response: stopped, response_status: 409, lease_owner: null, lease_expires_at: null }, leaseOwner);
+        return json(stopped, 409);
+      }
       const requiresAuth = /AUTH|ACCOUNT|NOT_CONNECTED|SCOPE/.test(code);
       const result = { success: false, write_success: false, verified: false, code,
-        request_id: auditId, message: requiresAuth
-          ? "请求已保存；请连接原 Google 账号后继续。" : "请求已保存，账号核实稍后重试。" };
+        request_id: auditId, idempotency_key: idempotencyKey, outcome: "unknown", message: requiresAuth
+          ? "请求已保存；请连接原 Google 账号后继续。" : "请求已保存，上下文尚未核实；需明确继续后恢复。" };
       await updateAudit(auditId, { stage: requiresAuth ? "auth_required" : "received",
         status: "processing", error_code: code, next_retry_at: requiresAuth ? null : retryAt(0),
         response: result, response_status: 202, lease_owner: null, lease_expires_at: null }, leaseOwner);
@@ -686,11 +736,11 @@ Deno.serve(async (request) => {
     }
     if (policy.decision !== "execute") {
       const result = { success: false, write_success: false, verified: false, intent: policy.intent, decision: policy.decision, risk_level: policy.risk_level, question: policy.question, code: policy.decision === "ask" ? "CLARIFICATION_REQUIRED" : "INFORMATION_ONLY" };
-      return json({ ...result, message: intakeConfirmation(result) });
+      if (auditId && leaseOwner) await updateAudit(auditId, { stage: "needs_input", status: "failed", response: result, response_status: 200, lease_owner: null, lease_expires_at: null }, leaseOwner);
+      return json({ ...result, ...(auditId ? { request_id: auditId } : {}), idempotency_key: idempotencyKey, message: intakeConfirmation(result) });
     }
     const intake = { ...normalizeIntake(frozenIntake(policy.input, receivedAt), { baseDate: receivedAt }), existing_task_id: policy.input.existing_task_id, update_patch: policy.input.update_patch };
-    const requestHash = await sha256(stableRequest(input));
-    const reservation = await reserveAudit(intake, idempotencyKey, requestHash, receivedAt);
+    const reservation = earlyReservation || await reserveAudit(intake, idempotencyKey, requestHash, receivedAt);
     auditId = reservation.row.id;
     leaseOwner = reservation.leaseOwner || "";
     if (reservation.replayed) {
@@ -707,6 +757,7 @@ Deno.serve(async (request) => {
       return json({ ...recovered, replayed: true }, recovered.success ? 200 : 202);
     }
 
+    if (earlyReservation) await updateAudit(auditId, { request_payload: intake, target_object_id: intake.existing_task_id || null }, leaseOwner);
     const identity = await taskService({ action: "account_context" });
     if (!identity?.account_subject) {
       const result = { success: false, write_success: false, verified: false, code: "ACCOUNT_UNVERIFIED",
@@ -775,9 +826,10 @@ Deno.serve(async (request) => {
     const intakeError = error instanceof IntakeError
       ? error
       : new IntakeError(timedOut ? "Personal OS intake timed out" : "Personal OS intake failed", 503, timedOut ? "INTAKE_TIMEOUT" : "INTAKE_FAILED");
-    const failure = { success: false, write_success: false, verified: false, code: intakeError.code, error: intakeError.message,
+    auditId ||= intakeError.requestId || "";
+    const failure = { success: false, write_success: false, verified: false, outcome: intakeError.code === "IDEMPOTENCY_CONFLICT" ? "rejected" : "unknown", idempotency_key: receiptKey || undefined, request_id: auditId || undefined, code: intakeError.code, error: intakeError.message,
       ...(intakeError.code === "TASK_TARGET_AMBIGUOUS" ? { decision: "ask", question: "有多个匹配任务，要修改哪一个？" } : {}), message: "" };
-    failure.message = intakeConfirmation(failure);
+    failure.message = intakeError.code === "IDEMPOTENCY_CONFLICT" ? "此幂等键对应另一个已登记请求；本次内容已拒绝，未重写。请按原请求ID只读核实。" : auditId ? "请求已登记，执行结果待核实；请按原 request_id 或 idempotency_key 只读核实。" : "未取得持久回执，结果待核实；请按原 idempotency_key 查询，不能据此判断已写入或未写入。";
     if (auditId && leaseOwner) {
       const authRequired = ["AUTH_RECONNECT_REQUIRED", "GOOGLE_REAUTH_REQUIRED", "GOOGLE_AUTH_REQUIRED",
         "GOOGLE_NOT_CONNECTED", "ACCOUNT_MISMATCH", "ACCOUNT_UNVERIFIED"].includes(intakeError.code);

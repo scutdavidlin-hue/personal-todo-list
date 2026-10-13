@@ -410,7 +410,7 @@ function operationAuthority(input) {
   const unclearMutation = !hasChangeCue(text) && /(?:^(?:请)?(?:把|将).*(?:挪|移|改|调整)|^(?:请)?(?:修改|更改|补充|调整|延期))/m.test(text.trim());
   const independentCreate = createCommand && !hasChangeCue(text)
     && (deniedMutation || /(?:独立(?:的)?.{0,12}(?:任务|事项|提醒)|(?:新建|新增|另建).{0,8}(?:任务|待办|提醒))/.test(quoted));
-  return { text, independent_create: independentCreate, requires_clarification: metaOnly || unmatchedQuote || unclearMutation || deniedCreation
+  return { text, creation_command: createCommand, independent_create: independentCreate, requires_clarification: metaOnly || unmatchedQuote || unclearMutation || deniedCreation
     || (deniedMutation && !hasChangeCue(text) && !createCommand)
     || (hasChangeCue(current) && !hasChangeCue(text) && !createCommand), has_operation: operationCue(text) };
 }
@@ -444,6 +444,8 @@ export function extractIntentProfile(input = {}) {
     explicit_update: EXPLICIT_UPDATE_CUE.test(operationText),
     operation_requires_clarification: authority.requires_clarification,
     independent_create: authority.independent_create,
+    creation_command: authority.creation_command,
+    scope_extension: /(?:也|加上|纳入|补充|扩展|顺便|一起|一并).{0,12}(?:分析|计算|核算|汇总|整理|核对|报告)/.test(operationText),
     dependency_cue: DEPENDENCY_CUE.test(text),
     parent_child_cue: PARENT_CHILD_CUE.test(text),
   };
@@ -757,9 +759,10 @@ function duplicateConfidence(profile, top) {
 }
 
 function additiveUpdateCandidate(profile, ranked) {
-  if (!profile.additive && !profile.explicit_update) return null;
+  if (!profile.scope_extension && !profile.explicit_update) return null;
   const compatible = ranked.filter((item) => {
     if (CLOSED_STATUSES.has(item.status)) return false;
+    if (profile.creation_command && !profile.explicit_update && profile.due && item.profile.due && profile.due !== item.profile.due) return false;
     const sameAction = item.profile.action === profile.action || profile.action === "update" || profile.action === "act";
     const sharedContext = contextSimilarity(profile, item.profile) > 0;
     const sharedTopic = setOverlap(profile.topics, item.profile.topics) > 0;
@@ -769,7 +772,7 @@ function additiveUpdateCandidate(profile, ranked) {
     // Month shape alone never establishes the target subject.
     const domainIdentity = sharedTopic && overlapCoefficient(profile.topics, item.profile.topics) >= 0.75 && item.score >= 0.45;
     const ellipticalIdentity = !incomingNamesDomain && profile.action === item.profile.action && !["act", "update"].includes(profile.action);
-    const monthExtension = profile.months.length > 0 && item.profile.months.length > 0
+    const monthExtension = profile.scope_extension && profile.months.some(month => !item.profile.months.includes(month)) && item.profile.months.length > 0
       && (sharedContext || (sharedEntity && sharedTopic) || domainIdentity || ellipticalIdentity);
     const explicitUpdate = profile.explicit_update && item.score >= 0.78 && (sharedEntity || sharedContext || domainIdentity);
     const strongSemanticMatch = item.score >= 0.58;
@@ -972,6 +975,7 @@ export function resolveTaskIntent(incoming, context = {}) {
   const additive = profile.independent_create ? null : additiveUpdateCandidate(profile, ranked);
   const identityMatches = ranked.filter((item) => (
     !CLOSED_STATUSES.has(item.status)
+      && !(profile.creation_command && !profile.explicit_update && profile.due && item.profile.due && profile.due !== item.profile.due)
       && duplicateConfidence({ ...profile, due: item.profile.due }, item) >= RESOLUTION_THRESHOLDS.automatic
   ));
   const uniqueIdentity = identityMatches.length === 1 ? identityMatches[0] : null;
@@ -989,7 +993,8 @@ export function resolveTaskIntent(incoming, context = {}) {
       ? "The same canonical action received additional date or note information, so the existing task is patched."
       : "The new wording is an additive scope change to one unambiguous existing atomic task.";
     return attachExplicitDependencies(baseResult(profile, ranked, "UPDATE", confidence, reason, {
-      automatic_action: "UPDATE_CANONICAL",
+      automatic_action: confidence >= RESOLUTION_THRESHOLDS.automatic ? "UPDATE_CANONICAL" : "CLARIFY",
+      ...(confidence < RESOLUTION_THRESHOLDS.automatic ? { requires_clarification: true } : {}),
       should_create: false,
       existing_task_id: match.task_id,
       canonical_task_id: match.task.canonical_task_id || match.task_id,
