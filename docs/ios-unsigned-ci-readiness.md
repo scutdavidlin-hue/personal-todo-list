@@ -1,6 +1,7 @@
 # PR #7: unsigned build and test readiness
 
-Checked 2026-10-13 against head `a79840b0a1938440d8bde8cb015a5a527f346f4d`.
+Initial read-only check: 2026-10-13 against head `a79840b0a1938440d8bde8cb015a5a527f346f4d`.
+Actual unsigned CI candidate: `2df2d4b8c85e3219e65998c3d025d1048cade650`.
 The user's Mac has only Command Line Tools, according to the delegated Mac check;
 that report is not an Xcode build. This cloud workspace is Linux and has no Apple
 SDK, `xcodebuild` or `simctl`.
@@ -35,6 +36,13 @@ SDK, `xcodebuild` or `simctl`.
   workflow can run only if the existing GitHub connection is permitted to write
   the workflow/ref; repository `admin:true` metadata alone does not prove that
   the installation token has GitHub's separate workflow-write permission.
+
+After reporting the public/free runner evidence, the existing connection did
+successfully write the guarded workflow and update the PR branch. No credentials
+or account were added. [Actual run 38374114519](https://github.com/scutdavidlin-hue/personal-todo-list/actions/runs/38374114519)
+completed successfully at 09:15:11 UTC. Raw job metadata confirms label
+`macos-15` in the `GitHub Actions` runner group; the downloaded job log identifies
+`macos-15-arm64`, macOS 15.7.9 and Xcode 16.4 (16F6).
 
 ## Prepared execution
 
@@ -92,6 +100,33 @@ reported as passed before actual runner logs and the phase receipt are read.
 
 ## Result
 
-Configuration is prepared; native compilation/test execution outcome will be
-updated only after a real authorized run. PR #7 remains Draft. Existing source,
-production Task dates, backend permissions and releases remain unchanged.
+The actual job log and phase receipt were read back, rather than relying solely
+on the Actions green badge:
+
+| Native phase | Verified result | Limit |
+| --- | --- | --- |
+| iPhoneOS build | `BUILD SUCCEEDED`, SDK 18.5 | Unsigned; no physical installation |
+| iPhoneSimulator build-for-testing | `TEST BUILD SUCCEEDED`, SDK 18.5 | Compilation includes app, widget and XCTest target |
+| Swift XCTest | Five methods executed, zero failures | Simulator iPhone SE (3rd generation), runtime iOS 26.2; logic tests only |
+| Phone delivery / island rendering | Not performed | No iPhone, signing, push or UI observation |
+
+The simulator model has no Dynamic Island. The XCTest methods check snapshot
+decoding, UTC instants, one-hour boundaries, terminal data and stable ID isolation;
+they do not assert UNUserNotificationCenter delivery, permission prompts or widget
+display. Framework compilation and these logic tests are now verified; the
+mobile feature is still not a signed, installed or accepted release.
+
+Structured evidence is saved in `docs/ios-unsigned-ci-evidence.json`. The full log
+is available in the linked Actions job; no artifact was uploaded. Warnings only
+concern not stripping Apple's already signed simulator XCTest libraries. The app
+build used `CODE_SIGNING_ALLOWED=NO` and no team/identity; no developer credential
+was created or used.
+
+Shell syntax, YAML public/free guard, Linux/CLT-only refusal probes, and the
+existing Node regression (525 tests: 523 passed, two existing skips, zero failures)
+also passed. These checks are recorded separately from native XCTest.
+
+PR #7 remains Draft. There was no production deployment, Task edit, authentication
+change, signing, TestFlight upload, App Store release or paid service creation.
+The user's Mac still needs full Xcode/iOS components before local signing and
+installation can be pursued with explicit approval.
