@@ -112,3 +112,27 @@ Do not claim the isolated implementation resolves that distributed race.
 This follow-up does not make automatic island startup available. No real device
 token was collected/uploaded, no APNs credential was read/generated, no binary
 was signed/installed, and no notification was sent to a phone.
+
+## Follow-up verification
+
+Actual tested code commit: `2fc54b46a5daeb05cd65ed9dc1b9f2c94b59175f`.
+[Free standard macOS CI run 38378357820](https://github.com/scutdavidlin-hue/personal-todo-list/actions/runs/38378357820)
+completed successfully at 2026-10-13 09:54:16 UTC. The complete job log and phase
+receipt were read: Xcode 16.4 (16F6), iPhoneOS and simulator SDK 18.5 builds passed;
+all **ten** Swift XCTest methods executed with zero failures. No physical device
+or widget-rendering acceptance is claimed.
+
+`npm run verify`: 540 tests, 538 passed, two existing skips, zero failures. The
+15 new HTTP-handler tests use only an in-memory store/vault, synthetic owner IDs,
+synthetic hex tokens and mocked transport responses. Cases cover authentication,
+owner boundaries including broken adapter filters, CAS/readback, permission/OS
+gates, exact 11:00 UTC conversion, concurrent claims, unknown-no-retry, terminal
+and rescheduled Tasks, manual close/races, revocation and separate instance-token
+end. These are simulation results, not accepted/delivered real APNs messages.
+
+The 454,688-character follow-up CI log was checked with the same privacy probes:
+zero email-like values; no JWT/private-key/GitHub-token values, production
+Tasks/Auth calls or native token observers. Public repository/account handles
+remain visible. Structured evidence is in `docs/ios-unsigned-ci-evidence.json`.
+The final evidence update is documentation only; native source remains identical
+to the tested commit and does not require a second identical runner invocation.

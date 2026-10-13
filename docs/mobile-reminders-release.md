@@ -94,6 +94,15 @@ See `docs/ios-unsigned-ci-readiness.md` for free-runner conditions and the user'
 Mac installation steps. Newer SDK/device behavior and physical phone delivery
 remain outside this verified milestone.
 
+Device/backend follow-up: `2fc54b46a5daeb05cd65ed9dc1b9f2c94b59175f` passed
+actual unsigned iPhoneOS/simulator compilation and ten Swift tests in
+[run 38378357820](https://github.com/scutdavidlin-hue/personal-todo-list/actions/runs/38378357820).
+Node regression is now 540 tests: 538 passed, two existing skips, zero failures.
+Registration, close/follow, instance-token and due/end handlers are implemented
+and simulated in isolation; production auth/store/vault/APNs adapters, native
+token observation and deployment remain unconfigured. See
+`docs/mobile-device-integration.md`. This does not change the unpublished status.
+
 Offline KPL contract preview (never sends):
 
 ```sh

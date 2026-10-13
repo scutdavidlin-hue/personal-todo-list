@@ -130,3 +130,11 @@ PR #7 remains Draft. There was no production deployment, Task edit, authenticati
 change, signing, TestFlight upload, App Store release or paid service creation.
 The user's Mac still needs full Xcode/iOS components before local signing and
 installation can be pursued with explicit approval.
+
+Follow-up source `2fc54b46a5daeb05cd65ed9dc1b9f2c94b59175f` was retested after
+adding native permission state, the protected close outbox and device client.
+[Run 38378357820](https://github.com/scutdavidlin-hue/personal-todo-list/actions/runs/38378357820)
+passed both unsigned builds and all ten Swift tests. The prior five-test result
+above remains historical evidence, not the latest test count. Current evidence
+and production-binding limitations are in `docs/mobile-device-integration.md`
+and `docs/ios-unsigned-ci-evidence.json`. Automatic T−1h startup is not deployed.
