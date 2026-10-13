@@ -1,0 +1,55 @@
+name: Personal OS unsigned iOS checks
+
+# Only the isolated PR #7 branch. No main/baseline changes, schedules or deploys.
+on:
+  push:
+    branches: [feat/ios-companion-reminders-20261013]
+    paths:
+      - 'ios/**'
+      - '.github/workflows/personalos-ios-unsigned.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: personal-os-unsigned-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unsigned-native-checks:
+    # Evaluated before allocating a runner. Public standard runners are free;
+    # never substitute a larger runner or execute this in a private repository.
+    if: github.repository == 'scutdavidlin-hue/personal-todo-list' && github.event.repository.private == false
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - name: Fetch the exact public candidate without credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init source
+          git -C source remote add origin https://github.com/scutdavidlin-hue/personal-todo-list.git
+          git -C source fetch --depth=1 origin "$GITHUB_SHA"
+          git -C source checkout --detach FETCH_HEAD
+          test "$(git -C source rev-parse HEAD)" = "$GITHUB_SHA"
+      - name: Compile iPhoneOS and simulator targets, then run Swift XCTest
+        shell: bash
+        run: bash source/ios/run-unsigned-checks.sh "$RUNNER_TEMP/personal-os-unsigned"
+      - name: Summarize actual phase outcomes
+        if: always()
+        shell: bash
+        run: |
+          python3 - "$RUNNER_TEMP/personal-os-unsigned/receipt.json" "$GITHUB_STEP_SUMMARY" <<'PY'
+          import json, pathlib, sys
+          receipt, summary = map(pathlib.Path, sys.argv[1:])
+          if receipt.exists():
+              text = receipt.read_text()
+              json.loads(text)
+          else:
+              text = json.dumps({"overall": "not_run", "swift_xctest": "not_run", "reason": "Fetch or runner failed before native checks"}, indent=2)
+          with summary.open('a') as output:
+              output.write('Unsigned native checks; no physical iPhone delivery/island acceptance.\n\n```json\n' + text + '\n```\n')
+          PY
+
+# Deliberately no artifact/cache uploads, signing, secrets, deployment, or SDK
+# downloads. Job logs and summary do not consume artifact storage allowance.

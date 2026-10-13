@@ -13,6 +13,12 @@ this draft as an accepted release before the Mac build and device checks below.
 
 ## Build on a Mac
 
+The user's current Mac has Command Line Tools but lacks full Xcode and the
+iPhoneOS/simulator SDKs. Follow [the unsigned CI and installation handoff](../docs/ios-unsigned-ci-readiness.md)
+to install the missing components. Once present, `bash ios/run-unsigned-checks.sh`
+compiles both native targets and executes XCTest without signing; it reports each
+phase separately and cannot mistake a structure check for compilation.
+
 1. Open `PersonalOSCompanion.xcodeproj` in Xcode (iOS 17+ SDK).
 2. Select the shared `PersonalOSCompanion` scheme and an available iPhone
    simulator. Build and run XCTest before configuring signing.
