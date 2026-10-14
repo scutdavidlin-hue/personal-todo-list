@@ -36,9 +36,12 @@ function parseChineseIntentTime(text) {
     // Quantity/list/relative wording is not an absolute clock. Continue to
     // later candidates so “一点资料，下午三点整理” retains the real time.
     if (!match[1] && (/(?:整理|准备|补充|列出|总结|只有|仅有|还有|提前|推迟|晚|早|多|少|稍|略|提高|降低|增加|减少|第)\s*$/.test(prefix)
-      || /^(?:点|倍|元|万元|问题|资料|材料|说明|建议|要求|内容|意见|细节)/.test(suffix))) continue;
+      || /^(?:点|倍|元|万元|问题|资料|材料|说明|建议|要求|内容|意见|细节|虚构(?:知识|想法))/.test(suffix))) continue;
     const clockSuffix = !suffix || /^(?:钟|整|左右|前|后|开始|开会|见面|集合|出发|到达|结束|下班|起床|睡觉|吃饭|提醒|通知|准备|整理|检查|处理|发送|提交|参加)/.test(suffix);
     const clockContext = Boolean(match[1] || match[3] || /分$/.test(match[0]))
+      // A date immediately before the clock supplies temporal context even
+      // when the following action is outside the bounded event-word list.
+      || /(?:今天|明天|后天|今晚|明晚|日|号)\s*$/.test(prefix)
       || (clockSuffix && (!prefix || /[，,。；;\n]\s*$/.test(prefix)
         || /(?:今天|明天|后天|今晚|明晚|日|号|在|到|从)\s*$/.test(prefix)))
       || /(?:定在|改成|改到|调整到|换到|还是|时间(?:是|为|[:：]))\s*$/.test(prefix)
@@ -433,7 +436,7 @@ export function evaluateAutonomy(input, options = {}) {
   // An unanchored month window is future timing, not a missing-date request
   // that may default to today. Keep precise supplied/raw dates on their path.
   if (!explicitDate && !autonomyIntentDate(actionText, baseDate)
-    && /(?:\d{1,2}|[一二三四五六七八九十]{1,3}|下个?|本|这)月(?:初|中|末|底|上旬|中旬|下旬)/.test(actionText)) {
+    && /(?:(?:\d{1,2}|[一二三四五六七八九十]{1,3}|下个?|本|这个?|这)?月(?:初|中|末|底|上旬|中旬|下旬))/.test(actionText)) {
     const unresolved = { ...actionInput };
     delete unresolved.requested_date;
     return result("action", "L2", "ask", "The month window has no exact execution date.",

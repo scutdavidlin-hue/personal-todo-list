@@ -106,3 +106,29 @@ test("an enabled actual reminder still becomes missed after its instant", () => 
     due: "2026-10-14", requested_date: "2026-10-14", requested_time: "01:00", reminder_policy: "custom", reminder_at: "2026-10-14T01:00" }, { baseDate: receivedAt });
   assert.equal(isMissed(intake, new Date(receivedAt)), true);
 });
+
+for (const [wording, date, time] of [
+  ["11月1日九点办理虚构业务", target, "09:00"],
+  ["明天三点去超市买虚构物品", "2026-10-15", "03:00"],
+  ["11月1日九点阅读虚构故事", target, "09:00"],
+]) {
+  test(`date-anchored Chinese clock survives an arbitrary action: ${wording}`, () => {
+    const intake = creation(wording, {});
+    assert.equal(intake.due, date);
+    assert.equal(intake.requested_time, time);
+    assert.equal(intake.schedule.scheduled_start, time);
+    assert.equal(intake.schedule.reminder_policy, "none");
+    assert.equal(isMissed(intake, new Date(receivedAt)), false);
+  });
+}
+
+for (const window of ["月底", "这个月底", "本月底", "下个月底", "月初", "这个月中", "11月下旬"]) {
+  test(`unanchored month window asks for a date: ${window}`, () => {
+    const input = { type: "task", title: "整理虚构资料", raw_text: `${window}整理虚构资料`,
+      requested_time: null, reminder_policy: "none" };
+    const policy = evaluateAutonomy(input, { baseDate: receivedAt });
+    assert.equal(policy.decision, "ask");
+    assert.equal(policy.input.requested_date, undefined);
+    assertDateOnly(creation(input.raw_text, { due: target }));
+  });
+}

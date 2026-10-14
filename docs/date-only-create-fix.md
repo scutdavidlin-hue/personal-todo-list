@@ -35,6 +35,20 @@ full suite and pass; no restricted runtime path is exercised.
 
 ## Verified results
 
+Follow-up at da69503c: date-adjacent Chinese clocks retain their time when the
+following action is outside the event-word vocabulary (办理 / 去超市 / 阅读).
+Bare 月底 and 这个月底 also require an exact date, unless an explicit due/date
+already supplies it. Original quantity, explicit-date and none-policy cases
+remain covered. The follow-up adds ten synthetic regressions.
+
+Local follow-up validation with existing Node 24.21.0: `npm run verify` reports
+549 tests, 547 passed, two existing skips, zero failures; all 36 date regressions
+pass. The four existing gateway/intake pure-simulation scenarios pass again.
+These are local checks, not GitHub CI, deployment or iPhone acceptance. No Node
+installation or network configuration change was needed.
+
+The following totals describe the earlier PR revision, not this follow-up:
+
 `npm run verify`: **539 tests, 537 passed, two existing browser tests skipped,
 zero failures**. The 26 date regressions cover pure ISO date, due-only,
 requested_date-only, matching and competing explicit fields, supported aliases,
