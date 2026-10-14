@@ -159,3 +159,32 @@ test("an unresolved modified 一点 phrase asks rather than inventing a clock", 
   assert.equal(policy.decision, "ask");
   assert.equal(policy.input.requested_time, null);
 });
+
+for (const predicate of ["记下来", "记录下来", "整理好", "保存起来", "提交给团队", "发送给同事"]) {
+  for (const separator of ["", "，", "；", ",", ";"]) {
+    for (const laterClock of [false, true]) {
+      if (!laterClock && separator) continue;
+      const phrase = `明天一点新的想法都${predicate}${laterClock ? `${separator}下午三点整理` : ""}`;
+      test(`adjacent quantity grammar with later predicate/clock: ${phrase}`, () => {
+        const intake = creation(phrase, { reminder_policy: "smart" });
+        assert.equal(intake.due, "2026-10-15");
+        assert.equal(intake.requested_time, laterClock ? "15:00" : null);
+        if (!laterClock) {
+          assert.equal(intake.schedule.reminder_at, null);
+          assert.deepEqual(intake.schedule.reminders, []);
+        }
+      });
+    }
+  }
+}
+test("multiple quantity candidates do not hide the later real clock", () => {
+  const intake = creation("明天一点想法都记录下来；一点资料都整理好，下午三点办理业务", { reminder_policy: "smart" });
+  assert.equal(intake.requested_time, "15:00");
+});
+test("unmodified noun and synonymous predicate remain quantity wording", () => {
+  for (const suffix of ["", "，下午三点整理"]) {
+    const intake = creation(`明天一点想法都记录下来${suffix}`, { reminder_policy: "smart" });
+    assert.equal(intake.requested_time, suffix ? "15:00" : null);
+    if (!suffix) assert.equal(intake.schedule.reminder_at, null);
+  }
+});

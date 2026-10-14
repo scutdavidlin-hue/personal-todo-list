@@ -35,6 +35,20 @@ full suite and pass; no restricted runtime path is exercised.
 
 ## Verified results
 
+Third review fixes the scope of nominal quantity evidence: only the modifier
+before the adjacent noun/distributive marker is inspected for an action. A
+later predicate cannot cancel quantity recognition. Rejected quantities still
+continue to later clock candidates. Thirty-eight new regressions cover six
+synonymous predicates, comma/semicolon forms, adjacent clauses, modified and
+unmodified nouns, and multiple quantity candidates before 下午三点. There are
+no new verb exceptions. The expanded 110-test file fails six cases on db7c954
+and passes all 110 on the final source. Final npm run verify: 623 tests,
+621 passed, two existing skips, zero failures. The four original simulated
+gateway/intake cases pass again. Existing Node 24.21.0 is unchanged. These
+are local results only; no real Tasks, deployment or device acceptance.
+
+Earlier entries below describe prior revisions:
+
 Second independent review: the earlier date-anchor change still interpreted
 natural quantity phrases as 01:00 and omitted weekday/ISO clocks. The revised
 parser separates weekday digits from clock numbers; time context comes from

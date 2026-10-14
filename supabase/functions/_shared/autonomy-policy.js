@@ -42,11 +42,12 @@ function parseChineseIntentTime(text, details = {}) {
       || /^(?:点|倍|元|万元|问题|资料|材料|说明|建议|要求|内容|意见|细节)/.test(suffix))) continue;
     // Small-quantity 一点 can introduce a modified noun phrase. Distributive
     // 都/也 and nominal complements are quantity evidence, regardless of date.
-    // Use the established action classifier only to avoid treating an action
-    // followed by its object (整理资料) as a nominal complement.
+    // Inspect only the modifier before the adjacent noun/distributive marker.
+    // A later predicate such as 记录下来 must not change 一点想法 into a clock.
+    const nominalComplement = suffix.match(/^([^，,。；;\n]{0,16})(?:想法|知识|资料|材料|钱|食物|时间|东西)(?=都|也|[，,。；;]|$)/)
+      || suffix.match(/^([^，,。；;\n]{1,16})(?:都|也)(?=不|没|要|得|记|别)/);
     const nominalQuantity = match[2] === "一" && !match[1] && !match[3]
-      && !ACTION_PATTERN.test(suffix.split(/[，,。；;\n]/)[0])
-      && /^(?:[^，,。；;\n]{0,16}(?:想法|知识|资料|材料|钱|食物|时间|东西)(?:都|也|[，,。；;]|$)|[^，,。；;\n]{1,16}(?:都|也)(?:不|没|要|得|记|别))/.test(suffix);
+      && nominalComplement && !ACTION_PATTERN.test(nominalComplement[1]);
     if (nominalQuantity) continue;
     const dateAnchor = /(?:今天|明天|后天|今晚|明晚|日|号|\d{4}-\d{2}-\d{2}|(?:周|星期)[一二三四五六日天])\s*$/.test(prefix);
     if (dateAnchor && match[2] === "一" && !match[1] && !match[3]
