@@ -51,6 +51,9 @@ function zonedParts(instant, timezone) {
 // Compare wall-clock components in the original zone; this also handles midnight rollover.
 export function isMissed(intake, now = new Date()) {
   const schedule = intake?.schedule || {};
+  // Execution time is not a notification. Explicit none stays disabled even
+  // when an execution clock is in the past or stale reminder fields remain.
+  if ((schedule.reminder_policy ?? intake?.reminder_policy) === "none") return false;
   const exact = schedule.reminder_at;
   if (typeof exact === "string" && /(?:Z|[+-]\d\d:\d\d)$/i.test(exact)) {
     const instant = Date.parse(exact);

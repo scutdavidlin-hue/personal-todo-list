@@ -1,0 +1,160 @@
+# Date-only creation repair — isolated draft
+
+An explicitly dated create_task could be changed to today's date before provider
+dispatch; Chinese quantity/list words could introduce 01:00 or 02:00; none could
+then be rejected as REMINDER_MISSED. This draft repairs those reproduced
+non-security date/time behaviors without modifying the already corrected real
+Task, production, protected service paths, or the native PR #7.
+
+## Final implementation
+
+- `_shared/autonomy-policy.js` chooses the supported explicit execution date
+  fields before inferred/context/default dates: requested_date/requestedDate,
+  nested Schedule date, then due/dueDate. Existing requested_date precedence is
+  retained. Invalid explicit date values reach normalizeIntake's validation
+  instead of being silently replaced by today. Supplied due is execution Date,
+  distinct from a separately supplied hard deadline.
+- Chinese clock candidates require temporal context and skip quantity/list,
+  relative and fractional wording. Rejected quantity candidates do not prevent
+  recognizing a later real clock. Genuine afternoon, midnight, half-hour, bare
+  event-clock and short time-change behavior are covered. This is bounded
+  linguistic handling, not a claim to parse every possible Chinese sentence.
+- An unanchored month-start/mid/end window does not default to today; it requires
+  an exact execution date. A supplied date or exact date in the wording follows
+  the normal path. No new window schema or invented day-one rule is introduced.
+- `_shared/request-recovery.js` returns not-missed for explicit none, including
+  past execution clocks or stale reminder fields. A genuinely enabled reminder
+  still becomes missed after its instant. The ordinary missed-time comparison
+  and account/lease/recovery guards are otherwise unchanged.
+
+Only these two production shared modules change. No permission/authentication,
+L3 confirmation, credentials, APNs, schema or provider-write code is modified.
+The added L2 decision is exclusively business-date clarification for a month
+window without an exact anchor. All original safety-policy tests remain in the
+full suite and pass; no restricted runtime path is exercised.
+
+## Verified results
+
+Fifth review adopts conservative precision: bare 一点 with an unknown modifier
+or predicate asks for clarification, rather than executing with a silently
+discarded time/reminder. Definite adjacent quantities still remain untimed;
+explicit period/钟/half-hour/minute syntax remains timed. 凌晨 is supported.
+The 整 marker must have a boundary, so 整理 is not mistaken for 整点. Ambiguous
+earlier candidates also require clarification when a later clock is present.
+Earlier assertions expecting unknown fictitious noun modifiers to execute
+untimed now explicitly require ask; the bare 一点整理 clock control uses
+一点钟整理 to express unambiguous intent. These are intentional precision
+changes, not claims that the earlier assertions remain semantically unchanged.
+
+Eight ambiguity cases and twenty explicit-clock/action combinations supplement
+the retained quantity, weekday, ISO, month-window and multi-candidate matrix.
+Final Node 24.21.0 validation: 169/169 date regressions; npm run verify reports
+682 tests, 680 passed, two existing skips, zero failures. The identical final
+test file was also run against 236f366 as a failing before-control; the log is
+retained in the isolated task directory. Four original gateway/intake pure
+simulations pass. No real Tasks, merge, deployment or runtime installation.
+These are local results only, not GitHub CI or iPhone acceptance.
+
+Earlier entries below describe prior revisions:
+
+Fourth review: the nominal modifier regex was greedy and could backtrack to a
+later object noun, absorbing 想法都整理成 into the modifier. It now uses lazy
+matching and excludes 都/也 from the modifier span, so a predicate beyond the
+first nominal/distributive boundary cannot affect quantity classification.
+Thirty-three added regressions cross two nouns, four predicate/object pairs,
+three separator forms plus no later clock, and several quantities before a
+genuine afternoon clock. The same 143-test file fails nine cases on 01d0dc3;
+the final source passes all 143. Final npm run verify: 656 tests, 654 passed,
+two existing skips, zero failures. Four original gateway/intake simulation
+cases also pass. No runtime installation, real writes, merge or deployment.
+These are local test results, not GitHub CI or device acceptance.
+
+Earlier entries below describe prior revisions:
+
+Third review fixes the scope of nominal quantity evidence: only the modifier
+before the adjacent noun/distributive marker is inspected for an action. A
+later predicate cannot cancel quantity recognition. Rejected quantities still
+continue to later clock candidates. Thirty-eight new regressions cover six
+synonymous predicates, comma/semicolon forms, adjacent clauses, modified and
+unmodified nouns, and multiple quantity candidates before 下午三点. There are
+no new verb exceptions. The expanded 110-test file fails six cases on db7c954
+and passes all 110 on the final source. Final npm run verify: 623 tests,
+621 passed, two existing skips, zero failures. The four original simulated
+gateway/intake cases pass again. Existing Node 24.21.0 is unchanged. These
+are local results only; no real Tasks, deployment or device acceptance.
+
+Earlier entries below describe prior revisions:
+
+Second independent review: the earlier date-anchor change still interpreted
+natural quantity phrases as 01:00 and omitted weekday/ISO clocks. The revised
+parser separates weekday digits from clock numbers; time context comes from
+date/time syntax, not a following-action vocabulary. The test-only fictitious
+noun exceptions and clockSuffix action list are removed. Modified nominal and
+distributive quantity phrases stay untimed, including 一点想法都记下来 and
+一点新的资料都不要遗漏 with smart reminders. Unresolved modified 一点 wording
+asks for clarification instead of inventing a clock. Existing action detection
+is reused to distinguish an action plus object from a nominal quantity phrase;
+this is still bounded grammar, not unrestricted Chinese-language understanding.
+
+Five date forms (relative day, 周 weekday, 星期 weekday, Chinese month/day and
+ISO date) cross three ordinary actions and four quantity phrases in a natural
+wording table. One ambiguity case is also added; the previous 36 regressions
+remain intact. On the final source, Node 24.21.0 reports 72/72 date regressions
+and npm run verify reports 585 tests, 583 passed, two existing skips, zero
+failures. The four existing actual gateway/intake simulated scenarios pass.
+The same expanded test file was run against 1c07c9c as a failing before-control;
+logs are retained in the isolated task directory. All inputs and writes are
+simulated; no real Tasks or production providers were used. These results are
+local validation, not GitHub CI, deployment or iPhone acceptance.
+
+Earlier verification entries below describe prior revisions:
+
+Follow-up at da69503c: date-adjacent Chinese clocks retain their time when the
+following action is outside the event-word vocabulary (办理 / 去超市 / 阅读).
+Bare 月底 and 这个月底 also require an exact date, unless an explicit due/date
+already supplies it. Original quantity, explicit-date and none-policy cases
+remain covered. The follow-up adds ten synthetic regressions.
+
+Local follow-up validation with existing Node 24.21.0: `npm run verify` reports
+549 tests, 547 passed, two existing skips, zero failures; all 36 date regressions
+pass. The four existing gateway/intake pure-simulation scenarios pass again.
+These are local checks, not GitHub CI, deployment or iPhone acceptance. No Node
+installation or network configuration change was needed.
+
+The following totals describe the earlier PR revision, not this follow-up:
+
+`npm run verify`: **539 tests, 537 passed, two existing browser tests skipped,
+zero failures**. The 26 date regressions cover pure ISO date, due-only,
+requested_date-only, matching and competing explicit fields, supported aliases,
+invalid dates, anchored/unanchored month windows, no execution clock, quantity
+words without a no-clock disclaimer, a later genuine clock, midnight/half-hour,
+explicit time, none and real missed reminders. Existing deadline, recurrence,
+current-task update, information-only and high-risk confirmation tests pass.
+
+`node scripts/reproduce-date-only-create.mjs` executes actual type-stripped MCP
+gateway functions and the actual intake handler through synthetic adapters. All
+four fixed-clock cases now create exactly one simulated Task dated 2026-11-01,
+with requested_time/scheduled_start null, none, reminder_at null and no missed
+error. There are no real provider calls or Task writes. Gateway Hono/Zod
+initialization, actual Deno deployment and production providers are not verified.
+
+`docs/date-only-create-reproduction.json` is the archived pre-fix capture;
+`docs/date-only-create-fixed.json` is the same scenarios after the repair. The
+frozen clock, fictitious wording and adapter boundaries are documented in the
+investigation report. Original customer request IDs/details are not included.
+
+## Attribution and release limits
+
+The baseline reproduces the reported shapes with due-only inputs and a
+quantity-like 一点. If a valid requested_date=2026-11-01 actually reached the
+same baseline handler together with due, that baseline control retains November
+1. The original raw JSON/wording and exact deployed bundle were not inspected.
+These confirmed defects therefore do not establish full causation for the
+historical production incident. That conclusion is unchanged by fixing them.
+
+This is code/test delivery only. No real Task update, production deployment,
+merge, auth/permission change, credential access, APNs operation, native change
+or macOS CI run occurred. PR #7's worktree remains at
+`48fe9319fa45af19741e3deff38a47c885ed7c2f`. Future authorized release must use the
+correct deployed-source baseline and package these shared helpers into the
+affected intake/recovery bundles; this draft does not claim that rollout.

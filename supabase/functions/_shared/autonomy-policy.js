@@ -27,19 +27,68 @@ function chineseNumber(value) {
   return digits[value] ?? null;
 }
 
-function parseChineseIntentTime(text) {
-  const match = String(text || "").match(/(上午|早上|中午|下午|晚上)?\s*([一二两三四五六七八九十]{1,3})点(?:(半)|([一二两三四五六七八九十]{1,3})分?)?/);
-  if (!match) return null;
-  let hour = chineseNumber(match[2]);
-  const minute = match[3] ? 30 : (match[4] ? chineseNumber(match[4]) : 0);
-  if (hour === null || minute === null || hour > 23 || minute > 59) return null;
-  if ((match[1] === "下午" || match[1] === "晚上") && hour < 12) hour += 12;
-  if (match[1] === "中午" && hour < 11) hour += 12;
-  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+function parseChineseIntentTime(text, details = {}) {
+  const source = String(text || "");
+  // Do not let the weekday digit join the clock number (周五九点 -> 五九).
+  // Replace one character only, preserving offsets into the original wording.
+  const clockSource = source.replace(/((?:周|星期))[一二三四五六日天]/g, "$1〇");
+  const pattern = /(凌晨|上午|早上|中午|下午|晚上)?\s*([零一二两三四五六七八九十]{1,3})点(?:(半)|([零一二两三四五六七八九十]{1,3})分?)?/g;
+  for (const match of clockSource.matchAll(pattern)) {
+    const prefix = source.slice(0, match.index).trimEnd();
+    const suffix = source.slice(match.index + match[0].length).trimStart();
+    // Quantity/list/relative wording is not an absolute clock. Continue to
+    // later candidates so “一点资料，下午三点整理” retains the real time.
+    if (!match[1] && (/(?:整理|准备|补充|列出|总结|只有|仅有|还有|提前|推迟|晚|早|多|少|稍|略|提高|降低|增加|减少|第)\s*$/.test(prefix)
+      || /^(?:点|倍|元|万元|问题|资料|材料|说明|建议|要求|内容|意见|细节)/.test(suffix))) continue;
+    // Small-quantity 一点 can introduce a modified noun phrase. Distributive
+    // 都/也 and nominal complements are quantity evidence, regardless of date.
+    // Inspect only the modifier before the adjacent noun/distributive marker.
+    // A later predicate such as 记录下来 must not change 一点想法 into a clock.
+    // Stop at the first boundary; a later object noun must not cause backtracking
+    // across 都/也 and absorb the intervening predicate into the modifier.
+    const nominalComplement = suffix.match(/^([^，,。；;\n都也]{0,16}?)(?:想法|知识|资料|材料|钱|食物|时间|东西)(?=都|也|[，,。；;]|$)/)
+      || suffix.match(/^([^，,。；;\n都也]{1,16}?)(?:都|也)(?=不|没|要|得|记|别)/);
+    const explicitClock = Boolean(match[1] || match[3] || (match[4] && /分$/.test(match[0])))
+      || /^(?:钟|整(?:$|[，,。；;\s])|左右|前|后)/.test(suffix);
+    const nominalQuantity = match[2] === "一" && !explicitClock
+      && nominalComplement && !ACTION_PATTERN.test(nominalComplement[1]);
+    if (nominalQuantity) {
+      // An unknown span before the noun might be a predicate (开始阅读资料),
+      // not an adjective. Do not silently discard a potential execution clock.
+      if (nominalComplement[1] && !/的$/.test(nominalComplement[1])) details.ambiguous = true;
+      continue;
+    }
+    if (match[2] === "一" && !explicitClock && suffix) {
+      details.ambiguous = true;
+      continue;
+    }
+    const dateAnchor = /(?:今天|明天|后天|今晚|明晚|日|号|\d{4}-\d{2}-\d{2}|(?:周|星期)[一二三四五六日天])\s*$/.test(prefix);
+    if (dateAnchor && match[2] === "一" && !explicitClock
+      && /^[^，,。；;\n]{1,10}的/.test(suffix)) {
+      details.ambiguous = true;
+      continue;
+    }
+    const clockContext = Boolean(match[1] || match[3] || /分$/.test(match[0]))
+      // A date immediately before the clock supplies temporal context even
+      // when the following action is outside the bounded event-word list.
+      || dateAnchor
+      || !prefix || /[，,。；;\n]\s*$/.test(prefix)
+      || /(?:定在|改成|改到|调整到|换到|还是|时间(?:是|为|[:：]))\s*$/.test(prefix)
+      || /(?:会议|开会|集合|出发|到达|结束|下班|起床|睡觉|吃饭)(?:时间)?(?:是|为)?\s*$/.test(prefix)
+      || /(?:在|到|从)\s*$/.test(prefix);
+    if (!clockContext) continue;
+    let hour = chineseNumber(match[2]);
+    const minute = match[3] ? 30 : (match[4] ? chineseNumber(match[4]) : 0);
+    if (hour === null || minute === null || hour > 23 || minute > 59) continue;
+    if ((match[1] === "下午" || match[1] === "晚上") && hour < 12) hour += 12;
+    if (match[1] === "中午" && hour < 11) hour += 12;
+    return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+  }
+  return null;
 }
 
-function autonomyIntentTime(text) {
-  return parseIntentTime(text) || parseChineseIntentTime(text);
+function autonomyIntentTime(text, details = {}) {
+  return parseIntentTime(text) || parseChineseIntentTime(text, details);
 }
 
 function autonomyIntentDate(text, baseDate) {
@@ -223,7 +272,9 @@ function contextualDate(text, context = {}) {
 }
 
 function requestedDate(text, inputDate, context, baseDate) {
-  return (validDate(cleanString(inputDate)) ? cleanString(inputDate) : null)
+  // Preserve explicit values for normalizeIntake's semantic date validation;
+  // do not replace an invalid explicit date with an apparently valid today.
+  return cleanString(inputDate)
     || autonomyIntentDate(text, baseDate)
     || contextualDate(text, context)
     || parseIntentDate("今天", baseDate);
@@ -381,11 +432,19 @@ export function evaluateAutonomy(input, options = {}) {
     type: "task",
     title: cleanString(source.title) || titleFromAction(actionText),
   };
-  if (!explicitDeadlineOnly || validDate(cleanString(source.requested_date))) {
-    actionInput.requested_date = requestedDate(actionText, source.requested_date, context, baseDate);
-    actionInput.scheduling_source = autonomyIntentDate(actionText, baseDate) || source.requested_date ? "explicit_user" : "gpt_inferred";
+  const explicitDate = [source.requested_date, source.requestedDate,
+    source.schedule?.scheduled_date, source.schedule?.scheduledDate, source.due, source.dueDate]
+    .map(cleanString).find(Boolean) || null;
+  if (!explicitDeadlineOnly || explicitDate) {
+    actionInput.requested_date = requestedDate(actionText, explicitDate, context, baseDate);
+    actionInput.scheduling_source = autonomyIntentDate(actionText, baseDate) || explicitDate ? "explicit_user" : "gpt_inferred";
   }
-  const time = cleanString(source.requested_time) || autonomyIntentTime(actionText) || null;
+  const clockDetails = {};
+  const time = cleanString(source.requested_time) || autonomyIntentTime(actionText, clockDetails) || null;
+  if (clockDetails.ambiguous) {
+    return result("action", "L2", "ask", "The Chinese clock or quantity wording is ambiguous.",
+      "这里的一点表示数量，还是凌晨一点的执行时间？", actionInput, preference.preferenceText);
+  }
   if (time) actionInput.requested_time = time;
 
   const ambiguity = materiallyAmbiguous(actionText, context);
@@ -406,6 +465,16 @@ export function evaluateAutonomy(input, options = {}) {
       routeInput(route, actionBaseInput, source, originalRawText),
       preference.preferenceText,
     );
+  }
+
+  // An unanchored month window is future timing, not a missing-date request
+  // that may default to today. Keep precise supplied/raw dates on their path.
+  if (!explicitDate && !autonomyIntentDate(actionText, baseDate)
+    && /(?:(?:\d{1,2}|[一二三四五六七八九十]{1,3}|下个?|本|这个?|这)?月(?:初|中|末|底|上旬|中旬|下旬))/.test(actionText)) {
+    const unresolved = { ...actionInput };
+    delete unresolved.requested_date;
+    return result("action", "L2", "ask", "The month window has no exact execution date.",
+      "这个月份窗口内具体安排在哪一天？", unresolved, preference.preferenceText);
   }
 
   if (!explicitTaskIntent && !isAction(actionText)) {
