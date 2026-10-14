@@ -32,7 +32,7 @@ function parseChineseIntentTime(text, details = {}) {
   // Do not let the weekday digit join the clock number (周五九点 -> 五九).
   // Replace one character only, preserving offsets into the original wording.
   const clockSource = source.replace(/((?:周|星期))[一二三四五六日天]/g, "$1〇");
-  const pattern = /(上午|早上|中午|下午|晚上)?\s*([零一二两三四五六七八九十]{1,3})点(?:(半)|([零一二两三四五六七八九十]{1,3})分?)?/g;
+  const pattern = /(凌晨|上午|早上|中午|下午|晚上)?\s*([零一二两三四五六七八九十]{1,3})点(?:(半)|([零一二两三四五六七八九十]{1,3})分?)?/g;
   for (const match of clockSource.matchAll(pattern)) {
     const prefix = source.slice(0, match.index).trimEnd();
     const suffix = source.slice(match.index + match[0].length).trimStart();
@@ -48,11 +48,22 @@ function parseChineseIntentTime(text, details = {}) {
     // across 都/也 and absorb the intervening predicate into the modifier.
     const nominalComplement = suffix.match(/^([^，,。；;\n都也]{0,16}?)(?:想法|知识|资料|材料|钱|食物|时间|东西)(?=都|也|[，,。；;]|$)/)
       || suffix.match(/^([^，,。；;\n都也]{1,16}?)(?:都|也)(?=不|没|要|得|记|别)/);
-    const nominalQuantity = match[2] === "一" && !match[1] && !match[3]
+    const explicitClock = Boolean(match[1] || match[3] || (match[4] && /分$/.test(match[0])))
+      || /^(?:钟|整(?:$|[，,。；;\s])|左右|前|后)/.test(suffix);
+    const nominalQuantity = match[2] === "一" && !explicitClock
       && nominalComplement && !ACTION_PATTERN.test(nominalComplement[1]);
-    if (nominalQuantity) continue;
+    if (nominalQuantity) {
+      // An unknown span before the noun might be a predicate (开始阅读资料),
+      // not an adjective. Do not silently discard a potential execution clock.
+      if (nominalComplement[1] && !/的$/.test(nominalComplement[1])) details.ambiguous = true;
+      continue;
+    }
+    if (match[2] === "一" && !explicitClock && suffix) {
+      details.ambiguous = true;
+      continue;
+    }
     const dateAnchor = /(?:今天|明天|后天|今晚|明晚|日|号|\d{4}-\d{2}-\d{2}|(?:周|星期)[一二三四五六日天])\s*$/.test(prefix);
-    if (dateAnchor && match[2] === "一" && !match[1] && !match[3]
+    if (dateAnchor && match[2] === "一" && !explicitClock
       && /^[^，,。；;\n]{1,10}的/.test(suffix)) {
       details.ambiguous = true;
       continue;
@@ -430,7 +441,7 @@ export function evaluateAutonomy(input, options = {}) {
   }
   const clockDetails = {};
   const time = cleanString(source.requested_time) || autonomyIntentTime(actionText, clockDetails) || null;
-  if (!time && clockDetails.ambiguous) {
+  if (clockDetails.ambiguous) {
     return result("action", "L2", "ask", "The Chinese clock or quantity wording is ambiguous.",
       "这里的一点表示数量，还是凌晨一点的执行时间？", actionInput, preference.preferenceText);
   }

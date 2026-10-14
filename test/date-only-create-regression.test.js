@@ -67,7 +67,7 @@ test("an unanchored month-start window must not silently collapse to today", () 
     || policy.input?.requested_date?.startsWith("2026-11-"), "Preserve/resolve the future window; do not invent today's date");
 });
 
-for (const wording of ["整理一点虚构资料", "列出两点虚构说明", "提前一点准备虚构资料", "只有一点虚构要求", "总结第一点内容", "一点五倍虚构数值", "一点虚构知识", "明天一点虚构想法"]) {
+for (const wording of ["整理一点虚构资料", "列出两点虚构说明", "提前一点准备虚构资料", "只有一点虚构要求", "总结第一点内容", "一点五倍虚构数值"]) {
   test(`quantity without a no-clock disclaimer stays untimed: ${wording}`, () => {
     assertDateOnly(creation(wording, { due: target, requested_date: target }));
   });
@@ -97,7 +97,7 @@ test("invalid explicit dates reach semantic validation rather than becoming toda
 });
 test("genuine clocks keep midnight, half-hour and bare-clock semantics", () => {
   for (const [wording, expected] of [["11月1日零点整理虚构资料", "00:00"], ["11月1日下午三点半整理虚构资料", "15:30"],
-    ["11月1日一点整理虚构资料", "01:00"], ["11月1日会议三点开始", "03:00"]]) {
+    ["11月1日一点钟整理虚构资料", "01:00"], ["11月1日会议三点开始", "03:00"]]) {
     assert.equal(creation(wording, { due: target }).requested_time, expected);
   }
 });
@@ -208,3 +208,24 @@ test("several noun-predicate-object quantities preserve the final genuine clock"
   const intake = creation("明天一点想法都整理成资料；一点知识都记录成说明，下午三点发送", { reminder_policy: "smart" });
   assert.equal(intake.requested_time, "15:00");
 });
+
+for (const wording of ["一点虚构知识", "明天一点虚构想法", "11月1日一点开始阅读资料",
+  "11月1日一点阅读这些资料", "11月1日一点阅读小说", "11月1日一点整理虚构资料",
+  "明天一点新的体验", "11月1日一点开始阅读资料，下午三点发送"]) {
+  test(`uncertain bare 一点 requires clarification: ${wording}`, () => {
+    const policy = evaluateAutonomy({ type: "task", title: "模拟事项", raw_text: wording,
+      requested_time: null, reminder_policy: "smart" }, { baseDate: receivedAt });
+    assert.equal(policy.decision, "ask");
+    assert.equal(policy.input.requested_time, null);
+  });
+}
+for (const marker of ["凌晨一点", "一点钟", "下午一点", "一点半", "一点十五分"]) {
+  for (const action of ["开始阅读资料", "阅读这些资料", "阅读小说", "办理业务"]) {
+    test(`explicit clock syntax remains timed: ${marker}${action}`, () => {
+      const intake = creation(`11月1日${marker}${action}`, { reminder_policy: "smart" });
+      const expected = marker === "下午一点" ? "13:00" : marker === "一点半" ? "01:30" : marker === "一点十五分" ? "01:15" : "01:00";
+      assert.equal(intake.requested_time, expected);
+      assert.ok(intake.schedule.reminder_at);
+    });
+  }
+}

@@ -35,6 +35,28 @@ full suite and pass; no restricted runtime path is exercised.
 
 ## Verified results
 
+Fifth review adopts conservative precision: bare 一点 with an unknown modifier
+or predicate asks for clarification, rather than executing with a silently
+discarded time/reminder. Definite adjacent quantities still remain untimed;
+explicit period/钟/half-hour/minute syntax remains timed. 凌晨 is supported.
+The 整 marker must have a boundary, so 整理 is not mistaken for 整点. Ambiguous
+earlier candidates also require clarification when a later clock is present.
+Earlier assertions expecting unknown fictitious noun modifiers to execute
+untimed now explicitly require ask; the bare 一点整理 clock control uses
+一点钟整理 to express unambiguous intent. These are intentional precision
+changes, not claims that the earlier assertions remain semantically unchanged.
+
+Eight ambiguity cases and twenty explicit-clock/action combinations supplement
+the retained quantity, weekday, ISO, month-window and multi-candidate matrix.
+Final Node 24.21.0 validation: 169/169 date regressions; npm run verify reports
+682 tests, 680 passed, two existing skips, zero failures. The identical final
+test file was also run against 236f366 as a failing before-control; the log is
+retained in the isolated task directory. Four original gateway/intake pure
+simulations pass. No real Tasks, merge, deployment or runtime installation.
+These are local results only, not GitHub CI or iPhone acceptance.
+
+Earlier entries below describe prior revisions:
+
 Fourth review: the nominal modifier regex was greedy and could backtrack to a
 later object noun, absorbing 想法都整理成 into the modifier. It now uses lazy
 matching and excludes 都/也 from the modifier span, so a predicate beyond the
