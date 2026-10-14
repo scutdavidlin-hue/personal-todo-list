@@ -4,8 +4,8 @@ import { evaluateAutonomy } from "../supabase/functions/_shared/autonomy-policy.
 import { normalizeIntake, taskDispatchPayload } from "../supabase/functions/_shared/personal-os-intake.js";
 import { frozenIntake, isMissed } from "../supabase/functions/_shared/request-recovery.js";
 
-// Desired behavior, deliberately RED on bb240517. Investigation only: no
-// production parser is edited. These assertions must go green with a later fix.
+// These desired-behavior assertions were RED on bb240517. They now guard the
+// isolated repair; passing tests do not establish a production deployment.
 const receivedAt = "2026-10-14T06:00:00Z";
 const target = "2026-11-01";
 function creation(raw_text, dates) {
@@ -65,4 +65,44 @@ test("an unanchored month-start window must not silently collapse to today", () 
     requested_time: null, reminder_policy: "none", fixed_time: false }, { baseDate: receivedAt });
   assert.ok(policy.decision === "ask" || policy.input?.execution_window
     || policy.input?.requested_date?.startsWith("2026-11-"), "Preserve/resolve the future window; do not invent today's date");
+});
+
+for (const wording of ["整理一点虚构资料", "列出两点虚构说明", "提前一点准备虚构资料", "只有一点虚构要求", "总结第一点内容", "一点五倍虚构数值", "一点虚构知识", "明天一点虚构想法"]) {
+  test(`quantity without a no-clock disclaimer stays untimed: ${wording}`, () => {
+    assertDateOnly(creation(wording, { due: target, requested_date: target }));
+  });
+}
+test("skip a quantity candidate and keep the later genuine Chinese clock", () => {
+  const intake = creation("整理一点虚构资料，然后下午三点开始检查", { due: target });
+  assert.equal(intake.due, target);
+  assert.equal(intake.requested_time, "15:00");
+});
+test("pure ISO date from wording remains date-only without structured fields", () => {
+  assertDateOnly(creation("2026-11-01整理虚构资料，不要弹窗", {}));
+});
+test("explicit requested_date stays authoritative and explicit clock beats quantity prose", () => {
+  const intake = creation("整理一点虚构资料，不要弹窗", { due: "2026-11-02", requested_date: target, requested_time: "15:45" });
+  assert.equal(intake.due, target);
+  assert.equal(intake.requested_time, "15:45");
+});
+test("already supported date aliases do not lose their explicit values", () => {
+  for (const fields of [{ dueDate: target }, { requestedDate: target }, { schedule: { scheduled_date: target } }]) {
+    assertDateOnly(creation("整理虚构资料，不要弹窗", fields));
+  }
+});
+test("invalid explicit dates reach semantic validation rather than becoming today", () => {
+  for (const fields of [{ due: "2026-02-30" }, { requested_date: "2026-02-30" }]) {
+    assert.throws(() => creation("整理虚构资料", fields), /YYYY-MM-DD/);
+  }
+});
+test("genuine clocks keep midnight, half-hour and bare-clock semantics", () => {
+  for (const [wording, expected] of [["11月1日零点整理虚构资料", "00:00"], ["11月1日下午三点半整理虚构资料", "15:30"],
+    ["11月1日一点整理虚构资料", "01:00"], ["11月1日会议三点开始", "03:00"]]) {
+    assert.equal(creation(wording, { due: target }).requested_time, expected);
+  }
+});
+test("an enabled actual reminder still becomes missed after its instant", () => {
+  const intake = normalizeIntake({ type: "task", title: "虚构提醒", raw_text: "今天一点整理虚构资料",
+    due: "2026-10-14", requested_date: "2026-10-14", requested_time: "01:00", reminder_policy: "custom", reminder_at: "2026-10-14T01:00" }, { baseDate: receivedAt });
+  assert.equal(isMissed(intake, new Date(receivedAt)), true);
 });

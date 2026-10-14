@@ -1,0 +1,124 @@
+{
+  "mode": "pure_simulation",
+  "actualNetworkAccess": false,
+  "realTaskWrites": 0,
+  "receivedAt": "2026-10-14T06:00:00Z",
+  "results": [
+    {
+      "scenario": "due-only plus quantity word",
+      "supplied": {
+        "due": "2026-11-01",
+        "requested_date": null
+      },
+      "gatewayForwarded": {
+        "due": "2026-11-01",
+        "requested_date": null,
+        "requested_time": null,
+        "reminder_policy": "none"
+      },
+      "directNormalizeDate": "2026-11-01",
+      "afterAutonomy": {
+        "due": "2026-11-01",
+        "requested_date": "2026-11-01",
+        "requested_time": null,
+        "reminder_policy": "none",
+        "reminder_at": null,
+        "missed": false
+      },
+      "actualHandler": {
+        "code": null,
+        "stage": "request_verified",
+        "simulatedTaskCreateCount": 1,
+        "simulatedCreatedDate": "2026-11-01"
+      },
+      "helperDispatchDate": "2026-11-01"
+    },
+    {
+      "scenario": "due-only after clockless reconfirmation",
+      "supplied": {
+        "due": "2026-11-01",
+        "requested_date": null
+      },
+      "gatewayForwarded": {
+        "due": "2026-11-01",
+        "requested_date": null,
+        "requested_time": null,
+        "reminder_policy": "none"
+      },
+      "directNormalizeDate": "2026-11-01",
+      "afterAutonomy": {
+        "due": "2026-11-01",
+        "requested_date": "2026-11-01",
+        "requested_time": null,
+        "reminder_policy": "none",
+        "reminder_at": null,
+        "missed": false
+      },
+      "actualHandler": {
+        "code": null,
+        "stage": "request_verified",
+        "simulatedTaskCreateCount": 1,
+        "simulatedCreatedDate": "2026-11-01"
+      },
+      "helperDispatchDate": "2026-11-01"
+    },
+    {
+      "scenario": "both explicit date fields plus quantity control",
+      "supplied": {
+        "due": "2026-11-01",
+        "requested_date": "2026-11-01"
+      },
+      "gatewayForwarded": {
+        "due": "2026-11-01",
+        "requested_date": "2026-11-01",
+        "requested_time": null,
+        "reminder_policy": "none"
+      },
+      "directNormalizeDate": "2026-11-01",
+      "afterAutonomy": {
+        "due": "2026-11-01",
+        "requested_date": "2026-11-01",
+        "requested_time": null,
+        "reminder_policy": "none",
+        "reminder_at": null,
+        "missed": false
+      },
+      "actualHandler": {
+        "code": null,
+        "stage": "request_verified",
+        "simulatedTaskCreateCount": 1,
+        "simulatedCreatedDate": "2026-11-01"
+      },
+      "helperDispatchDate": "2026-11-01"
+    },
+    {
+      "scenario": "both explicit date fields pure-date control",
+      "supplied": {
+        "due": "2026-11-01",
+        "requested_date": "2026-11-01"
+      },
+      "gatewayForwarded": {
+        "due": "2026-11-01",
+        "requested_date": "2026-11-01",
+        "requested_time": null,
+        "reminder_policy": "none"
+      },
+      "directNormalizeDate": "2026-11-01",
+      "afterAutonomy": {
+        "due": "2026-11-01",
+        "requested_date": "2026-11-01",
+        "requested_time": null,
+        "reminder_policy": "none",
+        "reminder_at": null,
+        "missed": false
+      },
+      "actualHandler": {
+        "code": null,
+        "stage": "request_verified",
+        "simulatedTaskCreateCount": 1,
+        "simulatedCreatedDate": "2026-11-01"
+      },
+      "helperDispatchDate": "2026-11-01"
+    }
+  ]
+}

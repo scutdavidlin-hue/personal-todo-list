@@ -1,5 +1,10 @@
 # Date-only create investigation — reproduction, no parser change
 
+Archived investigation state at `e8db4b9a909438d83b4c2f85d48772ecc024da3b`,
+before the isolated repair. For the current change and passing results, see
+`docs/date-only-create-fix.md`; the original red results below are preserved as
+before-fix evidence rather than current acceptance status.
+
 2026-10-14. Independent branch: `investigate/date-only-create-20261014`.
 Base: `bb240517727a81ca89059985295b7c9da144403b`, matching the baseline branch
 head at this check. This is a source snapshot, not verified deployed-bundle
