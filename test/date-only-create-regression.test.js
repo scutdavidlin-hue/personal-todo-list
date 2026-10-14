@@ -132,3 +132,30 @@ for (const window of ["月底", "这个月底", "本月底", "下个月底", "�
     assertDateOnly(creation(input.raw_text, { due: target }));
   });
 }
+
+// Natural wording only; all execution remains pure normalization/simulation.
+for (const [anchor, date] of [["明天", "2026-10-15"], ["周五", "2026-10-16"],
+  ["星期五", "2026-10-16"], ["11月1日", target], ["2026-11-01", target]]) {
+  for (const action of ["办理业务", "去超市买东西", "阅读小说"]) {
+    test(`natural clock matrix: ${anchor}九点${action}`, () => {
+      const intake = creation(`${anchor}九点${action}`, { reminder_policy: "smart" });
+      assert.equal(intake.due, date);
+      assert.equal(intake.requested_time, "09:00");
+    });
+  }
+  for (const quantity of ["一点想法都记下来", "一点新的资料都不要遗漏", "一点知识", "一点钱也不要浪费"]) {
+    test(`natural quantity matrix: ${anchor}${quantity}`, () => {
+      const intake = creation(`${anchor}${quantity}`, { reminder_policy: "smart" });
+      assert.equal(intake.due, date);
+      assert.equal(intake.requested_time, null);
+      assert.equal(intake.schedule.reminder_at, null);
+      assert.deepEqual(intake.schedule.reminders, []);
+    });
+  }
+}
+test("an unresolved modified 一点 phrase asks rather than inventing a clock", () => {
+  const policy = evaluateAutonomy({ type: "task", raw_text: "明天一点新的体验", requested_time: null,
+    reminder_policy: "smart" }, { baseDate: receivedAt });
+  assert.equal(policy.decision, "ask");
+  assert.equal(policy.input.requested_time, null);
+});

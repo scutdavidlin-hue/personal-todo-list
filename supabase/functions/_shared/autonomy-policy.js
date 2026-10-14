@@ -27,26 +27,41 @@ function chineseNumber(value) {
   return digits[value] ?? null;
 }
 
-function parseChineseIntentTime(text) {
+function parseChineseIntentTime(text, details = {}) {
   const source = String(text || "");
+  // Do not let the weekday digit join the clock number (周五九点 -> 五九).
+  // Replace one character only, preserving offsets into the original wording.
+  const clockSource = source.replace(/((?:周|星期))[一二三四五六日天]/g, "$1〇");
   const pattern = /(上午|早上|中午|下午|晚上)?\s*([零一二两三四五六七八九十]{1,3})点(?:(半)|([零一二两三四五六七八九十]{1,3})分?)?/g;
-  for (const match of source.matchAll(pattern)) {
+  for (const match of clockSource.matchAll(pattern)) {
     const prefix = source.slice(0, match.index).trimEnd();
     const suffix = source.slice(match.index + match[0].length).trimStart();
     // Quantity/list/relative wording is not an absolute clock. Continue to
     // later candidates so “一点资料，下午三点整理” retains the real time.
     if (!match[1] && (/(?:整理|准备|补充|列出|总结|只有|仅有|还有|提前|推迟|晚|早|多|少|稍|略|提高|降低|增加|减少|第)\s*$/.test(prefix)
-      || /^(?:点|倍|元|万元|问题|资料|材料|说明|建议|要求|内容|意见|细节|虚构(?:知识|想法))/.test(suffix))) continue;
-    const clockSuffix = !suffix || /^(?:钟|整|左右|前|后|开始|开会|见面|集合|出发|到达|结束|下班|起床|睡觉|吃饭|提醒|通知|准备|整理|检查|处理|发送|提交|参加)/.test(suffix);
+      || /^(?:点|倍|元|万元|问题|资料|材料|说明|建议|要求|内容|意见|细节)/.test(suffix))) continue;
+    // Small-quantity 一点 can introduce a modified noun phrase. Distributive
+    // 都/也 and nominal complements are quantity evidence, regardless of date.
+    // Use the established action classifier only to avoid treating an action
+    // followed by its object (整理资料) as a nominal complement.
+    const nominalQuantity = match[2] === "一" && !match[1] && !match[3]
+      && !ACTION_PATTERN.test(suffix.split(/[，,。；;\n]/)[0])
+      && /^(?:[^，,。；;\n]{0,16}(?:想法|知识|资料|材料|钱|食物|时间|东西)(?:都|也|[，,。；;]|$)|[^，,。；;\n]{1,16}(?:都|也)(?:不|没|要|得|记|别))/.test(suffix);
+    if (nominalQuantity) continue;
+    const dateAnchor = /(?:今天|明天|后天|今晚|明晚|日|号|\d{4}-\d{2}-\d{2}|(?:周|星期)[一二三四五六日天])\s*$/.test(prefix);
+    if (dateAnchor && match[2] === "一" && !match[1] && !match[3]
+      && /^[^，,。；;\n]{1,10}的/.test(suffix)) {
+      details.ambiguous = true;
+      continue;
+    }
     const clockContext = Boolean(match[1] || match[3] || /分$/.test(match[0]))
       // A date immediately before the clock supplies temporal context even
       // when the following action is outside the bounded event-word list.
-      || /(?:今天|明天|后天|今晚|明晚|日|号)\s*$/.test(prefix)
-      || (clockSuffix && (!prefix || /[，,。；;\n]\s*$/.test(prefix)
-        || /(?:今天|明天|后天|今晚|明晚|日|号|在|到|从)\s*$/.test(prefix)))
+      || dateAnchor
+      || !prefix || /[，,。；;\n]\s*$/.test(prefix)
       || /(?:定在|改成|改到|调整到|换到|还是|时间(?:是|为|[:：]))\s*$/.test(prefix)
       || /(?:会议|开会|集合|出发|到达|结束|下班|起床|睡觉|吃饭)(?:时间)?(?:是|为)?\s*$/.test(prefix)
-      || (Boolean(suffix) && clockSuffix);
+      || /(?:在|到|从)\s*$/.test(prefix);
     if (!clockContext) continue;
     let hour = chineseNumber(match[2]);
     const minute = match[3] ? 30 : (match[4] ? chineseNumber(match[4]) : 0);
@@ -58,8 +73,8 @@ function parseChineseIntentTime(text) {
   return null;
 }
 
-function autonomyIntentTime(text) {
-  return parseIntentTime(text) || parseChineseIntentTime(text);
+function autonomyIntentTime(text, details = {}) {
+  return parseIntentTime(text) || parseChineseIntentTime(text, details);
 }
 
 function autonomyIntentDate(text, baseDate) {
@@ -410,7 +425,12 @@ export function evaluateAutonomy(input, options = {}) {
     actionInput.requested_date = requestedDate(actionText, explicitDate, context, baseDate);
     actionInput.scheduling_source = autonomyIntentDate(actionText, baseDate) || explicitDate ? "explicit_user" : "gpt_inferred";
   }
-  const time = cleanString(source.requested_time) || autonomyIntentTime(actionText) || null;
+  const clockDetails = {};
+  const time = cleanString(source.requested_time) || autonomyIntentTime(actionText, clockDetails) || null;
+  if (!time && clockDetails.ambiguous) {
+    return result("action", "L2", "ask", "The Chinese clock or quantity wording is ambiguous.",
+      "这里的一点表示数量，还是凌晨一点的执行时间？", actionInput, preference.preferenceText);
+  }
   if (time) actionInput.requested_time = time;
 
   const ambiguity = materiallyAmbiguous(actionText, context);

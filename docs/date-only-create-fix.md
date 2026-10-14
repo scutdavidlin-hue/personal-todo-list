@@ -35,6 +35,30 @@ full suite and pass; no restricted runtime path is exercised.
 
 ## Verified results
 
+Second independent review: the earlier date-anchor change still interpreted
+natural quantity phrases as 01:00 and omitted weekday/ISO clocks. The revised
+parser separates weekday digits from clock numbers; time context comes from
+date/time syntax, not a following-action vocabulary. The test-only fictitious
+noun exceptions and clockSuffix action list are removed. Modified nominal and
+distributive quantity phrases stay untimed, including 一点想法都记下来 and
+一点新的资料都不要遗漏 with smart reminders. Unresolved modified 一点 wording
+asks for clarification instead of inventing a clock. Existing action detection
+is reused to distinguish an action plus object from a nominal quantity phrase;
+this is still bounded grammar, not unrestricted Chinese-language understanding.
+
+Five date forms (relative day, 周 weekday, 星期 weekday, Chinese month/day and
+ISO date) cross three ordinary actions and four quantity phrases in a natural
+wording table. One ambiguity case is also added; the previous 36 regressions
+remain intact. On the final source, Node 24.21.0 reports 72/72 date regressions
+and npm run verify reports 585 tests, 583 passed, two existing skips, zero
+failures. The four existing actual gateway/intake simulated scenarios pass.
+The same expanded test file was run against 1c07c9c as a failing before-control;
+logs are retained in the isolated task directory. All inputs and writes are
+simulated; no real Tasks or production providers were used. These results are
+local validation, not GitHub CI, deployment or iPhone acceptance.
+
+Earlier verification entries below describe prior revisions:
+
 Follow-up at da69503c: date-adjacent Chinese clocks retain their time when the
 following action is outside the event-word vocabulary (办理 / 去超市 / 阅读).
 Bare 月底 and 这个月底 also require an exact date, unless an explicit due/date
