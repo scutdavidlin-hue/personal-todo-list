@@ -44,8 +44,10 @@ function parseChineseIntentTime(text, details = {}) {
     // 都/也 and nominal complements are quantity evidence, regardless of date.
     // Inspect only the modifier before the adjacent noun/distributive marker.
     // A later predicate such as 记录下来 must not change 一点想法 into a clock.
-    const nominalComplement = suffix.match(/^([^，,。；;\n]{0,16})(?:想法|知识|资料|材料|钱|食物|时间|东西)(?=都|也|[，,。；;]|$)/)
-      || suffix.match(/^([^，,。；;\n]{1,16})(?:都|也)(?=不|没|要|得|记|别)/);
+    // Stop at the first boundary; a later object noun must not cause backtracking
+    // across 都/也 and absorb the intervening predicate into the modifier.
+    const nominalComplement = suffix.match(/^([^，,。；;\n都也]{0,16}?)(?:想法|知识|资料|材料|钱|食物|时间|东西)(?=都|也|[，,。；;]|$)/)
+      || suffix.match(/^([^，,。；;\n都也]{1,16}?)(?:都|也)(?=不|没|要|得|记|别)/);
     const nominalQuantity = match[2] === "一" && !match[1] && !match[3]
       && nominalComplement && !ACTION_PATTERN.test(nominalComplement[1]);
     if (nominalQuantity) continue;

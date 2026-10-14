@@ -35,6 +35,20 @@ full suite and pass; no restricted runtime path is exercised.
 
 ## Verified results
 
+Fourth review: the nominal modifier regex was greedy and could backtrack to a
+later object noun, absorbing 想法都整理成 into the modifier. It now uses lazy
+matching and excludes 都/也 from the modifier span, so a predicate beyond the
+first nominal/distributive boundary cannot affect quantity classification.
+Thirty-three added regressions cross two nouns, four predicate/object pairs,
+three separator forms plus no later clock, and several quantities before a
+genuine afternoon clock. The same 143-test file fails nine cases on 01d0dc3;
+the final source passes all 143. Final npm run verify: 656 tests, 654 passed,
+two existing skips, zero failures. Four original gateway/intake simulation
+cases also pass. No runtime installation, real writes, merge or deployment.
+These are local test results, not GitHub CI or device acceptance.
+
+Earlier entries below describe prior revisions:
+
 Third review fixes the scope of nominal quantity evidence: only the modifier
 before the adjacent noun/distributive marker is inspected for an action. A
 later predicate cannot cancel quantity recognition. Rejected quantities still

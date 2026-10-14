@@ -188,3 +188,23 @@ test("unmodified noun and synonymous predicate remain quantity wording", () => {
     if (!suffix) assert.equal(intake.schedule.reminder_at, null);
   }
 });
+
+for (const noun of ["想法", "知识"]) {
+  for (const predicateAndObject of ["整理成资料", "记录成说明", "汇总成内容", "改成建议"]) {
+    for (const continuation of ["", "，下午三点发送", "；下午三点发送", ",下午三点发送"]) {
+      const phrase = `明天一点${noun}都${predicateAndObject}${continuation}`;
+      test(`first nominal boundary before predicate and object: ${phrase}`, () => {
+        const intake = creation(phrase, { reminder_policy: "smart" });
+        assert.equal(intake.requested_time, continuation ? "15:00" : null);
+        if (!continuation) {
+          assert.equal(intake.schedule.reminder_at, null);
+          assert.deepEqual(intake.schedule.reminders, []);
+        }
+      });
+    }
+  }
+}
+test("several noun-predicate-object quantities preserve the final genuine clock", () => {
+  const intake = creation("明天一点想法都整理成资料；一点知识都记录成说明，下午三点发送", { reminder_policy: "smart" });
+  assert.equal(intake.requested_time, "15:00");
+});
