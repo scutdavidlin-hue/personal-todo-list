@@ -540,3 +540,13 @@ test("opaque prewrite interruption stays unknown and does not auto-create on bac
   await h.request({action:"recover",request_id:first.request_id});assert.equal(h.createAttempts(),1);
  }finally{h.restore();}
 });
+
+test("actual intake refuses lunar RSCALE before any synthetic task dispatch",{concurrency:false},async()=>{
+ const h=await loadIntakeHandler();try{
+  const result=await(await h.request({type:"task",title:"模拟生日提醒",raw_text:"每年农历十一月十二提醒整理资料",
+    due:"2099-12-20",requested_time:null,reminder_policy:"none",recurrence:{kind:"yearly",RSCALE:"CHINESE"}})).json();
+  assert.notEqual(result.success,true);
+  assert.match(JSON.stringify(result),/UNSUPPORTED_RECURRENCE_CALENDAR/);
+  assert.equal(h.createAttempts(),0);
+ }finally{h.restore();}
+});

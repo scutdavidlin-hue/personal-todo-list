@@ -56,3 +56,15 @@ export function verifyTaskFields(current, expected) {
   if (Object.hasOwn(expected,'status') && status(current?.status) !== status(expected.status)) mismatch('status');
   return true;
 }
+
+export function verifyTaskScheduleDate(current, changes) {
+  const key = ['requested_date', 'due', 'dueDate', 'date'].find(key => Object.hasOwn(changes, key));
+  if (!key) return true;
+  const expected = changes[key] || null;
+  if ((current?.schedule?.scheduled_date || null) !== expected) {
+    const error = new Error('Schedule date readback did not match the updated execution date');
+    error.code = 'SCHEDULE_WRITE_UNVERIFIED';
+    throw error;
+  }
+  return true;
+}

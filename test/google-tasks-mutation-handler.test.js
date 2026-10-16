@@ -5,10 +5,11 @@ import {resolve} from 'node:path';
 const root=resolve(import.meta.dirname, "..");
 const {applyTaskSchedulePatch}=await import(pathToFileURL(root+'/supabase/functions/_shared/schedule-core.js').href);
 let seq=0;
-async function harness(status='needsAction') {
+async function harness(status='needsAction', options={}) {
   const prior={Deno:globalThis.Deno,fetch:globalThis.fetch};let handler,activity=null;
   const owner='11111111-1111-4111-8111-111111111111', task={id:'isolated-lifecycle',title:'Isolated task',notes:'',status,due:'2099-01-01T00:00:00Z'};
   const schedule={id:'isolated-schedule',owner_id:owner,google_task_id:task.id,scheduled_date:'2099-01-01',scheduled_start:'12:00',scheduled_end:'12:30',duration_minutes:30,fixed_time:true,timezone:'Asia/Shanghai',reminder_policy:'custom',reminder_policy_source:'user_explicit',reminder_at:'2099-01-01T12:00',reminders:[{type:'start',offset_minutes:0}]};
+  if(options.noReminder) Object.assign(schedule,{reminder_policy:'none',reminder_at:null,reminders:[]});
   const taskWrites=[],schedulerCalls=[],calls=[];
   const j=(body,status=200)=>new Response(JSON.stringify(body),{status});
   globalThis.Deno={env:{get:n=>({SUPABASE_URL:'https://isolated.test',SUPABASE_SERVICE_ROLE_KEY:'unit-'+ 's'.repeat(40),SUPABASE_ANON_KEY:'unit-'+ 'p'.repeat(40),OWNER_USER_ID:owner,AUTOMATION_WRITE_TOKEN:'unit-'+ 'w'.repeat(40),GOOGLE_OAUTH_CLIENT_ID:'synthetic-client',GOOGLE_OAUTH_CLIENT_SECRET:'synthetic-secret',GOOGLE_TOKEN_ENCRYPTION_KEY:'unit-'+ 'e'.repeat(40)})[n]},serve:h=>handler=h};
@@ -29,7 +30,7 @@ async function harness(status='needsAction') {
     }
     if(u.pathname.endsWith('/functions/v1/task-scheduler')){
       schedulerCalls.push(body);
-      if(body.action==='update_task'){
+      if(body.action==='update_task' && !options.staleSchedule){
         try{const patch=applyTaskSchedulePatch(schedule,body.changes,task.due.slice(0,10));Object.assign(schedule,patch.schedule);}
         catch(e){return j({success:false,code:'INVALID_SCHEDULE',error:e.message},400);}
       }
@@ -43,6 +44,26 @@ async function harness(status='needsAction') {
       request:async(body)=>{const response=await handler(new Request('https://isolated.test/google-tasks',{method:'PATCH',headers:{Authorization:'Bearer synthetic-user','Content-Type':'application/json','Idempotency-Key':'isolated-mutation-key'},body:JSON.stringify({task_id:task.id,...body})}));return {status:response.status,body:await response.json()};},restore(){Object.assign(globalThis,prior);}};
   }catch(e){Object.assign(globalThis,prior);throw e;}
 }
+
+test('actual dueDate alias updates the same Task and schedule date',async()=>{
+  const h=await harness('needsAction',{noReminder:true});try{
+    const result=await h.request({action:'update',changes:{dueDate:'2099-01-03'}});
+    assert.equal(result.body.success,true,JSON.stringify(result));
+    assert.equal(h.taskWrites.length,1);
+    assert.equal(h.schedule.scheduled_date,'2099-01-03');
+    assert.equal(h.schedulerCalls[0].action,'update_task');
+  }finally{h.restore();}
+});
+test('scheduler success with stale schedule cannot report a verified date update',async()=>{
+  const h=await harness('needsAction',{staleSchedule:true,noReminder:true});try{
+    const result=await h.request({action:'update',changes:{dueDate:'2099-01-03'}});
+    assert.notEqual(result.body.success,true,JSON.stringify(result));
+    assert.equal(result.body.code,'SCHEDULE_WRITE_UNVERIFIED');
+    assert.equal(h.taskWrites.length,1,'provider change may have happened; do not claim an atomic rollback');
+    assert.equal(h.schedule.scheduled_date,'2099-01-01');
+    assert.match(h.getActivity().error,/Schedule date readback/);
+  }finally{h.restore();}
+});
 
 for(const action of ['complete','reopen'])test(`actual Google Tasks handler ${action} keeps ordinary lifecycle operation working`,async()=>{
   const h=await harness(action==='complete'?'needsAction':'completed');

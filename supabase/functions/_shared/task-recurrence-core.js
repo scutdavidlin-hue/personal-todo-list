@@ -6,6 +6,23 @@ const FREQ_BY_KIND = Object.freeze({ daily: "DAILY", weekly: "WEEKLY", monthly: 
 const KIND_BY_FREQ = Object.freeze({ DAILY: "daily", WEEKLY: "weekly", MONTHLY: "monthly", YEARLY: "yearly" });
 const DAY_CODES = Object.freeze(["SU", "MO", "TU", "WE", "TH", "FR", "SA"]);
 
+// This engine implements Gregorian arithmetic only. Validate before any
+// normalization can discard the caller's calendar semantics.
+export function assertGregorianRecurrence(input, rawText = "") {
+  const fields = input && typeof input === "object" ? Object.entries(input) : [];
+  const unsupported = /农历|農曆|阴历|陰曆|\blunar\b/i.test(rawText)
+    || (typeof input === "string" && /(?:^|[;:])\s*RSCALE\s*=/i.test(input))
+    || fields.some(([key, value]) => /^(?:rscale)$/i.test(key)
+      || (/^(?:calendar|calendar_system|calendarSystem)$/i.test(key)
+        && !/^(?:gregorian|gregory|solar|公历|阳历)$/i.test(String(value)))
+      || (/^(?:rrule|rule)$/i.test(key) && /(?:^|[;:])\s*RSCALE\s*=/i.test(String(value))));
+  if (unsupported) {
+    const error = new Error("UNSUPPORTED_RECURRENCE_CALENDAR: 农历/RSCALE 暂不支持；原始农历语义未转换为公历，请勿按固定公历日期创建重复事项。");
+    error.code = "UNSUPPORTED_RECURRENCE_CALENDAR";
+    throw error;
+  }
+}
+
 function dateParts(value) {
   if (!validScheduleDate(value)) throw new Error("Recurrence date is invalid");
   const [year, month, day] = value.split("-").map(Number);
@@ -47,6 +64,7 @@ function parseRRule(value) {
 }
 
 export function normalizeRecurrence(input, schedule) {
+  assertGregorianRecurrence(input);
   const raw = typeof input === "string"
     ? (/^(?:RRULE:)?FREQ=/i.test(input.trim()) ? parseRRule(input) : { kind: input })
     : input || {};
@@ -108,6 +126,7 @@ export function recurrenceRuleFromSeries(series) {
 }
 
 export function nextRuleDate(currentDate, recurrence) {
+  assertGregorianRecurrence(recurrence);
   const rule = typeof recurrence === "string" ? { kind: recurrence } : recurrence || {};
   const kind = String(rule.kind || "");
   const interval = Number(rule.interval || 1);
