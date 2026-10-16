@@ -7,7 +7,7 @@ import {
 } from "./action-router.js";
 import { normalizeScheduleInput, validScheduleTime } from "./schedule-core.js";
 import { detectFollowUpIntent, ensureFollowUpTitle, followUpTimingText } from "./task-lifecycle-core.js";
-import { nextRuleDate, assertGregorianRecurrence } from "./task-recurrence-core.js";
+import { nextRuleDate, assertGregorianRecurrence, recurrenceInputFields } from "./task-recurrence-core.js";
 
 export const INTAKE_TYPES = Object.freeze([
   "task",
@@ -69,6 +69,7 @@ function validDate(value) {
 function recurrenceFrom(input, rawText) {
   assertGregorianRecurrence(input, rawText);
   assertGregorianRecurrence(input.recurrence, rawText);
+  if (input.recurrence) input = { ...input, recurrence: recurrenceInputFields(input.recurrence) };
   if (input.recurrence && typeof input.recurrence === "object" && !Array.isArray(input.recurrence)) {
     const kind = String(input.recurrence.kind || input.recurrence.frequency || "").toLowerCase();
     const interval = Number(input.recurrence.interval ?? 1);

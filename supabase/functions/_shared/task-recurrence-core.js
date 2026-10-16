@@ -47,7 +47,10 @@ function addMonths(year, month, amount) {
 function parseRRule(value) {
   const text = String(value || "").trim().replace(/^RRULE:/i, "").toUpperCase();
   if (!text) return {};
-  const parts = Object.fromEntries(text.split(";").map((part) => part.split("=", 2)).filter((part) => part.length === 2));
+  const entries = text.split(";").map(part => part.trim().split("="));
+  if (entries.some(part => part.length !== 2 || !part[0] || !part[1])
+    || new Set(entries.map(part => part[0])).size !== entries.length) throw new Error("RRULE is malformed or repeats a field");
+  const parts = Object.fromEntries(entries);
   const allowed = new Set(["FREQ", "INTERVAL", "BYDAY", "BYMONTHDAY", "BYMONTH"]);
   if (Object.keys(parts).some((key) => !allowed.has(key))) throw new Error("RRULE contains an unsupported part");
   const kind = KIND_BY_FREQ[parts.FREQ];
@@ -63,12 +66,31 @@ function parseRRule(value) {
   };
 }
 
-export function normalizeRecurrence(input, schedule) {
+export function recurrenceInputFields(input) {
   assertGregorianRecurrence(input);
-  const raw = typeof input === "string"
-    ? (/^(?:RRULE:)?FREQ=/i.test(input.trim()) ? parseRRule(input) : { kind: input })
-    : input || {};
-  const parsed = raw.rrule ? { ...raw, ...parseRRule(raw.rrule) } : raw;
+  try {
+    const raw = typeof input === "string"
+      ? (/^(?:RRULE:)?FREQ=/i.test(input.trim()) ? parseRRule(input) : { kind: input }) : input || {};
+    if (Object.keys(raw).some(key => /^(?:count|until)$/i.test(key))) throw new Error("Count and end date are not supported");
+    const ruleKey = Object.keys(raw).find(key => /^rrule$/i.test(key));
+    if (!ruleKey) return raw;
+    if (!String(raw[ruleKey] || "").trim()) throw new Error("RRULE must not be empty");
+    const fields = parseRRule(raw[ruleKey]);
+    for (const key of ["kind", "interval", "weekday", "month_day", "month"]) {
+      if (raw[key] !== undefined && fields[key] !== undefined && String(raw[key]).toLowerCase() !== String(fields[key]).toLowerCase()) {
+        throw new Error("RRULE conflicts with structured recurrence fields");
+      }
+    }
+    if (raw.frequency && String(raw.frequency).toLowerCase() !== fields.kind) throw new Error("RRULE conflicts with recurrence frequency");
+    return { ...raw, ...fields };
+  } catch (error) {
+    error.code = "UNSUPPORTED_RECURRENCE_RULE";
+    throw error;
+  }
+}
+
+export function normalizeRecurrence(input, schedule) {
+  const parsed = recurrenceInputFields(input);
   const kind = String(parsed.kind || parsed.frequency || "").toLowerCase();
   if (!KINDS.has(kind)) throw new Error("Recurrence must be daily, weekly, monthly, or yearly");
   const interval = Number(parsed.interval ?? 1);
