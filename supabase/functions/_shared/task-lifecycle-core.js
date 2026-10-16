@@ -117,6 +117,12 @@ export function normalizeTaskPatch(input = {}) {
   for (const field of PATCH_FIELDS) {
     if (hasOwn(source, field)) changes[field] = source[field];
   }
+  if (hasOwn(source, "dueDate")) {
+    for (const alias of ["due", "date"]) {
+      if (hasOwn(source, alias) && source[alias] !== source.dueDate) throw new Error("dueDate and date aliases must match");
+    }
+    changes.due = source.dueDate;
+  }
   for (const field of input.clear_fields || source.clear_fields || []) {
     if (!CLEARABLE_FIELDS.has(field)) throw new Error(`clear_fields contains unsupported field: ${field}`);
     changes[field] = null;
@@ -129,6 +135,9 @@ export function normalizeTaskPatch(input = {}) {
   if (hasOwn(changes, "title")) {
     if (changes.title === null) throw new Error("title cannot be cleared");
     changes.title = cleanOptionalString(changes.title, "title", 200);
+  }
+  if (hasOwn(changes, "due") && hasOwn(changes, "requested_date") && changes.due !== changes.requested_date) {
+    throw new Error("Execution due and requested_date must match; use deadline for a hard cutoff");
   }
   if (hasOwn(changes, "notes") && changes.notes !== null) {
     if (typeof changes.notes !== "string" || changes.notes.length > 10_000) throw new Error("notes must contain at most 10000 characters");

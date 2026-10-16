@@ -1,5 +1,5 @@
 import { applyTaskSchedulePatch } from "../_shared/schedule-core.js";
-import { writeReceipt } from "../_shared/write-receipt.js";
+import { writeReceipt, verifyTaskScheduleDate } from "../_shared/write-receipt.js";
 import {
   GoogleProviderError,
   assertAuthenticatedGoogleIdentity,
@@ -778,7 +778,7 @@ Deno.serve(async (request) => {
     if (request.method === "PATCH" && input.action === "update") {
       const id = String(input.task_id || input.id || ""); let changes: Record<string, unknown>;
       try { changes = normalizeTaskPatch({ changes: input.changes || {}, clear_fields: input.clear_fields || [] }) as unknown as Record<string, unknown>; } catch (error) { throw new ApiError(error instanceof Error ? error.message : "Invalid Task patch", 400, "INVALID_TASK_PATCH"); }
-      return await runAuditedMutation(request, user.id, "update", id, { ...input, changes }, async (activity, recordOld) => { const oldTask = await getTaskView(user.id, id); verifyExpectedTaskVersion(oldTask, input); if (hasScheduleChanges(changes)) applyTaskSchedulePatch(oldTask.schedule, changes, (changes.due || oldTask.dueDate) as string, { preserveReminderPolicy: input.source === "task_conversation" }); if (!activity.old_value) await recordOld(oldTask); const providerChanges = googleTaskChanges(changes) as Record<string, unknown>; if (Object.keys(providerChanges).length) await patchTask(user.id, id, providerChanges); const writtenTask = await getTaskView(user.id, id); verifyProviderPatch(writtenTask, providerChanges); const projection = await schedulerSync(hasScheduleChanges(changes) ? "update_task" : "sync_task", id, hasScheduleChanges(changes) ? { changes, preserve_reminder_policy: input.source === "task_conversation" } : {}); const task = await getTaskView(user.id, id); return { task, projection, projection_error: projection.success === true && projection.sync_required !== true ? null : projection, changed: true }; });
+      return await runAuditedMutation(request, user.id, "update", id, { ...input, changes }, async (activity, recordOld) => { const oldTask = await getTaskView(user.id, id); verifyExpectedTaskVersion(oldTask, input); if (hasScheduleChanges(changes)) applyTaskSchedulePatch(oldTask.schedule, changes, (changes.due || oldTask.dueDate) as string, { preserveReminderPolicy: input.source === "task_conversation" }); if (!activity.old_value) await recordOld(oldTask); const providerChanges = googleTaskChanges(changes) as Record<string, unknown>; if (Object.keys(providerChanges).length) await patchTask(user.id, id, providerChanges); const writtenTask = await getTaskView(user.id, id); verifyProviderPatch(writtenTask, providerChanges); const projection = await schedulerSync(hasScheduleChanges(changes) ? "update_task" : "sync_task", id, hasScheduleChanges(changes) ? { changes, preserve_reminder_policy: input.source === "task_conversation" } : {}); const task = await getTaskView(user.id, id); verifyTaskScheduleDate(task, changes); return { task, projection, projection_error: projection.success === true && projection.sync_required !== true ? null : projection, changed: true }; });
     }
     if (request.method === "DELETE") {
       const id = String(input.task_id || input.id || "");
@@ -789,6 +789,8 @@ Deno.serve(async (request) => {
     const timedOut = error instanceof DOMException && error.name === "TimeoutError";
     const apiError = error instanceof ApiError
       ? error
+      : error instanceof Error && (error as Error & { code?: string }).code === "SCHEDULE_WRITE_UNVERIFIED"
+      ? new ApiError("Task 日期已写入，Schedule 日期未核实；请只读对账，勿重复创建任务。", 503, "SCHEDULE_WRITE_UNVERIFIED")
       : providerApiError(error) || new ApiError(timedOut ? "Google Tasks 请求超时，请重试" : "Google Tasks 服务暂时不可用", 503, timedOut ? "API_TIMEOUT" : "SERVICE_UNAVAILABLE");
     console.error("Task Sync Failed", { code: apiError.code, status: apiError.status, retryable: apiError.retryable, providerLayer: apiError.providerLayer || undefined });
     return json({
