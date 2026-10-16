@@ -782,7 +782,7 @@ async function updateTaskReminder(ownerId: string, taskId: string, input: Record
   const projection = await projectTask(ownerId, google, task, schedule);
   const readback = (await schedules(ownerId, taskId))?.[0] || null;
   const canonicalReadback = readback ? normalizeScheduleInput(readback, { preserveReminderPolicy: true }) : null;
-  if (!readback || !canonicalReadback || ["reminder_policy", "reminder_at", "reminder_offset_minutes", "reminders", "scheduled_date", "scheduled_start"].some(key => JSON.stringify(canonicalReadback[key] ?? null) !== JSON.stringify(preview[key] ?? null))
+  if (!readback || !canonicalReadback || (["reminder_policy", "reminder_at", "reminder_offset_minutes", "reminders", "scheduled_date", "scheduled_start"] as const).some(key => JSON.stringify(canonicalReadback[key] ?? null) !== JSON.stringify(preview[key] ?? null))
     || readback.sync_required !== false || !projection.verified_at) {
     throw new ApiError("Reminder update did not match canonical readback", 503, "REMINDER_WRITE_UNVERIFIED");
   }
