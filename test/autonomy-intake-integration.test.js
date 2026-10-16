@@ -550,3 +550,28 @@ test("actual intake refuses lunar RSCALE before any synthetic task dispatch",{co
   assert.equal(h.createAttempts(),0);
  }finally{h.restore();}
 });
+
+for(const recurrence of [{kind:"yearly",count:1},{kind:"yearly",until:"2099-12-31"},
+ {kind:"yearly",rrule:"FREQ=YEARLY;COUNT=1"},{kind:"yearly",rrule:"FREQ=YEARLY;BYSETPOS=1"},
+ {kind:"yearly",rrule:"FREQ=YEARLY;COUNT"},{kind:"yearly",rrule:"FREQ=YEARLY;UNTIL="}]) {
+ test(`actual intake rejects dropped recurrence constraints: ${JSON.stringify(recurrence)}`,{concurrency:false},async()=>{
+  const h=await loadIntakeHandler();try{
+   const response=await h.request({type:"task",title:"模拟规则",raw_text:"2099年12月20日整理资料",
+    due:"2099-12-20",requested_time:null,reminder_policy:"none",recurrence});
+   const result=await response.json();
+   assert.equal(response.status,400); assert.equal(result.outcome,"rejected");
+   assert.equal(result.code,"UNSUPPORTED_RECURRENCE_RULE");
+   assert.equal(h.createAttempts(),0);assert.equal(h.getAudit(),null);
+  }finally{h.restore();}
+ });
+}
+
+test("actual intake preserves a supported textual RRULE interval",{concurrency:false},async()=>{
+ const h=await loadIntakeHandler();try{
+  const response=await h.request({type:"task",title:"模拟规则",raw_text:"2099年12月20日整理资料",
+   due:"2099-12-20",requested_time:null,reminder_policy:"none",recurrence:{kind:"yearly",rrule:"FREQ=YEARLY;INTERVAL=2;BYMONTH=12;BYMONTHDAY=20"}});
+  const result=await response.json(); assert.equal(result.success,true);
+  const write=h.writes.find(call=>call.path.endsWith('/functions/v1/task-status')&&call.body?.title);
+  assert.equal(write.body.recurrence.interval,2); assert.equal(h.createAttempts(),1);
+ }finally{h.restore();}
+});

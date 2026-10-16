@@ -824,19 +824,23 @@ Deno.serve(async (request) => {
   } catch (error) {
     const timedOut = error instanceof DOMException && error.name === "TimeoutError";
     const unsupportedCalendar = error instanceof Error && (error as Error & { code?: string }).code === "UNSUPPORTED_RECURRENCE_CALENDAR";
+    const unsupportedRule = error instanceof Error && (error as Error & { code?: string }).code === "UNSUPPORTED_RECURRENCE_RULE";
+    const unsupportedRecurrence = unsupportedCalendar || unsupportedRule;
     const intakeError = error instanceof IntakeError
       ? error
       : unsupportedCalendar ? new IntakeError(error.message, 400, "UNSUPPORTED_RECURRENCE_CALENDAR")
+      : unsupportedRule ? new IntakeError(error.message, 400, "UNSUPPORTED_RECURRENCE_RULE")
       : new IntakeError(timedOut ? "Personal OS intake timed out" : "Personal OS intake failed", 503, timedOut ? "INTAKE_TIMEOUT" : "INTAKE_FAILED");
     auditId ||= intakeError.requestId || "";
     const failure = { success: false, write_success: false, verified: false, outcome: intakeError.code === "IDEMPOTENCY_CONFLICT" ? "rejected" : "unknown", idempotency_key: receiptKey || undefined, request_id: auditId || undefined, code: intakeError.code, error: intakeError.message,
       ...(intakeError.code === "TASK_TARGET_AMBIGUOUS" ? { decision: "ask", question: "有多个匹配任务，要修改哪一个？" } : {}), message: "" };
-    if (unsupportedCalendar) failure.outcome = "rejected";
+    if (unsupportedRecurrence) failure.outcome = "rejected";
     failure.message = unsupportedCalendar ? "暂不支持农历重复；已拒绝，未转换为固定公历重复。请保留原始农历日期。" : intakeError.code === "IDEMPOTENCY_CONFLICT" ? "此幂等键对应另一个已登记请求；本次内容已拒绝，未重写。请按原请求ID只读核实。" : auditId ? "请求已登记，执行结果待核实；请按原 request_id 或 idempotency_key 只读核实。" : "未取得持久回执，结果待核实；请按原 idempotency_key 查询，不能据此判断已写入或未写入。";
+    if (unsupportedRule) failure.message = "当前不支持该重复规则或结束条件；已拒绝，未改成无限重复。请保留原始规则。";
     if (auditId && leaseOwner) {
       const authRequired = ["AUTH_RECONNECT_REQUIRED", "GOOGLE_REAUTH_REQUIRED", "GOOGLE_AUTH_REQUIRED",
         "GOOGLE_NOT_CONNECTED", "ACCOUNT_MISMATCH", "ACCOUNT_UNVERIFIED"].includes(intakeError.code);
-      try { await updateAudit(auditId, { stage: unsupportedCalendar ? "unsupported" : authRequired ? "auth_required" : "outcome_unknown", status: unsupportedCalendar ? "failed" : "processing", error_code: intakeError.code, error: safeError(intakeError), retry_count: unsupportedCalendar ? 0 : 1, next_retry_at: unsupportedCalendar || authRequired ? null : retryAt(0), response_status: unsupportedCalendar ? 400 : 202, response: failure, lease_owner: null, lease_expires_at: null }, leaseOwner); }
+      try { await updateAudit(auditId, { stage: unsupportedRecurrence ? "unsupported" : authRequired ? "auth_required" : "outcome_unknown", status: unsupportedRecurrence ? "failed" : "processing", error_code: intakeError.code, error: safeError(intakeError), retry_count: unsupportedRecurrence ? 0 : 1, next_retry_at: unsupportedRecurrence || authRequired ? null : retryAt(0), response_status: unsupportedRecurrence ? 400 : 202, response: failure, lease_owner: null, lease_expires_at: null }, leaseOwner); }
       catch (auditError) { console.error("Personal OS audit update failed", auditError instanceof Error ? auditError.message : "unknown"); }
     }
     console.error("Personal OS intake failed", { auditId: auditId || null, code: intakeError.code });
