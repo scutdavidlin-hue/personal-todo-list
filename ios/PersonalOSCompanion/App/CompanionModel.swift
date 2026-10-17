@@ -12,7 +12,7 @@ struct SavedProjection: Codable {
 final class CompanionModel: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
     @Published var projections: [SavedProjection] = []
     @Published var preview: ReminderSnapshot?
-    @Published var status = "导入配置、允许通知后，点安排提醒。自动后台上岛尚未接入。"
+    @Published var status = "导入配置、允许通知后，点安排提醒。iOS 26 可另外预约提前一小时倒计时。"
     @Published var busy = false
     @Published var permissionState: DevicePermissions?
     let scheduler = NotificationScheduler()
@@ -86,22 +86,47 @@ final class CompanionModel: NSObject, ObservableObject, UNUserNotificationCenter
         try JSONEncoder().encode(projections).write(to: fileURL, options: [.atomic, .completeFileProtection])
     }
 
-    func startActivity(_ plan: DeviceReminderPlan) async {
+    func startActivity(_ plan: DeviceReminderPlan, scheduled: Bool = false) async {
         do {
             try plan.validate()
-            guard plan.canStart() else { throw CompanionError.outsideWindow }
-            if let closed = try? DeviceCloseOutbox.pending(), closed.contains(where: { $0.taskId == plan.taskId && $0.eventAt == plan.eventAt }) {
+            if scheduled {
+                guard #available(iOS 26.0, *) else { throw CompanionError.schedulingUnavailable }
+                guard plan.canSchedule() else { throw CompanionError.scheduleWindowPassed }
+                let permissions = await scheduler.permissionSnapshot()
+                permissionState = permissions
+                guard permissions.automaticStartPermissionReady else { throw CompanionError.notificationsDenied }
+                // Permissions are an await point: removal/rescheduling or the
+                // start instant may have occurred while the system answered.
+                guard projections.contains(where: { $0.plan == plan }) else { throw CompanionError.olderSnapshot }
+                guard plan.canSchedule() else { throw CompanionError.scheduleWindowPassed }
+            } else {
+                guard plan.canStart() else { throw CompanionError.outsideWindow }
+            }
+            // An unreadable close record is not permission to resurrect a window.
+            if try DeviceCloseOutbox.pending().contains(where: { $0.taskId == plan.taskId && $0.eventAt == plan.eventAt }) {
                 status = "本次倒计时已手动关闭，不会恢复此窗口。"; return
             }
             guard ActivityAuthorizationInfo().areActivitiesEnabled else { throw CompanionError.activitiesDisabled }
-            if Activity<CountdownAttributes>.activities.contains(where: { $0.attributes.taskId == plan.taskId && $0.activityState == .active }) {
-                status = "这条任务的倒计时已启动。"; return
+            if Activity<CountdownAttributes>.activities.contains(where: { $0.attributes.taskId == plan.taskId && $0.activityState != .ended && $0.activityState != .dismissed }) {
+                status = "这条任务已有倒计时或预约，不会重复创建。"; return
             }
             let state = CountdownAttributes.ContentState(startEpoch: plan.liveActivityStartAt!, eventEpoch: plan.eventAt!)
-            let activity = try Activity<CountdownAttributes>.request(
-                attributes: CountdownAttributes(taskId: plan.taskId, title: plan.title),
-                content: ActivityContent(state: state, staleDate: plan.eventDate), pushType: nil)
-            status = "系统已接受倒计时（\(activity.activityState)）；请锁屏并查看灵动岛，界面显示需真机确认。"
+            let attributes = CountdownAttributes(taskId: plan.taskId, title: plan.title)
+            let content = ActivityContent(state: state, staleDate: plan.eventDate)
+            let activity: Activity<CountdownAttributes>
+            if scheduled, #available(iOS 26.0, *) {
+                activity = try Activity<CountdownAttributes>.request(attributes: attributes,
+                    content: content, pushType: nil, style: .standard,
+                    alertConfiguration: AlertConfiguration(title: "Personal OS 倒计时",
+                        body: "执行前一小时倒计时开始，可随时关闭。", sound: .default),
+                    start: plan.startDate!)
+            } else {
+                activity = try Activity<CountdownAttributes>.request(attributes: attributes,
+                    content: content, pushType: nil)
+            }
+            status = scheduled
+                ? "系统已接受 \(plan.startDate!.formatted()) 的倒计时预约（\(activity.activityState)）；尚未验证实际出现。原本机通知仍保留。"
+                : "系统已接受倒计时（\(activity.activityState)）；请锁屏并查看灵动岛，界面显示需真机确认。"
         } catch { status = error.localizedDescription }
     }
 
@@ -117,7 +142,7 @@ final class CompanionModel: NSObject, ObservableObject, UNUserNotificationCenter
             catch { status = "本机关闭记录未保存：\(error.localizedDescription)"; await endActivity(taskId: plan.taskId); return }
         }
         await endActivity(taskId: plan.taskId)
-        status = "已结束本机倒计时并保存关闭记录；后台接入未配置，尚未上传。"
+        status = "已结束本机倒计时或预约，并保存本次关闭记录。原提醒设置不变。"
     }
 
     func remove(_ plan: DeviceReminderPlan) async {
@@ -142,13 +167,16 @@ final class CompanionModel: NSObject, ObservableObject, UNUserNotificationCenter
         }
     }
 
-    func demo() {
+    func demo(scheduled: Bool = false) {
         let now = floor(Date.now.timeIntervalSince1970)
+        let eventAt = scheduled ? now + 3630 : now + 120
         preview = ReminderSnapshot(version: 1, source: "personal-os", generatedAt: now, plans: [
-            DeviceReminderPlan(taskId: "synthetic-device-demo", title: "模拟通知 · 不是真实任务", timezone: "Asia/Shanghai", enabled: true,
-                               eventAt: now + 120, liveActivityStartAt: now + 120 - 3600, reminderAt: [now + 30])
+            DeviceReminderPlan(taskId: scheduled ? "synthetic-scheduled-demo" : "synthetic-device-demo", title: "模拟通知 · 不是真实任务", timezone: "Asia/Shanghai", enabled: true,
+                               eventAt: eventAt, liveActivityStartAt: eventAt - 3600, reminderAt: [now + 30])
         ])
-        status = "模拟配置：30 秒后通知、两分钟后开始。点安排提醒后，可立即启动倒计时。"
+        status = scheduled
+            ? "模拟配置：30 秒后为提前一小时窗口。先点安排提醒，再点预约提前一小时倒计时，随后离开 App 验收。"
+            : "模拟配置：30 秒后通知、两分钟后开始。点安排提醒后，可立即启动倒计时。"
     }
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {

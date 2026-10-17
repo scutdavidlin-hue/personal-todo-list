@@ -12,15 +12,18 @@ struct PersonalOSCompanionApp: App {
             NavigationStack {
                 List {
                     Section("手机提醒") {
-                        Text("原生本地通知 + 实时活动。当前自动后台上岛尚未接入。")
+                        Text("本机提醒与倒计时；iOS 26 支持提前预约启动。")
                         Button("允许系统通知") { Task { await model.requestPermission() } }
                         Button("导入 Personal OS 配置") { importing = true }
                         Button("两分钟模拟验收") { model.demo() }
+                        if #available(iOS 26.0, *) {
+                            Button("30 秒后预约上岛模拟") { model.demo(scheduled: true) }
+                        }
                     }
                     Section("设备权限与接入") {
                         Text(model.permissionState?.displayText ?? "正在读取本机权限…")
                         Button("重新读取权限") { Task { await model.foreground() } }
-                        Text("后台注册未配置，未采集或上传设备 token。自动一小时前上岛仍不可用。") .font(.caption)
+                        Text("当前使用本机配置，无后台任务同步。预约或启动后，请在锁屏与灵动岛确认实际显示。") .font(.caption)
                     }
                     if let snapshot = model.preview {
                         Section("待安排：请核对") {
@@ -43,9 +46,12 @@ struct PersonalOSCompanionApp: App {
                                 Text(item.plan.title).font(.headline)
                                 if let end = item.plan.eventDate {
                                     Text("开始 \(end.formatted())").font(.caption)
-                                    Text("倒计时窗口：提前一小时，需打开 App 手动启动。") .font(.caption)
+                                    Text("倒计时窗口：提前一小时。可现在手动启动；iOS 26 可在窗口前预约。") .font(.caption)
                                 }
                                 Button("启动倒计时") { Task { await model.startActivity(item.plan) } }.disabled(!item.plan.enabled)
+                                if #available(iOS 26.0, *) {
+                                    Button("预约提前一小时倒计时") { Task { await model.startActivity(item.plan, scheduled: true) } }.disabled(!item.plan.enabled)
+                                }
                                 Button("关闭倒计时") { Task { await model.closeActivity(item.plan) } }
                                 Button("移除本机提醒", role: .destructive) { Task { await model.remove(item.plan) } }
                             }

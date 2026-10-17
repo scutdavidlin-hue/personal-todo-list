@@ -18,6 +18,49 @@ final class ReminderSnapshotTests: XCTestCase {
         XCTAssertTrue(p.canStart(at: now.addingTimeInterval(7199)))
         XCTAssertFalse(p.canStart(at: now.addingTimeInterval(7200)))
     }
+
+    func testSchedulingHandsOffAtTheExactOneHourBoundary() throws {
+        let p = plan()
+        try p.validate()
+        XCTAssertTrue(p.canSchedule(at: now))
+        XCTAssertTrue(p.canSchedule(at: now.addingTimeInterval(3599)))
+        XCTAssertFalse(p.canSchedule(at: now.addingTimeInterval(3600)))
+        XCTAssertTrue(p.canStart(at: now.addingTimeInterval(3600)))
+        XCTAssertFalse(p.canSchedule(at: now.addingTimeInterval(7200)))
+        // Scheduling is a projection of these same instants, never a date edit.
+        XCTAssertEqual(p.eventAt, now.timeIntervalSince1970 + 7200)
+        XCTAssertEqual(p.liveActivityStartAt, p.reminderAt.first)
+    }
+
+    func testDisabledAndAlreadyStartedWindowsCannotBeScheduled() throws {
+        let disabled = DeviceReminderPlan(taskId: "synthetic-none", title: "无提醒", timezone: "Asia/Shanghai", enabled: false,
+                                         eventAt: nil, liveActivityStartAt: nil, reminderAt: [])
+        try disabled.validate()
+        XCTAssertFalse(disabled.canSchedule(at: now))
+        XCTAssertFalse(plan().canSchedule(at: now.addingTimeInterval(3601)))
+        XCTAssertFalse(plan().canSchedule(at: now.addingTimeInterval(7201)))
+    }
+
+    @MainActor
+    func testBothDemosStaySyntheticAndUseTheExistingWindowContract() async throws {
+        let model = CompanionModel()
+        for scheduled in [false, true] {
+            let before = Date.now
+            model.demo(scheduled: scheduled)
+            let snapshot = try XCTUnwrap(model.preview)
+            try snapshot.validate()
+            let p = try XCTUnwrap(snapshot.plans.first)
+            XCTAssertTrue(p.taskId.hasPrefix("synthetic-"))
+            XCTAssertTrue(p.title.contains("不是真实任务"))
+            XCTAssertEqual(p.eventAt! - p.liveActivityStartAt!, 3600)
+            XCTAssertEqual(p.canSchedule(), scheduled)
+            XCTAssertEqual(p.canStart(), !scheduled)
+            if scheduled {
+                XCTAssertEqual(p.reminderAt, [p.liveActivityStartAt!])
+                XCTAssertTrue((29...31).contains(p.liveActivityStartAt! - before.timeIntervalSince1970))
+            }
+        }
+    }
     func testTerminalProjectionCannotCarryOldReminder() {
         let p = DeviceReminderPlan(taskId: "a", title: "停用", timezone: "Asia/Shanghai", enabled: false,
                                    eventAt: nil, liveActivityStartAt: nil, reminderAt: [now.timeIntervalSince1970])

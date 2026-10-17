@@ -49,6 +49,13 @@ struct DeviceReminderPlan: Codable, Identifiable, Equatable {
         return startDate <= now && now < eventDate
     }
 
+    // iOS 26 can ask the system to start this projection later, without a
+    // background timer or device token. The execution date is never changed.
+    func canSchedule(at now: Date = .now) -> Bool {
+        guard enabled, let startDate, let eventDate else { return false }
+        return now < startDate && startDate < eventDate
+    }
+
     // Hex encoding makes IDs stable and injective; cancelling task "a" cannot
     // accidentally cancel task "ab". No random ID on re-import/reschedule.
     var notificationPrefix: String {
@@ -58,7 +65,7 @@ struct DeviceReminderPlan: Codable, Identifiable, Equatable {
 }
 
 enum CompanionError: LocalizedError {
-    case invalidSnapshot, olderSnapshot, notificationsDenied, readbackFailed, outsideWindow, activitiesDisabled, fileTooLarge
+    case invalidSnapshot, olderSnapshot, notificationsDenied, readbackFailed, outsideWindow, activitiesDisabled, fileTooLarge, schedulingUnavailable, scheduleWindowPassed
     var errorDescription: String? {
         switch self {
         case .invalidSnapshot: return "提醒文件无效，请从 Personal OS 重新导出。"
@@ -68,6 +75,8 @@ enum CompanionError: LocalizedError {
         case .outsideWindow: return "倒计时只能在执行时刻前一小时内启动。"
         case .activitiesDisabled: return "实时活动未开启，请在系统设置中开启。"
         case .fileTooLarge: return "提醒文件超过 128 KB，请只导出所需任务。"
+        case .schedulingUnavailable: return "本机预约倒计时需要 iOS 26 或更新版本；当前可在提前一小时内手动启动。"
+        case .scheduleWindowPassed: return "预约启动时刻已到或已过，请在提前一小时内手动启动。"
         }
     }
 }

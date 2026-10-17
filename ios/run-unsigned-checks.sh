@@ -4,6 +4,15 @@
 set -euo pipefail
 
 personal_os_root="$(cd "$(dirname "$0")/.." && pwd)"
+personal_os_mode=build
+if [ "${1:-}" = --preflight-only ]; then
+  personal_os_mode=preflight
+  shift
+fi
+if [ "$#" -gt 1 ]; then
+  printf '%s\n' 'Usage: bash ios/run-unsigned-checks.sh [--preflight-only] [local-output-directory]' >&2
+  exit 2
+fi
 personal_os_output="${1:-$(mktemp -d "${TMPDIR:-/tmp}/personal-os-ios-checks.XXXXXX")}"
 mkdir -p "$personal_os_output"
 personal_os_output="$(cd "$personal_os_output" && pwd)"
@@ -19,10 +28,11 @@ write_receipt() {
   trap - EXIT
   python3 - "$personal_os_output/receipt.json" "$personal_os_exit" "$personal_os_phase" \
     "$personal_os_device_build" "$personal_os_simulator_build" "$personal_os_tests" \
-    "$personal_os_sha" "${DEVELOPER_DIR:-}" "$personal_os_simulator_id" <<'PY'
+    "$personal_os_sha" "${DEVELOPER_DIR:-}" "$personal_os_simulator_id" "$personal_os_mode" <<'PY'
 import json, sys
-path, code, phase, device, simulator, tests, sha, developer, destination = sys.argv[1:]
-receipt = dict(commit=sha, overall="passed" if code == "0" else "blocked_or_failed",
+path, code, phase, device, simulator, tests, sha, developer, destination, mode = sys.argv[1:]
+overall = ("ready_for_unsigned_build" if mode == "preflight" else "passed") if code == "0" else "blocked_or_failed"
+receipt = dict(commit=sha, mode=mode, overall=overall,
                exit_code=int(code), last_phase=phase, iphoneos_build=device,
                iphonesimulator_build=simulator, swift_xctest=tests,
                signing=False, physical_device_install=False,
@@ -55,6 +65,11 @@ xcodebuild -version | tee "$personal_os_output/xcode-version.log"
 xcodebuild -showsdks | tee "$personal_os_output/sdks.log"
 xcrun --sdk iphoneos --show-sdk-version
 xcrun --sdk iphonesimulator --show-sdk-version
+personal_os_sdk="$(xcrun --sdk iphoneos --show-sdk-version)"
+if [ "${personal_os_sdk%%.*}" -lt 26 ]; then
+  printf '%s\n' 'BLOCKED: iOS 26+ SDK is required to compile the local scheduled-start API. Select an existing full Xcode 26+ installation.' >&2
+  exit 2
+fi
 xcrun simctl list devices available --json > "$personal_os_output/simulators.json"
 
 personal_os_simulator_id="$(python3 - "$personal_os_output/simulators.json" <<'PY'
@@ -65,15 +80,21 @@ for runtime, entries in devices.items():
     match = re.search(r'\.iOS-(\d+(?:-\d+)*)$', runtime)
     if not match: continue
     version = tuple(map(int, match[1].split('-')))
-    if version[0] < 17: continue
+    if version[0] < 26: continue
     for device in entries:
         if device.get('isAvailable') and device.get('name', '').startswith('iPhone'):
             candidates.append((version, device['name'], device['udid']))
 if not candidates:
-    sys.exit('BLOCKED: install an iOS 17+ iPhone simulator runtime in Xcode Settings > Components.')
+    sys.exit('BLOCKED: install an iOS 26+ iPhone simulator runtime in Xcode Settings > Components.')
 print(max(candidates)[2])
 PY
 )"
+
+if [ "$personal_os_mode" = preflight ]; then
+  personal_os_phase=preflight_completed
+  printf '%s\n' 'READY for unsigned build only. No build, Apple account/keychain access, signing, device registration or physical installation was performed.'
+  exit 0
+fi
 
 personal_os_project="$personal_os_root/ios/PersonalOSCompanion.xcodeproj"
 personal_os_options=(-project "$personal_os_project" -scheme PersonalOSCompanion -configuration Debug
@@ -99,12 +120,7 @@ xcodebuild "${personal_os_options[@]}" -sdk iphonesimulator \
   -derivedDataPath "$personal_os_output/simulator-derived" \
   -resultBundlePath "$personal_os_output/xctest.xcresult" \
   -parallel-testing-enabled NO test-without-building 2>&1 | tee "$personal_os_output/xctest.log"
-python3 - "$personal_os_output/xctest.log" <<'PY'
-import pathlib, re, sys
-log = pathlib.Path(sys.argv[1]).read_text()
-counts = re.findall(r'Executed (\d+) tests?, with 0 failures', log)
-if not any(int(count) >= 5 for count in counts):
-    sys.exit('UNVERIFIED: Xcode returned success but five executed XCTest methods were not confirmed in the log.')
-PY
+python3 "$personal_os_root/scripts/check-ios-xctest.py" \
+  "$personal_os_root/ios/PersonalOSCompanion/Tests" "$personal_os_output/xctest.log"
 personal_os_tests=passed
 personal_os_phase=completed
