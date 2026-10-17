@@ -1,3 +1,5 @@
+import { taskScheduleSyncDecision } from "./schedule-core.js";
+
 const VALID_PRIORITIES = new Set(["low", "medium", "high", "urgent"]);
 const VALID_TASK_TYPES = new Set(["task", "follow_up"]);
 const CLEARABLE_FIELDS = new Set([
@@ -188,6 +190,11 @@ export function taskView(task, schedule = null) {
   const due = task?.dueDate || task?.due || task?.date || null;
   const taskType = schedule?.task_type || (/^【(?:二|三|四|五|六|七|八|九|十|\d+)次跟进】/.test(String(task?.title || "")) ? "follow_up" : "task");
   const safeSchedule = schedule ? Object.fromEntries(Object.entries(schedule).filter(([key]) => key !== "owner_id")) : null;
+  const dateDecision = schedule ? taskScheduleSyncDecision(task, schedule) : null;
+  // Derived read-time warning only: preserve both dates and stored sync state.
+  // A newer provider timestamp does not identify which field/person changed.
+  const unexplainedDates = due && schedule?.scheduled_date && due !== schedule.scheduled_date
+    && dateDecision?.reason === "TASK_SCHEDULE_RECONCILIATION_REQUIRED";
   return {
     ...task,
     id: googleTaskId,
@@ -210,6 +217,10 @@ export function taskView(task, schedule = null) {
     calendar_event_id: schedule?.calendar_event_id || null,
     created_at: task?.createdAt || task?.created_at || schedule?.created_at || null,
     updated_at: newestTimestamp(task?.updatedAt, task?.updated_at, schedule?.updated_at),
+    ...(unexplainedDates ? { date_reconciliation: {
+      required: true, reason: dateDecision.reason, task_date: due,
+      scheduled_date: schedule.scheduled_date, automatic_repair_allowed: false,
+    } } : {}),
     schedule: safeSchedule,
   };
 }
