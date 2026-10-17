@@ -38,6 +38,7 @@ async function fixture({ missingSource = false, intakeOptions, providerOptions, 
   const provider = providerOptions ? await loadTaskStatusProviderSimulation(providerOptions) : null;
   const intake = await loadIntakeSimulation({ ...intakeOptions, ...(provider ? { taskStatusProvider: provider } : {}) });
   const events = new Map();
+  const intakeCalls = [];
   let account = "account-one", handler, baseURL;
   const server = createServer(async (incoming, outgoing) => {
     if (incoming.url === "/auth/v1/user") {
@@ -63,15 +64,16 @@ async function fixture({ missingSource = false, intakeOptions, providerOptions, 
     verifyReplySource: missingSource ? undefined : async ({ replyEventId }) => structuredClone(events.get(replyEventId)),
     trustedAuthorities: missingSource ? [] : ["fixture-source"],
     sendIntake: async (input, key) => {
+      intakeCalls.push({ key, proposalId: input.proposal_guard?.proposal_id });
       if (mutateSend) input = await mutateSend(input);
-      return (await intake.request({ ...input, idempotency_key: key })).json();
+      return (await intake.request({ ...input, idempotency_key: key }, { idempotencyKey: key })).json();
     },
   });
   const request = async (path, body, token = "fixture-user", method = "POST") => {
     const response = await nativeFetch(baseURL + path, { method, headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, ...(method === "GET" ? {} : { body: JSON.stringify(body) }) });
     return { status: response.status, body: await response.json() };
   };
-  return { store, intake, provider, request,
+  return { store, intake, provider, intakeCalls, request,
     create: async (input = command, conversation_id = "fixture-thread") => {
       const result = await request("/proposals", { input, conversation_id }); assert.equal(result.status, 201, JSON.stringify(result.body)); return result.body;
     },
@@ -332,6 +334,51 @@ test("real HTTP/PG/intake/task-status/resolver permits exactly one approved inde
     assert.equal(f.provider.writes[0].parent, null); assert.equal(f.provider.audits.length, 1);
     assert.equal((await f.confirm(p, e)).body.replayed, true); assert.equal(f.provider.writes.length, 1);
   }, { providerOptions: {} });
+});
+function assertStableIntakeKeys(f, proposals) {
+  const keys = proposals.map(p => `proposal:${p.proposal_id}:${p.version}`);
+  assert.deepEqual(f.intakeCalls.map(x => x.key), keys);
+  assert.deepEqual(f.intake.intakeRequests.map(x => x.key), keys);
+  const reservations = f.intake.writes.filter(x => x.path.startsWith("/rest/v1/personal_os_intake_audit") && x.method === "POST");
+  assert.deepEqual(reservations.map(x => x.body.idempotency_key), keys);
+  const dispatched = f.intake.writes.filter(x => x.path.endsWith("/functions/v1/task-status") && x.body?.title);
+  assert.deepEqual(dispatched.map(x => x.body.resolution_idempotency_key), keys);
+  assert.deepEqual(f.provider.audits.map(x => x.idempotency_key), keys);
+  assert.deepEqual(f.intake.getAudits().map(x => x.idempotency_key), keys);
+  return keys;
+}
+test("two distinct proposals retain distinct stable keys through actual intake audit, resolver and provider", async () => {
+  await withFixture(async f => {
+    const first = await f.create(), second = await f.create({ ...command, title: "给虚构盆栽浇水", raw_text: "下周提醒我给虚构盆栽浇水" });
+    const a = await f.confirm(first, await f.review(first)), b = await f.confirm(second, await f.review(second));
+    assert.equal(a.body.verified, true, JSON.stringify(a)); assert.equal(b.body.verified, true, JSON.stringify(b));
+    assert.notEqual(a.body.id, b.body.id); assert.notEqual(a.body.request_id, b.body.request_id);
+    const keys = assertStableIntakeKeys(f, [first, second]); assert.notEqual(keys[0], keys[1]);
+    assert.deepEqual(f.provider.writes.map(x => x.method), ["POST", "POST"]);
+  }, { providerOptions: {}, intakeOptions: { multipleAudits: true } });
+});
+test("same proposal HTTP replay preserves the original stable key and performs no second real-handler dispatch", async () => {
+  await withFixture(async f => {
+    const p = await f.create(), e = await f.review(p), first = await f.confirm(p, e);
+    assert.equal(first.body.verified, true);
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const replay = await f.confirm(p, e); assert.equal(replay.body.replayed, true);
+      assert.equal(replay.body.request_id, first.body.request_id); assert.equal(replay.body.id, first.body.id);
+    }
+    assertStableIntakeKeys(f, [p]); assert.equal(f.provider.writes.length, 1);
+  }, { providerOptions: {}, intakeOptions: { multipleAudits: true } });
+});
+test("lost Google POST response keeps the same durable key and unknown proposal never redispatches", async () => {
+  await withFixture(async f => {
+    const p = await f.create(), e = await f.review(p), result = await f.confirm(p, e);
+    assert.equal(result.body.verified, false); assert.equal(result.body.outcome, "unknown");
+    assert.equal((await f.store.get(p.proposal_id, { ownerId: owner, accountSubject: "account-one" })).status, "unknown");
+    for (let attempt = 0; attempt < 3; attempt += 1) assert.equal((await f.confirm(p, e)).body.code, "OUTCOME_UNKNOWN_NO_RETRY");
+    const [key] = assertStableIntakeKeys(f, [p]);
+    assert.equal(f.intake.getAudits()[0].idempotency_key, key); assert.equal(f.intake.getAudits()[0].stage, "outcome_unknown");
+    assert.deepEqual(f.provider.writes.map(x => x.method), ["POST"]);
+    assert.equal(f.provider.allCalls.filter(x => x.path.endsWith("/tasks") && x.method === "POST").length, 1);
+  }, { providerOptions: { loseCreateResponseOnce: true }, intakeOptions: { multipleAudits: true } });
 });
 test("applied receipt survives connection/process loss and a real PostgreSQL container restart", async () => {
   let p;

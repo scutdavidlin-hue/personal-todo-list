@@ -5,7 +5,7 @@ import { createGoogleTaskPayload } from "../../supabase/functions/_shared/google
 
 let imports = 0;
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status });
-export async function loadTaskStatusProviderSimulation({ tasks = [], goals = [], account = "account-one" } = {}) {
+export async function loadTaskStatusProviderSimulation({ tasks = [], goals = [], account = "account-one", loseCreateResponseOnce = false } = {}) {
   const priorDeno = globalThis.Deno;
   const token = `unit-${"x".repeat(32)}`;
   const writes = [], audits = [], allCalls = [];
@@ -29,7 +29,9 @@ export async function loadTaskStatusProviderSimulation({ tasks = [], goals = [],
       const id = parsed.pathname.match(/\/tasks\/([^/]+)$/)?.[1];
       if (method === "POST") {
         const task = { id: `new-${writes.length + 1}`, status: "needsAction", ...body };
-        stored.set(task.id, task); writes.push({ method, id: task.id, body, parent: parsed.searchParams.get("parent") }); return json(task, 201);
+        stored.set(task.id, task); writes.push({ method, id: task.id, body, parent: parsed.searchParams.get("parent") });
+        if (loseCreateResponseOnce && writes.length === 1) throw new DOMException("synthetic response lost after Google accepted POST", "TimeoutError");
+        return json(task, 201);
       }
       if (method === "PATCH") {
         assert.ok(stored.has(id)); const task = { ...stored.get(id), ...body }; stored.set(id, task); writes.push({ method, id, body }); return json(task);

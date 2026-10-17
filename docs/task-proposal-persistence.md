@@ -121,7 +121,7 @@ their actual completion.
 
 ### Historical CI and current review results
 
-The current review revision passed locally: **733 regression tests, 731 passed,
+The 636ded04 review revision passed locally: **733 regression tests, 731 passed,
 two existing browser skips, zero failures; 34 real PostgreSQL/HTTP cases, all
 passed**. Eight added default tests exercise the actual writer/provider boundary
 and MERGE executor fence. Ten added database cases exercise trusted termination,
@@ -129,6 +129,15 @@ cross-proposal terminal-event replay, a paused HTTP approval racing a later
 reject/change_scope, late cancellation, actual downstream resolution rejection,
 and a valid single-create/readback/replay control. The code commit and its new CI
 run are identified in PR #12; the record below predates these review corrections.
+
+A subsequent test-only addition covers three stable-key cases through the actual
+intake/task-status/resolver/executor: two independent proposals keep distinct
+`proposal:<id>:<version>` keys, an applied proposal replays without another
+dispatch, and a fake Google POST accepted before its response is lost remains
+unknown with the original key and no repeat POST. The intake harness now passes
+the actual header key and supports multiple audit rows. Production function code
+is unchanged from 636ded04; these are **three new cases**, not 733 new tests.
+See `docs/proposal-key-transport-evidence.json` and the exact CI linked in PR #12.
 
 Historical tested code: `8fd82b2a1acc44e829138b1f41e94383ae36be6c`.
 [Actual CI run 39047898154](https://github.com/scutdavidlin-hue/personal-todo-list/actions/runs/39047898154),
@@ -181,6 +190,11 @@ fixture-owned event provider supplies these records. It is labeled synthetic,
 is not registered as a real authority, and proves no real chat provenance/NLP.
 
 Still required from the platform/release owner:
+
+Concrete host/official-interface ownership, the existing SUPABASE_DB_URL option,
+available migration/deployment tools, approval boundaries and acceptance gates are
+specified in [the integration contract](task-proposal-integration-contract.md).
+This is preparation, not a claim that any live dependency is connected.
 
 1. An existing approved private database owner/query binding for the store.
    Current REST credentials do not automatically expose this new private schema;

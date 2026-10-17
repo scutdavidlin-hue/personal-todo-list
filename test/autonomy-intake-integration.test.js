@@ -10,10 +10,11 @@ function json(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-async function loadIntakeHandler({ taskStatusProvider, taskResult, readTask, context, failPreference = false, unknownCreateOnce = false, contextAuthFailureOnce = false, accountFailureOnCall = 0, projectionFailureOnce = false, projectionReceiptStatus = "disabled", createReceiptStatus = "disabled", reconciliationResult = null, contextGate = null, lostReservationResponse = false, contextRefusalCode = null } = {}) {
+async function loadIntakeHandler({ multipleAudits = false, taskStatusProvider, taskResult, readTask, context, failPreference = false, unknownCreateOnce = false, contextAuthFailureOnce = false, accountFailureOnCall = 0, projectionFailureOnce = false, projectionReceiptStatus = "disabled", createReceiptStatus = "disabled", reconciliationResult = null, contextGate = null, lostReservationResponse = false, contextRefusalCode = null } = {}) {
   const previousDeno = globalThis.Deno;
   const previousFetch = globalThis.fetch;
   const writes = [];
+  const intakeRequests = [];
   const token = `unit-${"x".repeat(32)}`;
   const environment = {
     SUPABASE_URL: "https://personal-os.test",
@@ -30,6 +31,7 @@ async function loadIntakeHandler({ taskStatusProvider, taskResult, readTask, con
   let accountAttempts = 0;
   let projectionAttempts = 0;
   let audit = null;
+  const audits = new Map();
 
   globalThis.Deno = {
     env: { get: (name) => environment[name] },
@@ -86,11 +88,17 @@ async function loadIntakeHandler({ taskStatusProvider, taskResult, readTask, con
     }
 
     if (requestUrl.pathname.endsWith("/rest/v1/personal_os_intake_audit")) {
+      if (multipleAudits) {
+        const key = (init.method || "GET") === "POST" ? body.idempotency_key : requestUrl.searchParams.get("idempotency_key")?.replace(/^eq\./, "");
+        const id = requestUrl.searchParams.get("id")?.replace(/^eq\./, "");
+        audit = key ? audits.get(key) || null : id ? [...audits.values()].find(row => row.id === id) || null : audit;
+      }
       const stageFilter = requestUrl.searchParams.get("stage");
       if (stageFilter?.startsWith("in.(") && audit && !stageFilter.includes(audit.stage)) return json([]);
       if ((init.method || "GET") === "POST") {
         if (audit) return json([]);
-        audit = { id: "11111111-1111-4111-8111-111111111111", recovery_version: 0, retry_count: 0, ...body };
+        audit = { id: multipleAudits ? crypto.randomUUID() : "11111111-1111-4111-8111-111111111111", recovery_version: 0, retry_count: 0, ...body };
+        audits.set(audit.idempotency_key, audit);
         if (lostReservationResponse) throw new DOMException("reservation response lost", "TimeoutError");
         return json([audit]);
       }
@@ -98,6 +106,7 @@ async function loadIntakeHandler({ taskStatusProvider, taskResult, readTask, con
         const expectedOwner = requestUrl.searchParams.get("lease_owner");
         if (expectedOwner && expectedOwner !== `eq.${audit?.lease_owner}`) return json([]);
         audit = { ...audit, ...body };
+        audits.set(audit.idempotency_key, audit);
         return json([audit]);
       }
       const exactKey = requestUrl.searchParams.get("idempotency_key");
@@ -117,22 +126,25 @@ async function loadIntakeHandler({ taskStatusProvider, taskResult, readTask, con
     assert.equal(typeof handler, "function");
     return {
       writes,
+      intakeRequests,
       token,
       goalPlanReads: () => goalPlanReads,
       createAttempts: () => createAttempts,
       accountAttempts: () => accountAttempts,
       mutateAudit: (changes) => { audit = { ...audit, ...changes }; },
       getAudit: () => audit,
+      getAudits: () => [...audits.values()],
       mutateTask: (changes) => Object.assign(lastTask, changes),
       list: async (params = "") => handler(new Request(`https://personal-os.test/intake${params}`, {
         method: "GET", headers: { authorization: `Bearer ${token}` },
       })),
       malformed: async () => handler(new Request("https://personal-os.test/intake", {method:"POST",headers:{authorization:`Bearer ${token}`,"content-type":"application/json","idempotency-key":"integration-key-1"},body:"{invalid"})),
-      request: async (body) => handler(new Request("https://personal-os.test/intake", {
-        method: "POST",
-        headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "idempotency-key": "integration-key-1" },
-        body: JSON.stringify(body),
-      })),
+      request: async (body, { idempotencyKey = "integration-key-1" } = {}) => {
+        const request = new Request("https://personal-os.test/intake", { method: "POST",
+          headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "idempotency-key": idempotencyKey }, body: JSON.stringify(body) });
+        intakeRequests.push({ key: request.headers.get("idempotency-key"), body: structuredClone(body) });
+        return handler(request);
+      },
       restore: () => {
         globalThis.Deno = previousDeno;
         globalThis.fetch = previousFetch;
