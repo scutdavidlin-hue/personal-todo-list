@@ -1,5 +1,11 @@
 # New-task confirmation: reproduced refusal and isolated contract draft
 
+**Historical lab phase at d1c5691.** This report preserves that phase's limits.
+The current PR also contains a real PostgreSQL store, HTTP runtime, existing
+session/account adapters and restrictive actual-intake checks. See
+`docs/task-proposal-persistence.md` and `docs/proposal-deployed-version-evidence.json`.
+Real user-reply provenance remains unavailable; production is not enabled.
+
 2026-10-17. Source snapshot: PR #8 head
 `4f5cf010b881157fc9e15afe6222dede3f5f54b7` (verified from GitHub), independent
 branch `investigate/task-confirmation-20261017`. The deployed bundle's identity

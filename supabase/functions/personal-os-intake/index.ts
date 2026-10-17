@@ -6,6 +6,7 @@ import {
 import { findExistingGoalMatch, mergeGoalPlanUpdate } from "../_shared/goal-operations.js";
 import { resolveServiceApiKey, serviceApiHeaders } from "../_shared/supabase-api-keys.js";
 import { prepareAutonomousIntake, verifyTaskWrite, intakeConfirmation } from "../_shared/autonomy-runtime.js";
+import { proposalGuardError } from "../_shared/proposal-execution-scope.js";
 import { evaluateAutonomy } from "../_shared/autonomy-policy.js";
 import { frozenIntake, intakeBlocker, isMissed, publicRecovery, recoveryDecision, retryAt, safeError } from "../_shared/request-recovery.js";
 import { verifyTaskFields } from "../_shared/write-receipt.js";
@@ -767,6 +768,15 @@ Deno.serve(async (request) => {
       return json(result, 202);
     }
     await updateAudit(auditId, { account_subject: identity.account_subject }, leaseOwner);
+
+    const proposalGuardCode = await proposalGuardError(input.proposal_guard, intake, identity, OWNER_USER_ID, policy);
+    if (proposalGuardCode) {
+      const result = { success: false, write_success: false, verified: false, code: proposalGuardCode,
+        request_id: auditId, stage: "needs_input", message: "提案账号或执行内容已变化，请重新预览。" };
+      await updateAudit(auditId, { stage: "needs_input", status: "failed", error_code: proposalGuardCode,
+        response: result, response_status: 409, next_retry_at: null, lease_owner: null, lease_expires_at: null }, leaseOwner);
+      return json(result, 409);
+    }
 
     const blocker = intakeBlocker(intake);
     if (blocker) {

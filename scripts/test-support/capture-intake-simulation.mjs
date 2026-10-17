@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { intakeConfirmation } from "../../supabase/functions/_shared/autonomy-runtime.js";
 
 let loadHarness;
-export async function simulateCaptures(inputs) {
+export async function loadIntakeSimulation(options) {
   const harnessURL = new URL("../../test/autonomy-intake-integration.test.js", import.meta.url);
   const harnessSource = await readFile(harnessURL, "utf8");
   const harnessBody = harnessSource.slice(harnessSource.indexOf("let importNumber = 0;"), harnessSource.indexOf("function taskStatusWrites("))
@@ -13,10 +13,13 @@ export async function simulateCaptures(inputs) {
   // Preserve the harness import counter across invocations, so each handler
   // import executes Deno.serve instead of resolving an earlier module cache.
   loadHarness ||= new Function("assert", harnessBody + ";return loadIntakeHandler;")(assert);
+  return loadHarness(options);
+}
+export async function simulateCaptures(inputs) {
   const mcp = await readFile(new URL("../../supabase/functions/personal-os-mcp/index.ts", import.meta.url), "utf8");
   const gatewayBody = stripTypeScriptTypes(mcp.slice(mcp.indexOf("function reminderArguments("), mcp.indexOf("async function updateTaskReminder("))
     + mcp.slice(mcp.indexOf("async function captureItem("), mcp.indexOf("const GOAL_SELECT")));
-  const harness = await loadHarness();
+  const harness = await loadIntakeSimulation();
   const previousLog = console.log, previousInfo = console.info;
   console.log = () => {}; console.info = () => {};
   let gatewayRequests = 0;
