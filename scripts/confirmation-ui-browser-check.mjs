@@ -12,7 +12,7 @@ const demo = await startSyntheticConfirmationDemo();
 let browser, socket, calls = 0; const pending = new Map(), exceptions = [];
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 try {
-  browser = spawn(browserPath, ["--headless", "--no-sandbox", "--disable-dev-shm-usage", "--disable-background-networking", "--disable-component-update", "--disable-sync", "--disable-extensions", "--no-default-browser-check", "--no-proxy-server", "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1", "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "about:blank"], { stdio: "ignore" });
+  browser = spawn(browserPath, ["--headless", "--disable-dev-shm-usage", "--disable-background-networking", "--disable-component-update", "--disable-sync", "--disable-extensions", "--no-default-browser-check", "--no-proxy-server", "--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1", "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "about:blank"], { stdio: "ignore" });
   let port;
   for (let i = 0; i < 100; i += 1) {
     try { port = Number((await readFile(join(profile, "DevToolsActivePort"), "utf8")).split("\n")[0]); break; }
