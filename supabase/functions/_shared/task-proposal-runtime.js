@@ -113,9 +113,9 @@ export function createTaskProposalHandler({ store, authenticateUser, resolveAcco
         || !["approve_exact", "change_scope", "question", "reject"].includes(reply.disposition)
         || !reply.occurredAt || !Number.isFinite(Date.parse(reply.occurredAt))
         || new Date(reply.occurredAt) < new Date(row.created_at) || new Date(reply.occurredAt) > clock()) throw new ProposalError("USER_REPLY_UNVERIFIED");
-      if (reply.disposition === "change_scope" || reply.scopeDigest !== row.scope_digest) {
-        await store.revoke(id, identity, body.version, true);
-        throw new ProposalError("NEW_PREVIEW_REQUIRED");
+      if (reply.disposition === "reject" || reply.disposition === "change_scope" || reply.scopeDigest !== row.scope_digest) {
+        const closed = await store.terminateByReply(id, identity, body.version, reply);
+        throw new ProposalError(closed.status === "revoked" ? "PROPOSAL_REVOKED" : "NEW_PREVIEW_REQUIRED");
       }
       if (reply.disposition !== "approve_exact") throw new ProposalError("USER_CONFIRMATION_REQUIRED");
       const fresh = await prepare(row.intake_input, { resolveContext, receivedAt: new Date(row.received_at).toISOString() });
@@ -133,7 +133,7 @@ export function createTaskProposalHandler({ store, authenticateUser, resolveAcco
           proposal_guard: { proposal_id: id, version: body.version, scope_digest: body.scope_digest, owner_id: identity.ownerId, account_subject: identity.accountSubject } },
         `proposal:${id}:${body.version}`));
       } catch { receipt = { success: false, write_success: false, verified: false, outcome: "unknown", code: "INTAKE_OUTCOME_UNKNOWN" }; }
-      const state = saved(receipt) ? "applied" : ["PROPOSAL_ACCOUNT_CHANGED", "PROPOSAL_SCOPE_CHANGED", "INFORMATION_ONLY", "CLARIFICATION_REQUIRED"].includes(receipt.code) ? "rejected" : "unknown";
+      const state = saved(receipt) ? "applied" : ["PROPOSAL_ACCOUNT_CHANGED", "PROPOSAL_SCOPE_CHANGED", "PROPOSAL_GUARD_INVALID", "INFORMATION_ONLY", "CLARIFICATION_REQUIRED"].includes(receipt.code) ? "rejected" : "unknown";
       try { await store.finish(claim.row, claim.token, state, receipt); }
       catch { return json({ ...receipt, proposal_checkpoint: "unverified", automatic_retry_allowed: false }, 202); }
       return json({ ...receipt, proposal_id: id, automatic_retry_allowed: false }, state === "unknown" ? 202 : 200);

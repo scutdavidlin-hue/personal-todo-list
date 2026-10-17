@@ -10,6 +10,7 @@ import { createPostgresProposalStore } from "../supabase/functions/_shared/task-
 import { createTaskProposalHandler, createExistingSessionAuthenticator, createExistingAccountResolver } from "../supabase/functions/_shared/task-proposal-runtime.js";
 import { prepareNewTaskProposal, scopeHash } from "../supabase/functions/_shared/proposal-execution-scope.js";
 import { loadIntakeSimulation } from "./test-support/capture-intake-simulation.mjs";
+import { loadTaskStatusProviderSimulation } from "./test-support/task-status-provider-simulation.mjs";
 
 let connectionString = process.env.PERSONAL_OS_TEST_PG_URL;
 if (!connectionString) throw new Error("Explicit disposable fixture URL is required");
@@ -33,8 +34,9 @@ before(async () => {
 });
 after(async () => { await pool?.end(); });
 
-async function fixture({ missingSource = false, intakeOptions, mutateSend, prepare = prepareNewTaskProposal, beforeAccount, clock } = {}) {
-  const intake = await loadIntakeSimulation(intakeOptions);
+async function fixture({ missingSource = false, intakeOptions, providerOptions, mutateSend, prepare = prepareNewTaskProposal, beforeAccount, clock } = {}) {
+  const provider = providerOptions ? await loadTaskStatusProviderSimulation(providerOptions) : null;
+  const intake = await loadIntakeSimulation({ ...intakeOptions, ...(provider ? { taskStatusProvider: provider } : {}) });
   const events = new Map();
   let account = "account-one", handler, baseURL;
   const server = createServer(async (incoming, outgoing) => {
@@ -69,7 +71,7 @@ async function fixture({ missingSource = false, intakeOptions, mutateSend, prepa
     const response = await nativeFetch(baseURL + path, { method, headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, ...(method === "GET" ? {} : { body: JSON.stringify(body) }) });
     return { status: response.status, body: await response.json() };
   };
-  return { store, intake, request,
+  return { store, intake, provider, request,
     create: async (input = command, conversation_id = "fixture-thread") => {
       const result = await request("/proposals", { input, conversation_id }); assert.equal(result.status, 201, JSON.stringify(result.body)); return result.body;
     },
@@ -253,6 +255,83 @@ test("SQL immutability, no client grants and parameterized content are enforced 
       await assert.rejects(client.query("select * from task_create_private.proposals"), /permission denied/);
     } finally { await client.query("rollback"); client.release(); }
   });
+});
+test("trusted reject atomically terminates pending proposal and consumes its source event; earlier approval stays closed", async () => {
+  await withFixture(async f => {
+    const p = await f.create(), old = await f.review(p), reject = await f.review(p, { disposition: "reject" });
+    const rejected = await f.confirm(p, reject);
+    if (rejected.body.code !== "PROPOSAL_REVOKED") {
+      const oldResult = await f.confirm(p, old);
+      assert.fail(JSON.stringify({ rejectionCode: rejected.body.code, earlierApprovalSuccess: oldResult.body.success, simulatedIntakeCreates: f.intake.createAttempts() }));
+    }
+    assert.equal((await f.store.get(p.proposal_id, { ownerId: owner, accountSubject: "account-one" })).status, "revoked");
+    assert.equal((await f.confirm(p, old)).body.code, "PROPOSAL_REVOKED");
+    assert.equal((await pool.query("select count(*) from task_create_private.reply_events where authority=$1 and event_id=$2", [reject.authority, reject.eventId])).rows[0].count, "1");
+    const second = await f.create({ ...command, title: "第二条独立虚构事项" });
+    const replay = await f.review(second, { disposition: "reject", eventId: reject.eventId });
+    assert.equal((await f.confirm(second, replay)).body.code, "SOURCE_EVENT_REPLAYED");
+    assert.equal((await f.store.get(second.proposal_id, { ownerId: owner, accountSubject: "account-one" })).status, "pending");
+    assert.equal(f.intake.createAttempts(), 0);
+  });
+});
+for (const disposition of ["reject", "change_scope"]) test(`trusted ${disposition} after claim closes the real SQL dispatch gate`, async () => {
+  await withFixture(async f => {
+    const p = await f.create(), old = await f.review(p), identity = { ownerId: owner, accountSubject: "account-one" };
+    const claim = await f.store.claim(p.proposal_id, identity, p.version, p.scope_digest, old);
+    const stop = await f.review(p, { disposition });
+    assert.equal((await f.confirm(p, stop)).body.code, disposition === "reject" ? "PROPOSAL_REVOKED" : "NEW_PREVIEW_REQUIRED");
+    assert.equal((await f.store.get(p.proposal_id, identity)).status, disposition === "reject" ? "revoked" : "superseded");
+    await assert.rejects(f.store.beginDispatch(claim.row, claim.token, identity), { code: "CLAIM_CLOSED" });
+    assert.equal((await f.confirm(p, old)).body.code, "PROPOSAL_REVOKED"); assert.equal(f.intake.createAttempts(), 0);
+  });
+});
+for (const disposition of ["reject", "change_scope"]) test(`concurrent HTTP ${disposition} wins while approval is paused after real claim`, { timeout: 10000 }, async () => {
+  let calls = 0, claimed, release;
+  const atClaim = new Promise(resolve => { claimed = resolve; }), gate = new Promise(resolve => { release = resolve; });
+  await withFixture(async f => {
+    const p = await f.create(), old = await f.review(p);
+    const approval = f.confirm(p, old);
+    try {
+      await atClaim;
+      assert.equal((await f.store.get(p.proposal_id, { ownerId: owner, accountSubject: "account-one" })).status, "claimed");
+      const stopped = await f.confirm(p, await f.review(p, { disposition }));
+      assert.equal(stopped.body.code, disposition === "reject" ? "PROPOSAL_REVOKED" : "NEW_PREVIEW_REQUIRED");
+    } finally { release(); }
+    assert.equal((await approval).body.code, "CLAIM_CLOSED"); assert.equal(f.intake.createAttempts(), 0);
+  }, { beforeAccount: async () => { if (++calls === 4) { claimed(); await gate; } } });
+});
+test("trusted terminal replies after dispatch report that cancellation can no longer be guaranteed", async () => {
+  await withFixture(async f => {
+    const p = await f.create(), e = await f.review(p), identity = { ownerId: owner, accountSubject: "account-one" };
+    const claim = await f.store.claim(p.proposal_id, identity, p.version, p.scope_digest, e);
+    await f.store.beginDispatch(claim.row, claim.token, identity);
+    for (const disposition of ["reject", "change_scope"]) {
+      assert.equal((await f.confirm(p, await f.review(p, { disposition }))).body.code, "DISPATCH_ALREADY_STARTED");
+    }
+    assert.equal((await f.store.get(p.proposal_id, identity)).status, "dispatching"); assert.equal(f.intake.createAttempts(), 0);
+  });
+});
+for (const [label, input, providerOptions] of [
+  ["UPDATE", { ...command, title: "跟佳佳核对成本", raw_text: "下周提醒我跟佳佳核对成本" }, { tasks: [{ id: "existing-task", title: "跟佳佳核对成本", notes: "" }] }],
+  ["PARENT_CHILD", { ...command, title: "做完整经营分析，包括收入、成本、人效和客户集中度。", raw_text: "下周提醒我做完整经营分析，包括收入、成本、人效和客户集中度。" }, {}],
+  ["GOAL_LINK", { ...command, title: "做 Task Semantic Resolution", raw_text: "下周提醒我做 Task Semantic Resolution" }, { goals: [{ id: "goal-personal-os", title: "Personal OS 产品化", description: "把 Personal OS 做成可以长期使用的产品", status: "Active" }] }],
+]) test(`real HTTP/PG/intake/task-status/resolver rejects unapproved ${label} before fake Google writes`, async () => {
+  await withFixture(async f => {
+    const p = await f.create(input), result = await f.confirm(p, await f.review(p));
+    assert.equal(result.body.code, "PROPOSAL_SCOPE_CHANGED", JSON.stringify({ result, mutations: f.provider.writes.map(x => ({ method: x.method, id: x.id, parent: x.parent })), decisions: f.provider.audits.map(x => x.decision) }));
+    assert.deepEqual(f.provider.writes, []); assert.deepEqual(f.provider.audits, []);
+    assert.equal(result.body.outcome, "rejected"); assert.equal(f.intake.getAudit().stage, "needs_input"); assert.equal(f.intake.getAudit().next_retry_at, null);
+    assert.equal((await f.store.get(p.proposal_id, { ownerId: owner, accountSubject: "account-one" })).status, "rejected");
+  }, { providerOptions });
+});
+test("real HTTP/PG/intake/task-status/resolver permits exactly one approved independent create", async () => {
+  await withFixture(async f => {
+    const p = await f.create(), e = await f.review(p), result = await f.confirm(p, e);
+    assert.equal(result.body.success, true, JSON.stringify(result)); assert.equal(result.body.verified, true);
+    assert.deepEqual(f.provider.writes.map(x => x.method), ["POST"]);
+    assert.equal(f.provider.writes[0].parent, null); assert.equal(f.provider.audits.length, 1);
+    assert.equal((await f.confirm(p, e)).body.replayed, true); assert.equal(f.provider.writes.length, 1);
+  }, { providerOptions: {} });
 });
 test("applied receipt survives connection/process loss and a real PostgreSQL container restart", async () => {
   let p;

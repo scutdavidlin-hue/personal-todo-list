@@ -242,7 +242,8 @@ async function resolveAutonomyContext(input: Record<string, unknown>) {
 async function dispatchTask(intake: Record<string, unknown>, auditId: string, idempotencyKey: string) {
   const result = await taskService(intake.existing_task_id ? {
     action: "update_task", task_id: intake.existing_task_id, changes: intake.update_patch || {},
-  } : { ...taskDispatchPayload(intake), intake_audit_id: auditId, resolution_idempotency_key: idempotencyKey });
+  } : { ...taskDispatchPayload(intake), intake_audit_id: auditId, resolution_idempotency_key: idempotencyKey,
+    ...(Object.hasOwn(intake, "proposal_guard") ? { proposal_guard: intake.proposal_guard } : {}) });
   let verified;
   try { verified = await verifyTaskWrite(result, (id: string) => taskService({ action: "read_task", task_id: id })); }
   catch {
@@ -853,13 +854,15 @@ Deno.serve(async (request) => {
       ? error
       : new IntakeError(timedOut ? "Personal OS intake timed out" : "Personal OS intake failed", 503, timedOut ? "INTAKE_TIMEOUT" : "INTAKE_FAILED");
     auditId ||= intakeError.requestId || "";
-    const failure = { success: false, write_success: false, verified: false, outcome: intakeError.code === "IDEMPOTENCY_CONFLICT" ? "rejected" : "unknown", idempotency_key: receiptKey || undefined, request_id: auditId || undefined, code: intakeError.code, error: intakeError.message,
+    const proposalPrewriteRejected = ["PROPOSAL_SCOPE_CHANGED", "PROPOSAL_GUARD_INVALID", "PROPOSAL_ACCOUNT_CHANGED"].includes(intakeError.code);
+    const failure = { success: false, write_success: false, verified: false, outcome: proposalPrewriteRejected || intakeError.code === "IDEMPOTENCY_CONFLICT" ? "rejected" : "unknown", idempotency_key: receiptKey || undefined, request_id: auditId || undefined, code: intakeError.code, error: intakeError.message,
       ...(intakeError.code === "TASK_TARGET_AMBIGUOUS" ? { decision: "ask", question: "有多个匹配任务，要修改哪一个？" } : {}), message: "" };
     failure.message = intakeError.code === "IDEMPOTENCY_CONFLICT" ? "此幂等键对应另一个已登记请求；本次内容已拒绝，未重写。请按原请求ID只读核实。" : auditId ? "请求已登记，执行结果待核实；请按原 request_id 或 idempotency_key 只读核实。" : "未取得持久回执，结果待核实；请按原 idempotency_key 查询，不能据此判断已写入或未写入。";
+    if (proposalPrewriteRejected) failure.message = "最终操作、内容或账号超出批准范围，写入前已停止；需要新的预览。";
     if (auditId && leaseOwner) {
       const authRequired = ["AUTH_RECONNECT_REQUIRED", "GOOGLE_REAUTH_REQUIRED", "GOOGLE_AUTH_REQUIRED",
         "GOOGLE_NOT_CONNECTED", "ACCOUNT_MISMATCH", "ACCOUNT_UNVERIFIED"].includes(intakeError.code);
-      try { await updateAudit(auditId, { stage: authRequired ? "auth_required" : "outcome_unknown", status: "processing", error_code: intakeError.code, error: safeError(intakeError), retry_count: 1, next_retry_at: authRequired ? null : retryAt(0), response_status: 202, response: failure, lease_owner: null, lease_expires_at: null }, leaseOwner); }
+      try { await updateAudit(auditId, { stage: proposalPrewriteRejected ? "needs_input" : authRequired ? "auth_required" : "outcome_unknown", status: proposalPrewriteRejected ? "failed" : "processing", error_code: intakeError.code, error: safeError(intakeError), retry_count: 1, next_retry_at: authRequired || proposalPrewriteRejected ? null : retryAt(0), response_status: proposalPrewriteRejected ? intakeError.status : 202, response: failure, lease_owner: null, lease_expires_at: null }, leaseOwner); }
       catch (auditError) { console.error("Personal OS audit update failed", auditError instanceof Error ? auditError.message : "unknown"); }
     }
     console.error("Personal OS intake failed", { auditId: auditId || null, code: intakeError.code });

@@ -1,4 +1,5 @@
 {
+  "recordScope": "Historical 8fd82b2 run only; does not validate later review corrections. Current code/CI is linked in PR12.",
   "verifiedAt": "2026-10-17T16:06:00Z",
   "testedCodeCommit": "8fd82b2a1acc44e829138b1f41e94383ae36be6c",
   "testedTree": "a81ebff33dc989d4c8ef68614517b93812879408",

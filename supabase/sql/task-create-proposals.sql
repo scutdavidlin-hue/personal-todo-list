@@ -40,6 +40,7 @@ create table task_create_private.reply_events (
   approved_digest text not null,
   proof_digest text not null check (proof_digest ~ '^[0-9a-f]{64}$'),
   occurred_at timestamptz not null,
+  disposition text not null check (disposition in ('approve_exact','change_scope','question','reject')),
   primary key (authority, event_id)
 );
 
@@ -52,7 +53,7 @@ begin
   end if;
   if new.status is distinct from old.status and not (
     (old.status = 'pending' and new.status in ('claimed','revoked','superseded')) or
-    (old.status = 'claimed' and new.status in ('dispatching','revoked','unknown')) or
+    (old.status = 'claimed' and new.status in ('dispatching','revoked','superseded','unknown')) or
     (old.status = 'dispatching' and new.status in ('applied','rejected','unknown'))
   ) then raise exception 'invalid proposal transition'; end if;
   if old.status in ('applied','rejected','unknown','revoked','superseded') and new is distinct from old then

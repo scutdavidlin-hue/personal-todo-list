@@ -1,4 +1,5 @@
 import { verifyTaskFields } from "./write-receipt.js";
+import { assertProposalMutationPlan } from "./proposal-execution-scope.js";
 import {
   INCOMING_TASK_REF,
   RESOLUTION_THRESHOLDS,
@@ -35,13 +36,14 @@ function resourceBindings(task, profile, sourceIntentId) {
 }
 
 export async function executeTaskResolution(incoming, resolution, adapter) {
+  const plan = buildResolutionMutationPlan(incoming, resolution);
+  assertProposalMutationPlan(incoming, plan);
   if (resolution.requires_clarification === true || (["UPDATE", "MERGE"].includes(resolution.decision)
     && !(Number.isFinite(resolution.confidence) && resolution.confidence >= RESOLUTION_THRESHOLDS.automatic))) {
     const error = new Error(resolution.reason || "Multiple tasks match; choose the intended task");
     error.code = "TASK_TARGET_AMBIGUOUS";
     throw error;
   }
-  const plan = buildResolutionMutationPlan(incoming, resolution);
   const startAudit = requireMethod(adapter, "startResolutionAudit");
   const completeAudit = requireMethod(adapter, "completeResolutionAudit");
   const failAudit = requireMethod(adapter, "failResolutionAudit");

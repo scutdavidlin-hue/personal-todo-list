@@ -10,9 +10,9 @@ const ready = (row, version, digest) => {
   if (["revoked", "superseded"].includes(row.status)) throw new ProposalError("PROPOSAL_REVOKED");
   if (new Date(row.expires_at) <= new Date(row.database_now)) throw new ProposalError("PROPOSAL_EXPIRED");
 };
-const bindingMatches = (row, reply) => row.owner_id === reply.ownerId && row.account_subject === reply.accountSubject
+const bindingMatches = (row, reply, exactScope = true) => row.owner_id === reply.ownerId && row.account_subject === reply.accountSubject
   && row.conversation_id === reply.conversationId && row.id === reply.proposalId && row.preview_id === reply.previewId
-  && row.version === reply.version && row.scope_digest === reply.scopeDigest;
+  && row.version === reply.version && (!exactScope || row.scope_digest === reply.scopeDigest);
 
 export function createPostgresProposalStore(pool) {
   if (!pool?.query || !pool?.connect) throw new ProposalError("PROPOSAL_STORE_UNAVAILABLE", 503);
@@ -30,6 +30,15 @@ export function createPostgresProposalStore(pool) {
       row.execution_json,row.scope_digest,row.intake_input,row.received_at,row.created_at,row.expires_at]);
     return result.rows[0];
   }
+  async function consumeReply(client, row, reply) {
+    await client.query(`insert into task_create_private.reply_events
+      (authority,event_id,proposal_id,owner_id,account_subject,conversation_id,preview_id,proposal_version,approved_digest,proof_digest,occurred_at,disposition)
+      values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) on conflict do nothing`,
+    [reply.authority,reply.eventId,row.id,row.owner_id,row.account_subject,row.conversation_id,row.preview_id,row.version,reply.scopeDigest,reply.proofDigest,reply.occurredAt,reply.disposition]);
+    const event = (await client.query("select * from task_create_private.reply_events where authority=$1 and event_id=$2", [reply.authority,reply.eventId])).rows[0];
+    if (event?.proposal_id !== row.id || event.proof_digest !== reply.proofDigest || event.proposal_version !== row.version
+      || event.disposition !== reply.disposition || event.approved_digest !== reply.scopeDigest) throw new ProposalError("SOURCE_EVENT_REPLAYED");
+  }
   return {
     create: row => insert(pool, row),
     async get(id, identity) { return (await pool.query(select, identityArgs(id, identity))).rows[0] || null; },
@@ -42,12 +51,7 @@ export function createPostgresProposalStore(pool) {
         if (row.status === "applied" || row.status === "rejected") return { state: "replay", row };
         if (row.status === "unknown") throw new ProposalError("OUTCOME_UNKNOWN_NO_RETRY");
         if (row.status !== "pending") throw new ProposalError("PROPOSAL_IN_PROGRESS");
-        await client.query(`insert into task_create_private.reply_events
-          (authority,event_id,proposal_id,owner_id,account_subject,conversation_id,preview_id,proposal_version,approved_digest,proof_digest,occurred_at)
-          values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) on conflict do nothing`,
-        [reply.authority,reply.eventId,row.id,row.owner_id,row.account_subject,row.conversation_id,row.preview_id,row.version,row.scope_digest,reply.proofDigest,reply.occurredAt]);
-        const event = (await client.query("select * from task_create_private.reply_events where authority=$1 and event_id=$2", [reply.authority,reply.eventId])).rows[0];
-        if (event?.proposal_id !== row.id || event.proof_digest !== reply.proofDigest || event.proposal_version !== row.version) throw new ProposalError("SOURCE_EVENT_REPLAYED");
+        await consumeReply(client, row, reply);
         const token = crypto.randomUUID();
         const claimed = (await client.query("update task_create_private.proposals set status='claimed', claim_token=$2 where id=$1 returning *", [row.id,token])).rows[0];
         return { state: "claimed", row: claimed, token };
@@ -74,6 +78,24 @@ export function createPostgresProposalStore(pool) {
         if (["revoked", "superseded"].includes(row.status)) return row;
         if (!["pending", "claimed"].includes(row.status) || (supersede && row.status !== "pending")) throw new ProposalError("DISPATCH_ALREADY_STARTED");
         return (await client.query("update task_create_private.proposals set status=$2 where id=$1 returning *", [id,supersede ? "superseded" : "revoked"])).rows[0];
+      });
+    },
+    // Trusted source reply consumption and closure share the same row lock as
+    // claim. beginDispatch's conditional update is the final cancellation gate.
+    async terminateByReply(id, identity, version, reply) {
+      return transaction(async client => {
+        const row = (await client.query(select + " for update", identityArgs(id, identity))).rows[0];
+        if (!row) throw new ProposalError("PROPOSAL_UNAVAILABLE", 404);
+        if (row.version !== version) throw new ProposalError("NEW_PREVIEW_REQUIRED");
+        if (!bindingMatches(row, reply, false) || reply.actor !== "user"
+          || !["approve_exact", "change_scope", "question", "reject"].includes(reply.disposition)
+          || (reply.disposition !== "reject" && reply.disposition !== "change_scope" && reply.scopeDigest === row.scope_digest)
+          || new Date(reply.occurredAt) < new Date(row.created_at) || new Date(reply.occurredAt) > new Date(row.database_now)) throw new ProposalError("USER_REPLY_UNVERIFIED");
+        if (!["pending", "claimed", "revoked", "superseded"].includes(row.status)) throw new ProposalError("DISPATCH_ALREADY_STARTED");
+        await consumeReply(client, row, reply);
+        if (["revoked", "superseded"].includes(row.status)) return row;
+        return (await client.query("update task_create_private.proposals set status=$2 where id=$1 returning *",
+          [id,reply.disposition === "reject" ? "revoked" : "superseded"])).rows[0];
       });
     },
     async revise(id, identity, version, replacement) {

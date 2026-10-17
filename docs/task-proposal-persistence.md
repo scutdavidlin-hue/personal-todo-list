@@ -56,7 +56,7 @@ Exact records: `docs/proposal-deployed-version-evidence.json`.
   created. These adapters are implemented but are not configured with real
   sessions/credentials in this task.
 - `proposal-execution-scope.js` uses the actual intent/risk/normalization path to
-  produce the full dispatch scope, freezes the resolved date before preview, and
+  produce the approved request scope, freezes the resolved date before preview, and
   keeps confirmation explanations separate from Task content. Mixed/non-task,
   existing-task updates, pure questions and high-risk requests do not qualify.
 - The actual `personal-os-intake/index.ts` checks `proposal_guard` **after** its
@@ -73,6 +73,27 @@ Exact records: `docs/proposal-deployed-version-evidence.json`.
   Legacy amend_request also refuses guarded requests with
   PROPOSAL_REPREVIEW_REQUIRED; it cannot strip the guard or change the approved
   date/scope. Changes must use a fresh bound proposal preview.
+- Review corrections bind that request at the actual `task-status` writer and
+  enforce the preview's `single-task-create-v2` / `single_independent_create`
+  policy at the real executor before resolution audit or provider mutation.
+  Only a single independent NEW/create operation qualifies. UPDATE, MERGE,
+  reuse, parent/child expansion, inferred Goal/project/Task relationships or
+  dependencies stop with PROPOSAL_SCOPE_CHANGED and require a new preview.
+  Ordinary unguarded resolution behavior remains covered by the existing tests.
+  This deliberately restricts this proposal workflow; it does not claim that an
+  arbitrary downstream mutation plan has been fully previewed and approved.
+- Trusted reject/change_scope replies now consume their immutable source event
+  and close pending/claimed proposals under the same PostgreSQL row lock used
+  by claim. The atomic dispatch gate then refuses the old approval. Rejection
+  maps to revoked; changed scope maps to superseded. Once dispatch has started,
+  both honestly return DISPATCH_ALREADY_STARTED. The existing direct /revoke
+  path is preserved. See `docs/proposal-review-regressions.json` for observed
+  before/after results, including the actual existing-task PATCH reproduction.
+- The writer rechecks the proposal account against the canonical subject of the
+  same Google access token its provider adapter uses. A synthetic mismatch test
+  proves this guard, not an exploitable account switch in normal reconnect.
+  Existing google-tasks reconnect and google_auth_coordination SQL already
+  protect the same subject. Real account-binding acceptance remains outstanding.
 
 ## Real isolation evidence
 
@@ -80,6 +101,10 @@ Exact records: `docs/proposal-deployed-version-evidence.json`.
 actual SQL transactions, multiple connections, loopback HTTP, the implemented
 session/account adapters and the actual intake function. Auth responses, reply
 source events, canonical-provider reads and Task writes are explicitly synthetic.
+The added boundary cases retain the real task-status handler, semantic resolver,
+mutation-plan executor and Google HTTP adapter; only Google HTTP/OAuth and
+metadata storage are faked. Earlier 24 cases simulated the whole task-status
+write and did not establish this downstream coverage.
 The test URL is restricted to loopback `/proposal_fixture`; restarting is allowed
 only for the labeled fixture container. No production connection is made.
 
@@ -94,9 +119,18 @@ durability evidence beyond the original Map model, not real human or Google
 delivery evidence. Full regression and CI outcomes are recorded separately after
 their actual completion.
 
-### Completed CI and local results
+### Historical CI and current review results
 
-Tested code: `8fd82b2a1acc44e829138b1f41e94383ae36be6c`.
+The current review revision passed locally: **733 regression tests, 731 passed,
+two existing browser skips, zero failures; 34 real PostgreSQL/HTTP cases, all
+passed**. Eight added default tests exercise the actual writer/provider boundary
+and MERGE executor fence. Ten added database cases exercise trusted termination,
+cross-proposal terminal-event replay, a paused HTTP approval racing a later
+reject/change_scope, late cancellation, actual downstream resolution rejection,
+and a valid single-create/readback/replay control. The code commit and its new CI
+run are identified in PR #12; the record below predates these review corrections.
+
+Historical tested code: `8fd82b2a1acc44e829138b1f41e94383ae36be6c`.
 [Actual CI run 39047898154](https://github.com/scutdavidlin-hue/personal-todo-list/actions/runs/39047898154),
 job 117440225021, completed at 2026-10-17 16:06:00 UTC on standard
 `ubuntu-24.04`. Raw job logs confirm **725 regression tests: 723 passed, two
@@ -108,7 +142,9 @@ recovery refusal, and an actual PostgreSQL container restart followed by replay
 without a new provider attempt. The earlier edca689 CI passed 22 database cases;
 it is not used as validation of the later recovery changes.
 
-The final handoff/evidence commit changes docs only. The workflow is isolated to
+The subsequent `f5d288f` handoff changed only two docs; that SHA was not directly
+tested by run 39047898154. Its code matched 8fd82b2. That statement does not apply
+to the later review corrections. The workflow is isolated to
 this review branch, public-repository guarded, standard-runner capped, and uses
 a pinned disposable PostgreSQL image and pinned pg dependency. No artifact or
 cache upload occurs; artifact readback is empty. The final 121,478-character log

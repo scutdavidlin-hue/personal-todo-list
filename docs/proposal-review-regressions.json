@@ -1,0 +1,59 @@
+{
+  "dateUTC": "2026-10-17",
+  "baselineProductionCodeSnapshot": "f5d288ff9886e80d27d44359986e9c94466a0691",
+  "environment": "isolated cloud worktree; disposable loopback PostgreSQL 17.6; synthetic Auth/source/Google/metadata adapters",
+  "productionOrRealTaskWrites": 0,
+  "beforeFix": {
+    "databaseTests": 31,
+    "passed": 25,
+    "failed": 6,
+    "trustedReject": {
+      "responseCode": "USER_CONFIRMATION_REQUIRED",
+      "earlierApprovalSucceeded": true,
+      "syntheticIntakeCreates": 1
+    },
+    "claimedRejectResponse": "USER_CONFIRMATION_REQUIRED",
+    "claimedChangeScopeResponse": "DISPATCH_ALREADY_STARTED",
+    "realResolverUnapprovedMutations": [
+      { "decision": "UPDATE", "googleHTTP": "PATCH", "target": "existing-task", "writes": 1 },
+      { "decision": "PARENT_CHILD", "googleHTTP": "POST", "writes": 5, "childParent": "new-1" },
+      { "decision": "GOAL_LINK", "googleHTTP": "POST", "writes": 1, "inferredGoal": "goal-personal-os" }
+    ]
+  },
+  "afterFixLocal": {
+    "regression": { "tests": 733, "passed": 731, "skipped": 2, "failed": 0 },
+    "databaseHTTP": { "tests": 34, "passed": 34, "skipped": 0, "failed": 0 },
+    "newDefaultBoundaryTests": 8,
+    "newDatabaseCases": 10,
+    "actualTaskStatusResolverExecutorGoogleHTTPAdapter": true,
+    "unapprovedResolution": "PROPOSAL_SCOPE_CHANGED; zero fake Google writes and zero resolution audits; durable rejected receipt; no scheduled retry",
+    "reject": "event consumed and proposal revoked; old approval cannot dispatch",
+    "changeScopeAfterClaim": "event consumed and proposal superseded; beginDispatch refuses old claim",
+    "concurrentHTTP": "approval paused after SQL claim; later reject/change_scope closes gate; resumed approval returns CLAIM_CLOSED",
+    "afterDispatch": "DISPATCH_ALREADY_STARTED; no false cancellation guarantee",
+    "validControl": "one independent NEW/create, provider POST and readback; receipt replay produces no second POST",
+    "ordinaryUnguardedControl": "actual resolver retains existing-task UPDATE/PATCH behavior",
+    "restart": "actual PostgreSQL container restart retains applied receipt"
+  },
+  "accountBoundary": {
+    "existingSameSubjectProtections": [
+      "supabase/functions/google-tasks/index.ts assertSameGoogleSubject",
+      "supabase/migrations/20260924011644_google_auth_coordination.sql subject compare-and-swap"
+    ],
+    "normalReconnectCrossAccountExploitProven": false,
+    "newSyntheticWriterMismatchTest": "account subject differs from approval -> PROPOSAL_ACCOUNT_CHANGED before any provider mutation",
+    "realAccountBindingAcceptanceComplete": false
+  },
+  "historicalCI": {
+    "run": 39047898154,
+    "directlyTestedCommit": "8fd82b2a1acc44e829138b1f41e94383ae36be6c",
+    "f5d288fCodeEqualButNotDirectlyTested": true,
+    "validatesCurrentReviewFixes": false
+  },
+  "currentCI": "Use the exact code commit and Actions run linked in PR12; historical CI is not reused as validation.",
+  "remaining": [
+    "No actual trusted human reply source is connected; default returns TRUSTED_REPLY_SOURCE_UNAVAILABLE.",
+    "No approved live owner pool/route or packaged/applied migration.",
+    "No production deployment, real Google write, original Task retry, iPhone delivery or Dynamic Island acceptance."
+  ]
+}

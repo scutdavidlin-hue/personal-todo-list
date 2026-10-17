@@ -1,4 +1,5 @@
 import { writeReceipt, verifyTaskFields } from "../_shared/write-receipt.js";
+import { proposalWriterGuardError } from "../_shared/proposal-execution-scope.js";
 import {
   GoogleProviderError,
   coordinatedGoogleAccess,
@@ -476,6 +477,8 @@ async function createTask(input: Record<string, unknown>) {
   const completedMin = new Date(Date.now() - 90 * 86_400_000).toISOString();
   const google = await allTasks(true, { completedMin, maxTasks: 5_000 });
   const scheduleRows = await readSchedules();
+  const guardError = await proposalWriterGuardError(input, { account_subject: google.accountSubject }, OWNER_USER_ID);
+  if (guardError) throw new ApiError("批准内容或账号与最终写入请求不一致，需要新的预览。", 409, guardError);
   const scheduleById = new Map<string, Record<string, any>>(scheduleRows.map((row: Record<string, any>) => [String(row.google_task_id), row]));
   const candidates = google.tasks.map((task: Record<string, any>) => ({ ...task, schedule: scheduleById.get(task.id) || null, task_type: scheduleById.get(task.id)?.task_type || "task", follow_up_of: scheduleById.get(task.id)?.follow_up_of || null }));
   const resolutionContext = await loadTaskResolutionContext({
@@ -549,6 +552,9 @@ async function createTask(input: Record<string, unknown>) {
     if (error && typeof error === "object" && "code" in error && error.code === "TASK_TARGET_AMBIGUOUS") {
       throw new ApiError("存在多个同名事项，需要指定要修改的任务。", 409, "TASK_TARGET_AMBIGUOUS");
     }
+    if (error && typeof error === "object" && "code" in error && error.code === "PROPOSAL_SCOPE_CHANGED") {
+      throw new ApiError("最终解析包含未批准的操作或关联，需要新的预览。", 409, "PROPOSAL_SCOPE_CHANGED");
+    }
     throw error;
   }
   const task = result.task;
@@ -605,6 +611,7 @@ Deno.serve(async (request) => {
       let input: Record<string, unknown>;
       try { input = await request.json(); }
       catch { throw new ApiError("Request body must be valid JSON", 400, "INVALID_JSON"); }
+      if (Object.hasOwn(input, "proposal_guard") && input.action) throw new ApiError("批准只允许独立单条创建。", 409, "PROPOSAL_SCOPE_CHANGED");
       if (input.action === "account_context") { const google=await googleContext(); return json({account_subject:google.accountSubject || null}); }
       if (input.action === "reconcile_intake") return json(await reconcileIntake(input));
       if (input.action === "retry_projection") return json(await retryProjection(input));

@@ -10,7 +10,7 @@ function json(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-async function loadIntakeHandler({ taskResult, readTask, context, failPreference = false, unknownCreateOnce = false, contextAuthFailureOnce = false, accountFailureOnCall = 0, projectionFailureOnce = false, projectionReceiptStatus = "disabled", createReceiptStatus = "disabled", reconciliationResult = null, contextGate = null, lostReservationResponse = false, contextRefusalCode = null } = {}) {
+async function loadIntakeHandler({ taskStatusProvider, taskResult, readTask, context, failPreference = false, unknownCreateOnce = false, contextAuthFailureOnce = false, accountFailureOnCall = 0, projectionFailureOnce = false, projectionReceiptStatus = "disabled", createReceiptStatus = "disabled", reconciliationResult = null, contextGate = null, lostReservationResponse = false, contextRefusalCode = null } = {}) {
   const previousDeno = globalThis.Deno;
   const previousFetch = globalThis.fetch;
   const writes = [];
@@ -49,10 +49,12 @@ async function loadIntakeHandler({ taskResult, readTask, context, failPreference
         return json(context || { current_task: null, calendar_events: [], context_warnings: [] });
       }
       if (body.action === "account_context") {
+        if (taskStatusProvider) return taskStatusProvider.request(body);
         accountAttempts += 1;
         if (accountAttempts === accountFailureOnCall) return json({ error: "Google authorization expired", code: "GOOGLE_REAUTH_REQUIRED" }, 401);
         return json({ account_subject: "account-one" });
       }
+      if (taskStatusProvider) return taskStatusProvider.request(body);
       if (body.action === "read_task") return json(readTask || { task: lastTask, schedule: lastSchedule });
       if (body.action === "reconcile_intake") return json(reconciliationResult || { outcome: lastTask ? "verified" : "unknown", task: lastTask, schedule: lastSchedule });
       if (body.action === "retry_projection") {
@@ -101,6 +103,7 @@ async function loadIntakeHandler({ taskResult, readTask, context, failPreference
       const exactKey = requestUrl.searchParams.get("idempotency_key");
       return json(audit && (!exactKey || exactKey === `eq.${audit.idempotency_key}`) ? [audit] : []);
     }
+    if (taskStatusProvider) return taskStatusProvider.fetcher(url, init);
     if (requestUrl.pathname.endsWith("/rest/v1/goals_plans")) {
       goalPlanReads += 1;
       if (failPreference && (init.method || "GET") === "POST") return json({ message: "plan write unavailable" }, 503);
