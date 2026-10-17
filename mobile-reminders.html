@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://*.supabase.co; img-src 'self' data:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+  <title>手机提醒 · Personal OS</title>
+  <link rel="stylesheet" href="mobile-reminders.css">
+  <script src="runtime-config.js"></script>
+  <script type="module" src="mobile-reminders.js"></script>
+</head>
+<body>
+  <main>
+    <a href="index.html">← Personal OS</a>
+    <h1>手机提醒与倒计时</h1>
+    <p>读取现有任务的提醒配置，导入 iPhone 伴随 App 后安排系统通知。</p>
+    <aside>网页倒计时只在页面内显示。灵动岛需要安装原生伴随 App；本版本需打开 App 启动，关闭 App 后自动上岛仍待 APNs 接入。</aside>
+    <div class="actions"><button id="refresh">读取最新任务</button><button id="demo">模拟预览</button></div>
+    <p id="status" role="status" aria-live="polite">正在检查现有登录…</p>
+    <section id="tasks" aria-label="任务提醒配置"></section>
+    <button id="export" disabled>导出所选任务到 iPhone</button>
+    <p class="note">导出不改任务。导出文件包含所选任务标题与时刻，请导入伴随 App 后删除。任务改期、完成或清除提醒后，需要重新导入对应任务；本版本不会后台同步。</p>
+  </main>
+</body>
+</html>
