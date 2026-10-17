@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>合成演示 · Personal OS 确认页</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f3f5f8;color:#182435;font:15px/1.6 system-ui,sans-serif}main{max-width:1050px;margin:auto;padding:28px 20px 60px}h1{font-size:30px;margin:10px 0}h2{font-size:19px;margin:0 0 12px}.notice{padding:16px 20px;border:2px solid #b76500;border-radius:12px;background:#fff3d6;color:#673900}.notice strong{display:block;font-size:18px}.subtle{color:#596778;font-size:13px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:20px}.card{background:#fff;border:1px solid #d9e0e8;border-radius:14px;padding:22px}label{display:block;font-weight:600;margin-top:12px}input,textarea,select,button{font:inherit}input,textarea,select{width:100%;padding:9px 11px;border:1px solid #b5c0ce;border-radius:7px;background:#fff}textarea{min-height:78px;resize:vertical}button{padding:9px 15px;border:1px solid #66768c;border-radius:8px;background:#fff;color:#23354d;cursor:pointer;margin:12px 7px 0 0}button.primary{background:#184f9c;border-color:#184f9c;color:#fff}button.danger{color:#923c2a}button:disabled{opacity:.4;cursor:not-allowed}button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:3px solid #77aaff;outline-offset:2px}.status{padding:11px 13px;background:#edf2fa;border-radius:8px;margin:12px 0}.scope{padding:12px;background:#f7f9fb;border-radius:8px;white-space:pre-wrap;overflow-wrap:anywhere}.actions{border-top:1px solid #e0e5eb;margin-top:16px;padding-top:2px}.wide{grid-column:1/-1}ol{padding-left:22px}#trace{white-space:pre-wrap;max-height:260px;overflow:auto;font:13px/1.7 ui-monospace,monospace}#count{font-size:28px;font-weight:700;color:#184f9c}.warning{color:#954600;font-weight:600}@media(max-width:720px){.grid{grid-template-columns:1fr}h1{font-size:25px}.card{padding:17px}}
+</style>
+<main>
+  <aside class="notice" role="note"><strong>合成演示 · 假身份 / 假任务 / 仅内存</strong>不连接真实 Auth、Google 或生产服务。审核来源与执行回执均为合成数据；不能证明旧 ChatGPT 回复，重启即清空。</aside>
+  <h1>先看预览，再明确确认</h1>
+  <p class="subtle">这是可评估的自有确认页样例。正式采用此交互仍须用户确认与真实接线验收。</p>
+  <div class="grid">
+    <section class="card">
+      <h2>1. 选择假身份，生成预览</h2>
+      <label for="persona">可任意切换的假身份（非登录）</label><select id="persona"><option value="a">虚构用户 A</option><option value="b">虚构用户 B</option></select>
+      <button id="session">使用这个假身份</button><p id="identity" class="subtle">尚未选择</p>
+      <label for="title">虚构任务标题</label><input id="title" value="整理虚构客户档案" maxlength="300">
+      <label for="notes">虚构备注</label><textarea id="notes">仅用于合成验证，不包含真实客户资料。</textarea>
+      <label for="date">示例执行日期</label><input id="date" type="date" value="2099-01-01">
+      <button id="build" class="primary" disabled>生成合成预览</button><button id="revise" disabled>用修改内容生成新版本</button>
+      <p id="dirty" class="warning" hidden>内容已改变。必须生成新预览后才能确认。</p>
+    </section>
+    <section class="card">
+      <h2>2. 审核这个版本</h2>
+      <div id="status" class="status" role="status">等待合成预览</div>
+      <div id="scope" class="scope">这里会显示服务端保存的标题、备注、日期及版本。</div>
+      <p id="binding" class="subtle"></p>
+      <div class="actions"><button id="approve" class="primary" disabled>明确确认此预览</button><button id="reject" class="danger" disabled>拒绝此预览</button><button id="change" disabled>改口，作废旧预览</button></div>
+      <p class="subtle">确认先生成内存中的合成审核事件；拒绝或改口会关闭旧批准。尚未执行时可以继续修改决定。</p>
+    </section>
+    <section class="card">
+      <h2>3. 独立验证 → 模拟执行</h2>
+      <button id="execute" class="primary" disabled>验证已存批准并模拟执行</button>
+      <p id="result" role="status">尚无已存批准。</p>
+      <p>该假身份的模拟执行次数：<span id="count">0</span></p>
+      <p class="subtle">重复确认/重放不会重复模拟执行。回执中的 verified 仅指内存模拟，真实任务写入始终为 0。</p>
+    </section>
+    <section class="card">
+      <h2>可观察的合成链路</h2>
+      <ol><li>页面展示绑定版本与摘要的预览。</li><li>服务端以一次性挑战签发合成审核事件。</li><li>独立验证器检索内存事件并检查绑定与后续改口。</li><li>现有 proposal runtime 仅调用内存模拟执行器。</li></ol>
+      <div id="trace" aria-label="合成操作记录">等待操作。</div>
+    </section>
+  </div>
+</main>
+<script type="module" src="/page.js"></script>
+</html>
