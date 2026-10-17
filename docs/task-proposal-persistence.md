@@ -94,6 +94,30 @@ durability evidence beyond the original Map model, not real human or Google
 delivery evidence. Full regression and CI outcomes are recorded separately after
 their actual completion.
 
+### Completed CI and local results
+
+Tested code: `8fd82b2a1acc44e829138b1f41e94383ae36be6c`.
+[Actual CI run 39047898154](https://github.com/scutdavidlin-hue/personal-todo-list/actions/runs/39047898154),
+job 117440225021, completed at 2026-10-17 16:06:00 UTC on standard
+`ubuntu-24.04`. Raw job logs confirm **725 regression tests: 723 passed, two
+existing browser skips, zero failures**, and **24 PostgreSQL/HTTP cases: all
+passed, zero skipped**. Local results match. Named execution evidence includes
+the 12-way concurrent claim, actual intake constraints, prewrite Auth failure
+followed by refused legacy recovery/amendment, receipt-preserving background
+recovery refusal, and an actual PostgreSQL container restart followed by replay
+without a new provider attempt. The earlier edca689 CI passed 22 database cases;
+it is not used as validation of the later recovery changes.
+
+The final handoff/evidence commit changes docs only. The workflow is isolated to
+this review branch, public-repository guarded, standard-runner capped, and uses
+a pinned disposable PostgreSQL image and pinned pg dependency. No artifact or
+cache upload occurs; artifact readback is empty. The final 121,478-character log
+was inspected for private-key blocks, JWT/GitHub-token values and production
+Tasks/Auth URLs; none matched those probes. The clearly labeled synthetic DB
+password, fake identities, public handles and runner metadata remain visible.
+This is an inspection of this run, not a claim about all repository history.
+Structured evidence: `docs/proposal-persistence-ci-evidence.json`.
+
 ## Trusted reply source: exact remaining platform boundary
 
 Existing user/session authentication establishes identity, not the origin or
