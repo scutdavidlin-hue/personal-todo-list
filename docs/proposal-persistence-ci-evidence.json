@@ -1,0 +1,64 @@
+{
+  "recordScope": "Historical 8fd82b2 run only; does not validate later review corrections. Current code/CI is linked in PR12.",
+  "verifiedAt": "2026-10-17T16:06:00Z",
+  "testedCodeCommit": "8fd82b2a1acc44e829138b1f41e94383ae36be6c",
+  "testedTree": "a81ebff33dc989d4c8ef68614517b93812879408",
+  "runId": 39047898154,
+  "runURL": "https://github.com/scutdavidlin-hue/personal-todo-list/actions/runs/39047898154",
+  "jobId": 117440225021,
+  "runnerLabels": [
+    "ubuntu-24.04"
+  ],
+  "conclusion": "success",
+  "regression": {
+    "tests": 725,
+    "passed": 723,
+    "skipped": 2,
+    "failed": 0
+  },
+  "databaseChain": {
+    "postgres": "17.6",
+    "tests": 24,
+    "passed": 24,
+    "skipped": 0,
+    "failed": 0,
+    "realSQL": true,
+    "realLoopbackHTTP": true,
+    "multipleConnections": true,
+    "actualIntakeHandler": true,
+    "containerRestartObserved": true,
+    "concurrentConfirmations": 12,
+    "concurrentProviderDispatches": 1,
+    "legacyRecoveryAndAmendmentFenced": true,
+    "authResponse": "synthetic",
+    "replySource": "synthetic fixture authority",
+    "taskProvider": "synthetic",
+    "realHumanProvenanceVerified": false,
+    "realTaskWrites": 0
+  },
+  "production": {
+    "deployedByThisTask": false,
+    "migrationApplied": false,
+    "newGrants": false,
+    "newCredentials": false,
+    "realReplySourceConfigured": false,
+    "ownerPoolConfigured": false,
+    "deployedGitCommitMappingVerified": false
+  },
+  "privacyInspection": {
+    "logCharacters": 121478,
+    "privateKeyBlocks": false,
+    "jwtValues": false,
+    "githubTokenValues": false,
+    "productionTaskAuthURLs": false
+  },
+  "artifactUploads": false,
+  "cacheUploads": false,
+  "previousRun": {
+    "runId": 39047519744,
+    "commit": "edca6899869d9bf85dfae260da850b504884ba32",
+    "regressionTests": 725,
+    "databaseTests": 22,
+    "passed": true
+  }
+}
