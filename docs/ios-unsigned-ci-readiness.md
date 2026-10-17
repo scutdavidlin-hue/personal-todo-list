@@ -1,5 +1,22 @@
 # PR #7: unsigned build and test readiness
 
+**Current 2026-10-17 continuation:** the previous ten-test result is verified
+historical evidence. New source uses iOS 26 local scheduled startup and needs
+Xcode 26+ / SDK 26+; the existing public standard macOS workflow now selects the
+preinstalled Xcode 26.3. Run `bash ios/run-unsigned-checks.sh --preflight-only` on
+the existing Mac task first. This never accesses Apple credentials/signing or
+physical devices. Use [the current handoff](mobile-device-integration.md) and
+`ios/README.md` for existing-signing-assets-only installation and device checks;
+do not assume an expired login or repeat account setup. Earlier five-test/SDK
+18.5 details below remain historical, not acceptance of the new native code.
+
+Fresh [run 39021234814](https://github.com/scutdavidlin-hue/personal-todo-list/actions/runs/39021234814)
+now confirms candidate `0fad0c6a9dcbce8d72ef7b3d0b81c5006c7a6f3b` with
+Xcode 26.3 / SDK 26.2: both unsigned builds and all 13 Swift methods passed.
+The 2026-10-17 delegated Mac recheck still found only CLT, no full SDK and no
+USB-connected iPhone (wireless pairing unknown). Native CI success does not
+resolve that installation/signing/device-acceptance blocker.
+
 Initial read-only check: 2026-10-13 against head `a79840b0a1938440d8bde8cb015a5a527f346f4d`.
 Actual unsigned CI candidate: `2df2d4b8c85e3219e65998c3d025d1048cade650`.
 The user's Mac has only Command Line Tools, according to the delegated Mac check;

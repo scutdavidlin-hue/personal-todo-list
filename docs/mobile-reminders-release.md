@@ -1,5 +1,17 @@
 # Phone reminders and Dynamic Island release handoff
 
+**2026-10-17 continuation:** the native PR #7 now includes Apple's iOS 26+ local
+scheduled-start route, so automatic start does not universally require APNs.
+See [the current device handoff](mobile-device-integration.md#current-continuation--2026-10-17)
+and [Mac/device steps](../ios/README.md). Signing, installation and observed phone
+delivery remain unverified; this is not a release. The original KPL times below
+are historical and were not changed. PR #8 date parsing is unrelated evidence.
+
+Fresh native [CI 39021234814](https://github.com/scutdavidlin-hue/personal-todo-list/actions/runs/39021234814)
+passed with Xcode 26.3 / SDK 26.2, both unsigned targets and 13 Swift tests.
+Node verification is 546 tests: 544 pass, two existing skips, zero failures.
+These results do not establish signing, installation or actual island delivery.
+
 Date: 2026-10-13. Source: `bb240517727a81ca89059985295b7c9da144403b`
 (merged PR #6 on `baseline/personal-os-v18-20261010`). Independent work directory:
 `/workspace/personal-os-mobile`. KNOWU and production resources were not edited.
@@ -124,7 +136,7 @@ node scripts/preview-activitykit-push.mjs \
    the existing KPL Task, confirms 11:00/12:00 on device, imports and schedules.
    This does not create or reschedule the production Task. Device pending readback
    alone is insufficient; observe a bounded synthetic timed alert first.
-3. **Automatic 11:00 island:** requires a concrete separately approved native
+3. **Remote automatic island on older iOS / synchronized route:** requires a concrete separately approved native
    push configuration and backend integration. Reuse the existing Supabase
    infrastructure rather than creating a third-party push account. Approve team
    capability/signing, APNs key in protected server secrets, authenticated

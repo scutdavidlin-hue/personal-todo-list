@@ -1,30 +1,32 @@
 {
-  "checkedAt": "2026-10-13T09:54:16Z",
+  "checkedAt": "2026-10-17T09:38:12Z",
   "repository": "scutdavidlin-hue/personal-todo-list",
   "repositoryVisibilityBeforeFirstCI": "public",
   "repositoryVisibilityChangedByThisTask": false,
-  "runUrl": "https://github.com/scutdavidlin-hue/personal-todo-list/actions/runs/38378357820",
-  "runId": 38378357820,
-  "jobId": 115232299890,
+  "runUrl": "https://github.com/scutdavidlin-hue/personal-todo-list/actions/runs/39021234814",
+  "runId": 39021234814,
+  "jobId": 117363295283,
   "runnerLabel": "macos-15",
-  "xcode": "16.4",
-  "xcodeBuild": "16F6",
-  "iphoneosSDK": "18.5",
-  "iphonesimulatorSDK": "18.5",
-  "swiftTestsExecuted": 10,
+  "xcode": "26.3",
+  "xcodeBuild": "17C529",
+  "iphoneosSDK": "26.2",
+  "iphonesimulatorSDK": "26.2",
+  "swiftTestsExecuted": 13,
   "swiftTestsFailed": 0,
   "nodeRegression": {
-    "tests": 540,
-    "passed": 538,
+    "tests": 546,
+    "passed": 544,
     "skipped": 2,
     "failed": 0,
-    "newSimulatedBackendTests": 15
+    "existingSimulatedBackendTests": 15,
+    "newSimulatedHandoffTests": 6
   },
   "artifactUploads": false,
   "cacheActions": false,
-  "feeBasis": "Existing public repository; standard macos-15; guarded job; no artifact/cache uploads. No billing invoice was queried.",
+  "feeBasis": "Existing public repository; standard macos-15; public-only guard and 20-minute cap; no artifact/cache uploads. No billing invoice queried.",
   "receipt": {
-    "commit": "2fc54b46a5daeb05cd65ed9dc1b9f2c94b59175f",
+    "commit": "0fad0c6a9dcbce8d72ef7b3d0b81c5006c7a6f3b",
+    "mode": "build",
     "overall": "passed",
     "exit_code": 0,
     "last_phase": "completed",
@@ -35,10 +37,10 @@
     "physical_device_install": false,
     "phone_notification_delivery": false,
     "dynamic_island_observed": false,
-    "developer_dir": "/Applications/Xcode_16.4.app/Contents/Developer"
+    "developer_dir": "/Applications/Xcode_26.3.app/Contents/Developer"
   },
   "privacyInspection": {
-    "logCharacters": 454688,
+    "logCharacters": 562961,
     "emailLikeCount": 0,
     "privateKeyBlocks": false,
     "jwtValues": false,
@@ -48,17 +50,47 @@
     "publicRepositoryHandleVisible": true
   },
   "previousNativeRun": {
-    "runId": 38374114519,
-    "commit": "2df2d4b8c85e3219e65998c3d025d1048cade650",
-    "swiftTestsExecuted": 5,
-    "passed": true
+    "runId": 38378357820,
+    "commit": "2fc54b46a5daeb05cd65ed9dc1b9f2c94b59175f",
+    "swiftTestsExecuted": 10,
+    "passed": true,
+    "xcode": "16.4",
+    "sdk": "18.5"
   },
-  "previousDocumentationOnlyHead": "3989e78e5fd76d5f26d63cc4b0b07a6ac90f025a",
+  "olderNativeRuns": [
+    {
+      "runId": 38374114519,
+      "commit": "2df2d4b8c85e3219e65998c3d025d1048cade650",
+      "swiftTestsExecuted": 5,
+      "passed": true
+    }
+  ],
+  "previousDocumentationOnlyHead": "48fe9319fa45af19741e3deff38a47c885ed7c2f",
+  "localScheduledRoute": {
+    "minimumIOS": "26.0",
+    "sourceImplemented": true,
+    "unsignedSDKCompiled": true,
+    "apnsRequired": false,
+    "deviceAccepted": false,
+    "canonicalBackgroundSynchronization": false,
+    "guaranteedBackgroundEnd": false
+  },
+  "macPrerequisites": {
+    "source": "Delegated read-only Mac recheck on 2026-10-17",
+    "macOS": "26.5.2",
+    "fullXcode": false,
+    "iosSDK": false,
+    "usbPhoneFound": false,
+    "wirelessPairing": "unknown",
+    "appleDeveloperLogin": "previously_reported_logged_in_not_rechecked"
+  },
   "limitations": [
-    "No production authentication/store/vault/APNs adapters wired",
-    "No native token observation or upload",
-    "No APNs credentials created/read",
-    "No physical installation, alert delivery or Dynamic Island rendering",
-    "Automatic background startup is not released"
+    "No physical signing, installation, alert delivery or Dynamic Island rendering",
+    "Local appointment requires an installed iOS 26+ app, ahead-of-time explicit appointment and on-device permissions",
+    "Configured local notifications remain; scheduled ActivityKit start can add a second alert",
+    "No canonical background sync or guaranteed automatic end from local scheduling",
+    "Remote production auth/store/vault/APNs adapters and native token observation remain absent",
+    "No credential/App ID/certificate/key creation or production deployment",
+    "PR8 date parsing is separate; original KPL Task instants unchanged"
   ]
 }

@@ -1,5 +1,122 @@
 # Device and T−1h integration: implementation, not deployment
 
+## Current continuation — 2026-10-17
+
+PR #7 resumes from `48fe9319fa45af19741e3deff38a47c885ed7c2f`. PR #8's date
+parser repair is separate and supplies no Dynamic Island acceptance evidence.
+The previous raw CI log was read again: run `38378357820`, job `115232299890`,
+really compiled both unsigned targets with Xcode 16.4 / SDK 18.5 and executed all
+ten then-current Swift tests. This cloud environment remains Linux with no Swift,
+Xcode, signing identity or physical iPhone connection. The user's reported Apple
+Developer login is retained; no account session was read or found expired.
+
+The delegated 2026-10-17 Mac read-only recheck reports macOS 26.5.2 with Command
+Line Tools only, no full Xcode/iOS SDK, no iPhone found over USB, and unknown
+wireless pairing. This is the current host-installation blocker, not a failed
+Apple login. Continue the existing installation task; a selected unlocked/trusted
+iPhone connection (or verified existing wireless pairing) is also required for
+physical signing/install acceptance.
+
+Apple now documents [local scheduled Live Activity startup on iOS 26+](https://developer.apple.com/documentation/activitykit/activity/request(attributes:content:pushtype:style:alertconfiguration:start:)).
+The existing companion now has an explicit **预约提前一小时倒计时** action that
+passes the unchanged imported `eventAt - 3600` instant to that API. It uses
+`pushType:nil`, the existing local projections and protected close records.
+No backend login, device token, APNs key, server store or vault is required for
+this fixed imported appointment. Pending/active/stale activities prevent a second
+request; re-import ends old appointments; Close cancels them and records the exact
+event window. After the permission await, the app checks that the installed
+projection is still current and the appointment instant is still in the future.
+
+| Route | Implemented | Remaining dependency |
+| --- | --- | --- |
+| PWA export | Existing read-only Tasks/Schedule export | Release owner confirms availability alongside the correct production frontend; no PWA ActivityKit access |
+| iOS 17+ local alert and manual countdown | Existing source and previous unsigned native tests | Existing approved signing assets, install and physical observation |
+| iOS 26+ appointed T−1h start | New native request/demo; unsigned SDK compilation and 13 Swift tests pass | Installed app/permissions, ahead-of-time appointment, real iPhone observation |
+| Older-iOS remote unattended start or live canonical synchronization | Existing isolated injected interfaces only | Approved auth/store/vault/APNs/native token bindings and due/end deployment, all still absent |
+
+This makes APNs **conditional**, not mandatory for every automatic-start route.
+Local appointment is not continuous Task synchronization: edits, completion and
+none require explicit re-import; deletion requires local removal. No signed app
+is installed and no actual reminder/island is verified by this source change.
+The ActivityKit scheduled-start alert is additional to unchanged configured local
+notifications; both may appear together. A timer reaching zero/stale date does
+not itself guarantee background termination. These need physical acceptance.
+
+The original KPL 2026-10-16 11:00/12:00 instants are past on this continuation.
+They were not moved, recreated or used to claim a retroactive successful alert.
+Use the existing synthetic manual test or new 30-second appointment test, followed
+by an explicitly selected future existing Task after the export page is released.
+
+### Exact handoff to the existing Mac task
+
+Personal Context lookup is unavailable for this delegated conversation, so an
+existing task ID/link could not be verified. Do not create a duplicate. Resume
+the existing Mac/Xcode installation/signing task from the first unmet step:
+
+1. Check the currently installed full Xcode/iOS components, retaining the existing
+   Apple Developer login. From this branch run
+   `bash ios/run-unsigned-checks.sh --preflight-only`. It only reads local tooling
+   metadata and writes a local receipt; it never enumerates accounts, keychain,
+   physical-device IDs or profiles. On Linux it exits 2 with native phases
+   `not_run`; simulated metadata tests also confirm that preflight cannot build,
+   sign, install or silently download a missing runtime. Xcode 26+ / SDK 26+
+   and an installed iOS 26+ iPhone simulator are required for the new API checks.
+2. Run `bash ios/run-unsigned-checks.sh` for unsigned compilation and all current
+   XCTest methods. Existing public CI can establish this even before local setup;
+   unsigned success is not an installable build. Local preflight success is only
+   `ready_for_unsigned_build`, never an implicit test pass.
+3. Identify the already approved Apple team, exact app+extension bundle IDs,
+   existing matching development certificate/profiles and target iPhone. The
+   checked-in identifiers are placeholders. Use existing assets only; do not
+   click automatic-signing repair or register/generate missing resources. Such a
+   gap needs a separate concrete authorization, not another request to log in.
+4. With approved existing assets, sign/install locally; confirm Developer Mode
+   and Mac trust only if the selected device actually requests them. On the
+   iPhone allow Notifications and Live Activities. Run the manual demo first,
+   then on iOS 26+ arrange **30 秒后预约上岛模拟**, tap the appointment action and
+   leave/lock the app before the start. Observe the countdown starting without
+   reopening, closure and absence of restart. Record model/iOS, permissions/Focus,
+   scheduled/observed times and outcomes. No UDID, token, certificate or login
+   belongs in a public issue or Git.
+
+The new script requires every checked-in Swift test method to appear as passed
+in the actual XCTest log. The old loose five-test threshold no longer certifies
+new code. A fresh guarded public-standard macOS run is required for this update;
+its result is recorded below only after the log and phase receipt are inspected.
+
+### Fresh unsigned verification — completed
+
+Tested source: `0fad0c6a9dcbce8d72ef7b3d0b81c5006c7a6f3b`.
+[Run 39021234814](https://github.com/scutdavidlin-hue/personal-todo-list/actions/runs/39021234814),
+job `117363295283`, completed successfully on 2026-10-17 at 09:37:50 UTC.
+The raw 562,961-character log and phase receipt were read: Xcode 26.3 (17C529),
+iPhoneOS/simulator SDK 26.2; both unsigned builds passed and all **13** Swift
+XCTest methods executed with zero failures. The checker found all 13 named
+methods, including the three new boundary/disabled/demo cases; the old ten-test
+run does not cover them. No ActivityKit appointment is submitted by those logic
+tests, so system scheduling/visibility and physical closure remain unverified.
+
+`npm run verify`: **546 tests, 544 passed, two existing browser skips, zero
+failures**. The six new handoff tests use simulated metadata/logs and confirm
+that an inflated green count with missing methods is refused, failure summaries
+are refused, preflight never builds/signs/installs, and old SDKs/missing runtimes
+cannot pass. The actual Linux preflight exits 2 with all native phases not_run.
+
+The fresh job used the already-public repository and standard `macos-15`, no
+artifact/cache uploads, secrets, signing, account/profile access, SDK downloads
+or deployment. Its log contains zero email-like values and no private-key, JWT
+or GitHub-token values, production Tasks/Auth URLs or native token observers by
+the recorded probes. Public repository handles and runner metadata remain.
+This inspection is limited to this log, not a guarantee about all repository
+history. Artifact readback returns an empty list. Structured results are in
+`docs/ios-unsigned-ci-evidence.json`.
+
+The final handoff/evidence change is documentation only; native source is
+identical to this tested candidate. PR #7 remains Draft and the user-facing
+mobile release remains blocked at full local Xcode, approved existing signing
+assets/phone connection, installation and actual device acceptance. No true
+Task or production route was changed; no APNs message was sent.
+
 ## Previously tested head and privacy check
 
 GitHub and local diffs agree that `3989e78e5fd76d5f26d63cc4b0b07a6ac90f025a`
@@ -65,7 +182,7 @@ enabling automatic follows. An already sent/in-flight push can race a close:
 server tombstones block subsequent sends but cannot retract an APNs message.
 Do not claim the isolated implementation resolves that distributed race.
 
-## Production adapter requirements — not configured here
+## Remote-route production adapter requirements — not configured here
 
 - Reuse existing Supabase user JWT verification and owner policy for device
   calls. Reuse the existing authorized worker identity for due/end routes.
@@ -93,7 +210,7 @@ Do not claim the isolated implementation resolves that distributed race.
   not obtain/store an auth token. It receives one only through a future explicit
   binding, not a file, environment or chat credential.
 
-## Smallest remaining human actions
+## Original remote-route human actions (historical)
 
 1. Install compatible full Xcode and the iOS platform/runtime on the user's Mac;
    compile using `bash ios/run-unsigned-checks.sh` if local validation is desired.
@@ -109,7 +226,7 @@ Do not claim the isolated implementation resolves that distributed race.
    app and verify the actual 11:00 phone alert, island countdown and manual close.
    Backend APNs acceptance is insufficient evidence of delivery.
 
-This follow-up does not make automatic island startup available. No real device
+That remote-route follow-up did not make automatic island startup available. No real device
 token was collected/uploaded, no APNs credential was read/generated, no binary
 was signed/installed, and no notification was sent to a phone.
 
