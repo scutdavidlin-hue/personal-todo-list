@@ -66,6 +66,13 @@ Exact records: `docs/proposal-deployed-version-evidence.json`.
   a write, suppresses INFORMATION_ONLY/L3, or accepts confirmed:true. The executor
   retains the existing intake/audit/write/readback path with a stable
   `proposal:<id>:<version>` idempotency key; it does not use another writer.
+  Guard constraints remain in the audit payload (including prewrite Auth
+  interruptions). Legacy recover/recover_due returns
+  PROPOSAL_RECONCILIATION_REQUIRED with the prior receipt preserved and no
+  provider retry, so it cannot become an alternate confirmation path.
+  Legacy amend_request also refuses guarded requests with
+  PROPOSAL_REPREVIEW_REQUIRED; it cannot strip the guard or change the approved
+  date/scope. Changes must use a fresh bound proposal preview.
 
 ## Real isolation evidence
 
@@ -76,11 +83,11 @@ source events, canonical-provider reads and Task writes are explicitly synthetic
 The test URL is restricted to loopback `/proposal_fixture`; restarting is allowed
 only for the labeled fixture container. No production connection is made.
 
-The 22 database-chain cases passed locally, including valid bound approval plus
+The database-chain cases include valid bound approval plus
 explanation, missing source, wrong identities/bindings, expired/revoked/changed
 proposals, new previews, 12 concurrent confirmations dispatching once, source-event
 replay across proposals, unknown-no-retry, SQL permissions/immutability, final
-actual-intake account/content mismatch, and cancellation on either side of the
+actual-intake account/content mismatch, legacy-recovery fencing, and cancellation on either side of the
 dispatch gate. A real database container restart retains the applied receipt;
 a fresh HTTP/intake instance replays it with zero new provider attempts. This is
 durability evidence beyond the original Map model, not real human or Google

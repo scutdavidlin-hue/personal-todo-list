@@ -168,6 +168,32 @@ test("unknown actual intake outcome remains durable and cannot trigger another p
     assert.equal(f.intake.createAttempts(), 1);
   }, { intakeOptions: { unknownCreateOnce: true } });
 });
+test("a guarded prewrite Auth interruption cannot use legacy recover as another writer", async () => {
+  await withFixture(async f => {
+    const p = await f.create(); const result = await f.confirm(p, await f.review(p));
+    assert.equal(result.status, 202); assert.equal(f.intake.createAttempts(), 0);
+    assert.ok(f.intake.getAudit().request_payload.original_input.proposal_guard);
+    const recovered = await (await f.intake.request({ action: "recover", request_id: result.body.request_id })).json();
+    assert.equal(recovered.results[0].code, "PROPOSAL_RECONCILIATION_REQUIRED");
+    assert.equal(f.intake.createAttempts(), 0); assert.equal(f.intake.getAudit().next_retry_at, null);
+    const amended = await (await f.intake.request({ action: "amend_request", request_id: result.body.request_id,
+      recovery_version: f.intake.getAudit().recovery_version, requested_date: "2026-10-20", requested_time: "12:00" })).json();
+    assert.equal(amended.code, "PROPOSAL_REPREVIEW_REQUIRED");
+    assert.ok(f.intake.getAudit().request_payload.original_input.proposal_guard); assert.equal(f.intake.createAttempts(), 0);
+  }, { intakeOptions: { contextAuthFailureOnce: true } });
+});
+test("guarded unknown/background recovery never retries and retains a known verified Task receipt", async () => {
+  await withFixture(async f => {
+    const p = await f.create(); const first = await f.confirm(p, await f.review(p));
+    assert.equal(first.body.verified, true); assert.equal(f.intake.createAttempts(), 1);
+    assert.ok(f.intake.getAudit().request_payload.proposal_guard);
+    f.intake.mutateAudit({ stage: "projection_pending", next_retry_at: "2000-01-01T00:00:00Z", lease_owner: null, lease_expires_at: null });
+    const recovered = await (await f.intake.request({ action: "recover_due" })).json();
+    assert.equal(recovered.results[0].code, "PROPOSAL_RECONCILIATION_REQUIRED");
+    assert.equal(recovered.results[0].verified, true); assert.equal(recovered.results[0].id, first.body.id);
+    assert.equal(f.intake.createAttempts(), 1);
+  });
+});
 test("database time enforces expiry even when the application clock is stale", async () => {
   const past = new Date(Date.now() - 1200000);
   await withFixture(async f => { const p = await f.create(); const e = await f.review(p, { occurredAt: past.toISOString() });

@@ -380,6 +380,18 @@ async function resumeTask(row: Record<string, any>, leaseOwner: string, allowPre
       lease_owner: null, lease_expires_at: null }, leaseOwner);
     return result;
   }
+  if (Object.hasOwn(intake, "proposal_guard") || Object.hasOwn(intake.original_input || {}, "proposal_guard")) {
+    // A proposal's claim/source lifetime is outside legacy recovery. Preserve
+    // any known Task receipt, but never use recover/recover_due as a second
+    // writer or to skip its exact preview/account constraints.
+    const result = { ...(row.response || {}), success: false, request_id: row.id,
+      idempotency_key: row.idempotency_key, stage: "needs_input",
+      code: "PROPOSAL_RECONCILIATION_REQUIRED", automatic_retry_allowed: false,
+      message: "已保留原回执；请按原编号只读核对，不会经恢复接口再次写入。" };
+    await updateAudit(row.id, { stage: "needs_input", status: "failed", error_code: result.code,
+      response: result, response_status: 409, next_retry_at: null, lease_owner: null, lease_expires_at: null }, leaseOwner);
+    return result;
+  }
   const account = await taskService({ action: "account_context" });
   if (!account.account_subject || (row.account_subject && account.account_subject !== row.account_subject)
     || (!row.account_subject && row.provider_attempted === true)) {
@@ -558,6 +570,9 @@ async function amendRequest(input: Record<string, any>) {
   const row = (await rest(`personal_os_intake_audit?${query}`))?.[0];
   if (!row) throw new IntakeError("Request was not found", 404, "REQUEST_NOT_FOUND");
   if (row.recovery_version !== input.recovery_version) throw new IntakeError("Request changed; refresh before editing", 409, "VERSION_CONFLICT");
+  if (Object.hasOwn(row.request_payload || {}, "proposal_guard") || Object.hasOwn(row.request_payload?.original_input || {}, "proposal_guard")) {
+    throw new IntakeError("Proposal changes require a new bound preview", 409, "PROPOSAL_REPREVIEW_REQUIRED");
+  }
   if (!["needs_input", "missed", "unsupported"].includes(row.stage) || row.classification !== "task") {
     throw new IntakeError("This request cannot be amended", 409, "AMENDMENT_NOT_ALLOWED");
   }
@@ -740,7 +755,8 @@ Deno.serve(async (request) => {
       if (auditId && leaseOwner) await updateAudit(auditId, { stage: "needs_input", status: "failed", response: result, response_status: 200, lease_owner: null, lease_expires_at: null }, leaseOwner);
       return json({ ...result, ...(auditId ? { request_id: auditId } : {}), idempotency_key: idempotencyKey, message: intakeConfirmation(result) });
     }
-    const intake = { ...normalizeIntake(frozenIntake(policy.input, receivedAt), { baseDate: receivedAt }), existing_task_id: policy.input.existing_task_id, update_patch: policy.input.update_patch };
+    const intake = { ...normalizeIntake(frozenIntake(policy.input, receivedAt), { baseDate: receivedAt }), existing_task_id: policy.input.existing_task_id, update_patch: policy.input.update_patch,
+      ...(input.proposal_guard !== undefined ? { proposal_guard: input.proposal_guard } : {}) };
     const reservation = earlyReservation || await reserveAudit(intake, idempotencyKey, requestHash, receivedAt);
     auditId = reservation.row.id;
     leaseOwner = reservation.leaseOwner || "";
