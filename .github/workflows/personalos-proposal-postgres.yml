@@ -1,0 +1,62 @@
+name: Personal OS isolated proposal persistence
+on:
+  push:
+    branches: [investigate/task-confirmation-20261017]
+    paths:
+      - 'supabase/**'
+      - 'scripts/**'
+      - 'test/**'
+      - 'package*.json'
+      - '.github/workflows/personalos-proposal-postgres.yml'
+permissions:
+  contents: read
+concurrency:
+  group: personal-os-proposal-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  isolated-postgres:
+    if: github.repository == 'scutdavidlin-hue/personal-todo-list' && github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17.6@sha256:00bc86618629af00d2937fdc5a5d63db3ff8450acf52f0636ec813c7f4902929
+        env:
+          POSTGRES_PASSWORD: synthetic-fixture-only
+          POSTGRES_DB: proposal_fixture
+        ports:
+          - 5432:5432
+        options: >-
+          --label personal-os.proposal-fixture=true
+          --health-cmd "pg_isready -U postgres -d proposal_fixture"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+    steps:
+      - name: Fetch exact public candidate without credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init source
+          git -C source remote add origin https://github.com/scutdavidlin-hue/personal-todo-list.git
+          git -C source fetch --depth=1 origin "$GITHUB_SHA"
+          git -C source checkout --detach FETCH_HEAD
+          test "$(git -C source rev-parse HEAD)" = "$GITHUB_SHA"
+          for personal_os_node in /opt/hostedtoolcache/node/24.*/x64/bin; do
+            if test -x "$personal_os_node/node"; then
+              echo "$personal_os_node" >> "$GITHUB_PATH"
+              break
+            fi
+          done
+      - name: Install pinned test dependency without lifecycle scripts
+        working-directory: source
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Full existing regression
+        working-directory: source
+        run: npm run verify
+      - name: Real disposable PostgreSQL and HTTP intake chain, including restart
+        working-directory: source
+        env:
+          PERSONAL_OS_TEST_PG_URL: postgresql://postgres:synthetic-fixture-only@127.0.0.1:5432/proposal_fixture
+          PERSONAL_OS_TEST_PG_CONTAINER: ${{ job.services.postgres.id }}
+        run: npm run verify:proposal-db
+# No Supabase connection, real credentials, grants, deploy, artifact/cache upload,
+# production Task or phone operation. Source verification/Auth/providers are fixtures.

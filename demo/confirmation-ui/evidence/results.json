@@ -1,0 +1,34 @@
+{
+  "dateUTC": "2026-10-17",
+  "baseCommit": "55bfdaea541a67f166ed749e468ebd117ed9c192",
+  "mode": "synthetic owned review UI; loopback HTTP; fake personas; process-local Maps",
+  "environmentRecovered": true,
+  "originalWorktreeContinued": "/workspace/personal-os-confirmation",
+  "productionModulesChanged": false,
+  "reusedRuntime": "supabase/functions/_shared/task-proposal-runtime.js",
+  "newHTTPSourceChainCases": { "tests": 12, "passed": 12, "failed": 0, "skipped": 0 },
+  "incrementalCoverage": [
+    "visible synthetic boundary", "bound challenge -> server event -> independent retrieval -> memory execution",
+    "invented events/client provenance denied", "wrong fake owner denied", "edited content needs a new preview and event",
+    "expiry", "later UI rejection invalidates approval", "later UI scope change invalidates approval",
+    "event and execution replay", "duplicate concurrent UI decisions", "event transplantation", "Origin and CSRF boundary"
+  ],
+  "browser": {
+    "engine": "installed Chromium via DevTools, explicit optional script",
+    "passed": true,
+    "checks": ["synthetic warning", "edit disables confirmation", "new version required", "explicit UI decision", "independent verifier and memory execution", "replay count stays one", "390px no horizontal overflow", "later rejection blocks old approval"],
+    "uncaughtPageExceptions": 0,
+    "screenshot": "synthetic-desktop.png",
+    "iphoneOrHumanAcceptance": false
+  },
+  "existingCoverage": { "baselineDefaultTests": 733, "priorPostgresCases": 37, "countedAsNew": false },
+  "latestCandidateCI": "Exact SHA and direct CI run are linked in PR12; prior CI is not reused as validation.",
+  "realAuthCalls": 0,
+  "realGoogleCalls": 0,
+  "realTaskWrites": 0,
+  "persistentCredentialsAdded": false,
+  "migrationOrDeployment": false,
+  "realHumanProvenanceVerified": false,
+  "reprovesOldChatGPTReply": false,
+  "formalUIAdoptionRequiresUserChoice": true
+}

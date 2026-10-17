@@ -6,6 +6,7 @@ import {
 import { findExistingGoalMatch, mergeGoalPlanUpdate } from "../_shared/goal-operations.js";
 import { resolveServiceApiKey, serviceApiHeaders } from "../_shared/supabase-api-keys.js";
 import { prepareAutonomousIntake, verifyTaskWrite, intakeConfirmation } from "../_shared/autonomy-runtime.js";
+import { proposalGuardError } from "../_shared/proposal-execution-scope.js";
 import { evaluateAutonomy } from "../_shared/autonomy-policy.js";
 import { frozenIntake, intakeBlocker, isMissed, publicRecovery, recoveryDecision, retryAt, safeError } from "../_shared/request-recovery.js";
 import { verifyTaskFields } from "../_shared/write-receipt.js";
@@ -241,7 +242,8 @@ async function resolveAutonomyContext(input: Record<string, unknown>) {
 async function dispatchTask(intake: Record<string, unknown>, auditId: string, idempotencyKey: string) {
   const result = await taskService(intake.existing_task_id ? {
     action: "update_task", task_id: intake.existing_task_id, changes: intake.update_patch || {},
-  } : { ...taskDispatchPayload(intake), intake_audit_id: auditId, resolution_idempotency_key: idempotencyKey });
+  } : { ...taskDispatchPayload(intake), intake_audit_id: auditId, resolution_idempotency_key: idempotencyKey,
+    ...(Object.hasOwn(intake, "proposal_guard") ? { proposal_guard: intake.proposal_guard } : {}) });
   let verified;
   try { verified = await verifyTaskWrite(result, (id: string) => taskService({ action: "read_task", task_id: id })); }
   catch {
@@ -377,6 +379,18 @@ async function resumeTask(row: Record<string, any>, leaseOwner: string, allowPre
       code: "ORIGINAL_REQUEST_UNAVAILABLE", message: "旧请求缺少原排程资料，已保留任务身份，需核实后处理。" };
     await updateAudit(row.id, { stage: "needs_input", error_code: result.code, response: result,
       lease_owner: null, lease_expires_at: null }, leaseOwner);
+    return result;
+  }
+  if (Object.hasOwn(intake, "proposal_guard") || Object.hasOwn(intake.original_input || {}, "proposal_guard")) {
+    // A proposal's claim/source lifetime is outside legacy recovery. Preserve
+    // any known Task receipt, but never use recover/recover_due as a second
+    // writer or to skip its exact preview/account constraints.
+    const result = { ...(row.response || {}), success: false, request_id: row.id,
+      idempotency_key: row.idempotency_key, stage: "needs_input",
+      code: "PROPOSAL_RECONCILIATION_REQUIRED", automatic_retry_allowed: false,
+      message: "已保留原回执；请按原编号只读核对，不会经恢复接口再次写入。" };
+    await updateAudit(row.id, { stage: "needs_input", status: "failed", error_code: result.code,
+      response: result, response_status: 409, next_retry_at: null, lease_owner: null, lease_expires_at: null }, leaseOwner);
     return result;
   }
   const account = await taskService({ action: "account_context" });
@@ -557,6 +571,9 @@ async function amendRequest(input: Record<string, any>) {
   const row = (await rest(`personal_os_intake_audit?${query}`))?.[0];
   if (!row) throw new IntakeError("Request was not found", 404, "REQUEST_NOT_FOUND");
   if (row.recovery_version !== input.recovery_version) throw new IntakeError("Request changed; refresh before editing", 409, "VERSION_CONFLICT");
+  if (Object.hasOwn(row.request_payload || {}, "proposal_guard") || Object.hasOwn(row.request_payload?.original_input || {}, "proposal_guard")) {
+    throw new IntakeError("Proposal changes require a new bound preview", 409, "PROPOSAL_REPREVIEW_REQUIRED");
+  }
   if (!["needs_input", "missed", "unsupported"].includes(row.stage) || row.classification !== "task") {
     throw new IntakeError("This request cannot be amended", 409, "AMENDMENT_NOT_ALLOWED");
   }
@@ -739,7 +756,8 @@ Deno.serve(async (request) => {
       if (auditId && leaseOwner) await updateAudit(auditId, { stage: "needs_input", status: "failed", response: result, response_status: 200, lease_owner: null, lease_expires_at: null }, leaseOwner);
       return json({ ...result, ...(auditId ? { request_id: auditId } : {}), idempotency_key: idempotencyKey, message: intakeConfirmation(result) });
     }
-    const intake = { ...normalizeIntake(frozenIntake(policy.input, receivedAt), { baseDate: receivedAt }), existing_task_id: policy.input.existing_task_id, update_patch: policy.input.update_patch };
+    const intake = { ...normalizeIntake(frozenIntake(policy.input, receivedAt), { baseDate: receivedAt }), existing_task_id: policy.input.existing_task_id, update_patch: policy.input.update_patch,
+      ...(input.proposal_guard !== undefined ? { proposal_guard: input.proposal_guard } : {}) };
     const reservation = earlyReservation || await reserveAudit(intake, idempotencyKey, requestHash, receivedAt);
     auditId = reservation.row.id;
     leaseOwner = reservation.leaseOwner || "";
@@ -767,6 +785,15 @@ Deno.serve(async (request) => {
       return json(result, 202);
     }
     await updateAudit(auditId, { account_subject: identity.account_subject }, leaseOwner);
+
+    const proposalGuardCode = await proposalGuardError(input.proposal_guard, intake, identity, OWNER_USER_ID, policy);
+    if (proposalGuardCode) {
+      const result = { success: false, write_success: false, verified: false, code: proposalGuardCode,
+        request_id: auditId, stage: "needs_input", message: "提案账号或执行内容已变化，请重新预览。" };
+      await updateAudit(auditId, { stage: "needs_input", status: "failed", error_code: proposalGuardCode,
+        response: result, response_status: 409, next_retry_at: null, lease_owner: null, lease_expires_at: null }, leaseOwner);
+      return json(result, 409);
+    }
 
     const blocker = intakeBlocker(intake);
     if (blocker) {
@@ -827,13 +854,15 @@ Deno.serve(async (request) => {
       ? error
       : new IntakeError(timedOut ? "Personal OS intake timed out" : "Personal OS intake failed", 503, timedOut ? "INTAKE_TIMEOUT" : "INTAKE_FAILED");
     auditId ||= intakeError.requestId || "";
-    const failure = { success: false, write_success: false, verified: false, outcome: intakeError.code === "IDEMPOTENCY_CONFLICT" ? "rejected" : "unknown", idempotency_key: receiptKey || undefined, request_id: auditId || undefined, code: intakeError.code, error: intakeError.message,
+    const proposalPrewriteRejected = ["PROPOSAL_SCOPE_CHANGED", "PROPOSAL_GUARD_INVALID", "PROPOSAL_ACCOUNT_CHANGED"].includes(intakeError.code);
+    const failure = { success: false, write_success: false, verified: false, outcome: proposalPrewriteRejected || intakeError.code === "IDEMPOTENCY_CONFLICT" ? "rejected" : "unknown", idempotency_key: receiptKey || undefined, request_id: auditId || undefined, code: intakeError.code, error: intakeError.message,
       ...(intakeError.code === "TASK_TARGET_AMBIGUOUS" ? { decision: "ask", question: "有多个匹配任务，要修改哪一个？" } : {}), message: "" };
     failure.message = intakeError.code === "IDEMPOTENCY_CONFLICT" ? "此幂等键对应另一个已登记请求；本次内容已拒绝，未重写。请按原请求ID只读核实。" : auditId ? "请求已登记，执行结果待核实；请按原 request_id 或 idempotency_key 只读核实。" : "未取得持久回执，结果待核实；请按原 idempotency_key 查询，不能据此判断已写入或未写入。";
+    if (proposalPrewriteRejected) failure.message = "最终操作、内容或账号超出批准范围，写入前已停止；需要新的预览。";
     if (auditId && leaseOwner) {
       const authRequired = ["AUTH_RECONNECT_REQUIRED", "GOOGLE_REAUTH_REQUIRED", "GOOGLE_AUTH_REQUIRED",
         "GOOGLE_NOT_CONNECTED", "ACCOUNT_MISMATCH", "ACCOUNT_UNVERIFIED"].includes(intakeError.code);
-      try { await updateAudit(auditId, { stage: authRequired ? "auth_required" : "outcome_unknown", status: "processing", error_code: intakeError.code, error: safeError(intakeError), retry_count: 1, next_retry_at: authRequired ? null : retryAt(0), response_status: 202, response: failure, lease_owner: null, lease_expires_at: null }, leaseOwner); }
+      try { await updateAudit(auditId, { stage: proposalPrewriteRejected ? "needs_input" : authRequired ? "auth_required" : "outcome_unknown", status: proposalPrewriteRejected ? "failed" : "processing", error_code: intakeError.code, error: safeError(intakeError), retry_count: 1, next_retry_at: authRequired || proposalPrewriteRejected ? null : retryAt(0), response_status: proposalPrewriteRejected ? intakeError.status : 202, response: failure, lease_owner: null, lease_expires_at: null }, leaseOwner); }
       catch (auditError) { console.error("Personal OS audit update failed", auditError instanceof Error ? auditError.message : "unknown"); }
     }
     console.error("Personal OS intake failed", { auditId: auditId || null, code: intakeError.code });

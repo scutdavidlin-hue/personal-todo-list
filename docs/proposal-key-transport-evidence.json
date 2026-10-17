@@ -1,0 +1,18 @@
+{
+  "dateUTC": "2026-10-17",
+  "unchangedProductionFunctionCommit": "636ded04aa4c3ecc4ec2985d4d99275ff6bd3419",
+  "newCases": 3,
+  "localTargetedResult": { "tests": 3, "passed": 3, "failed": 0, "skipped": 0 },
+  "localDatabaseSuite": { "tests": 37, "passed": 37, "failed": 0, "skipped": 0, "newCases": 3, "previousCases": 34 },
+  "command": "node --test --test-name-pattern='two distinct proposals|same proposal HTTP replay|lost Google POST response' scripts/proposal-postgres-checks.mjs",
+  "actualChain": ["loopback HTTP", "PostgreSQL proposal store", "proposal runtime", "intake handler", "task-status handler", "resolver", "executor", "Google HTTP adapter"],
+  "syntheticBoundaries": ["Auth response", "trusted reply source", "intake/semantic metadata REST", "Google HTTP"],
+  "assertedKeyBoundaries": ["sendIntake argument", "actual intake Request header", "intake audit reservation", "task-status dispatch resolution_idempotency_key", "resolution audit idempotency_key", "retained intake audit key"],
+  "differentProposals": "two distinct stable keys, two distinct request/task IDs, two fake provider POSTs",
+  "sameProposalReplay": "three replays retain receipt IDs; one initial intake dispatch and one provider POST total",
+  "unknownResponse": "fake Google accepts and stores first POST then response is lost; three later confirmations return OUTCOME_UNKNOWN_NO_RETRY; key is retained and POST count remains one",
+  "productionCodeChanged": false,
+  "realGoogleWrites": 0,
+  "migrationOrDeployment": false,
+  "latestFullCI": "Exact test-only commit and run are linked in PR12; prior 733 tests are baseline regressions, not new assertions."
+}
