@@ -33,10 +33,13 @@
 
 ## 日期差异：保留事实，不自动统一
 
-Google 官方将 Tasks `due` 定义为任务安排/显示的日期，并明确它不是 deadline；
-API 只保留日期部分。`updated` 只说明整个任务最后修改时间，不能识别修改字段、操作者或意图。
-参见 [Tasks REST resource](https://developers.google.com/workspace/tasks/reference/rest/v1/tasks)。
-Personal OS 的 deadline 字段仍只代表明确硬截止，不从 provider 字段名或更新时间推断。
+Google Tasks 的 `due` 是使用 RFC3339 时间戳格式的可选字段；API 只保留日期部分，设置时丢弃时间部分。
+官方[旧 Tasks 路径](https://developers.google.com/tasks/reference/rest/v1/tasks?hl=en)称其为 due date，
+[Workspace 路径](https://developers.google.com/workspace/tasks/reference/rest/v1/tasks?hl=en)使用安排日期的表述；
+两处措辞存在差异，不能据字段名替具体用户事项保证其业务截止或独立安排含义。
+`updated` 只说明整个任务最后修改时间，不能识别修改字段、操作者或意图。
+**本应用约定**：Task 日期按安排日期处理，另有 deadline 字段表示明确硬截止；
+这一应用语义不被写成 Google 对每条用户数据的业务保证，也不从更新时间推断覆盖方向。
 
 源码已有 `taskScheduleSyncDecision`：对无法解释的 Task 日期 / scheduled_date 差异返回
 `TASK_SCHEDULE_RECONCILIATION_REQUIRED`；明确的 morning_plan 或已有 deadline 语义可保留
