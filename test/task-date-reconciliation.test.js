@@ -35,6 +35,46 @@ test("search and get views expose the same read-only reconciliation signal", () 
   assert.deepEqual(result.date_reconciliation, taskView(task, schedule).date_reconciliation);
   assert.equal(result.date_reconciliation?.required, true);
 });
+test("morning-plan date separation is not relabeled by a different deadline projection axis", () => {
+  const metadata = Object.freeze({ ...schedule, scheduling_source: "morning_plan", scheduled_start: null, scheduled_end: null,
+    deadline: "2099-01-10", deadline_time: "18:00" });
+  const before = JSON.stringify([task, metadata]), projection = taskScheduleSyncDecision(task, metadata);
+  assert.equal(projection.reason, "TASK_SCHEDULE_RECONCILIATION_REQUIRED");
+  assert.equal(projection.scheduled_date, null); assert.equal(projection.deadline, metadata.deadline);
+  const view = taskView(task, metadata);
+  assert.equal(view.date_reconciliation, undefined);
+  assert.equal(view.due, task.dueDate); assert.equal(view.requested_date, metadata.scheduled_date);
+  assert.equal(view.deadline, metadata.deadline); assert.equal(JSON.stringify([task, metadata]), before);
+});
+test("an unexplained Task/planned-date difference still reports its own axis alongside an unrelated deadline", () => {
+  const metadata = { ...schedule, deadline: "2099-01-10", deadline_time: "18:00" };
+  const view = taskView(task, metadata);
+  assert.equal(view.date_reconciliation?.required, true);
+  assert.equal(view.date_reconciliation?.comparison, "task_date_vs_scheduled_date");
+  assert.equal(view.date_reconciliation?.task_date, task.dueDate); assert.equal(view.date_reconciliation?.scheduled_date, schedule.scheduled_date);
+});
+test("existing planned-date provenance remains independent of execution times and the deadline time", () => {
+  for (const timing of [{}, { scheduled_start: "09:00", scheduled_end: "10:00" }]) {
+    const metadata = { ...schedule, ...timing, scheduling_source: "morning_plan", deadline: "2099-01-10", deadline_time: "18:00" };
+    assert.equal(taskView(task, metadata).date_reconciliation, undefined);
+    assert.equal(taskView(task, { ...metadata, scheduling_source: "explicit_user", deadline: task.dueDate }).date_reconciliation, undefined);
+  }
+});
+for (const malformed of ["not-a-date", "2099-02-29", "2099-01-09T00:00:00Z", 123, {}]) {
+  for (const field of ["task", "planned"]) test(`malformed ${field} date is not reported as two comparable dates: ${JSON.stringify(malformed)}`, () => {
+    const current = Object.freeze({ ...task, ...(field === "task" ? { dueDate: malformed } : {}) });
+    const metadata = Object.freeze({ ...schedule, ...(field === "planned" ? { scheduled_date: malformed } : {}) });
+    const before = JSON.stringify([current, metadata]), view = taskView(current, metadata);
+    assert.equal(view.date_reconciliation, undefined);
+    assert.equal(view.due, current.dueDate); assert.equal(view.requested_date, metadata.scheduled_date);
+    assert.equal(JSON.stringify([current, metadata]), before);
+  });
+}
+for (const source of ["morning_plan", "explicit_user"]) test(`a malformed unrelated deadline neither creates nor excuses a planned-date warning: ${source}`, () => {
+  const view = taskView(task, { ...schedule, scheduling_source: source, deadline: "invalid-deadline", deadline_time: "18:00" });
+  assert.equal(view.date_reconciliation?.required, source === "explicit_user" ? true : undefined);
+  if (source === "explicit_user") assert.equal(view.date_reconciliation?.comparison, "task_date_vs_scheduled_date");
+});
 test("actual GET handler returns the derived warning without Task, Calendar or metadata writes", async () => {
   const previous = { Deno: globalThis.Deno, fetch: globalThis.fetch }, calls = []; let handler;
   const owner = "11111111-1111-4111-8111-111111111111";
@@ -58,6 +98,11 @@ test("actual GET handler returns the derived warning without Task, Calendar or m
     assert.equal(result.task.date_reconciliation.required, true); assert.equal(result.task.due, task.dueDate);
     assert.equal(result.task.requested_date, schedule.scheduled_date); assert.equal(result.task.schedule.sync_required, false);
     assert.equal(result.task.schedule.owner_id, undefined);
+    Object.assign(metadata, { scheduling_source: "morning_plan", deadline: "2099-01-10", deadline_time: "18:00" });
+    const combined = await (await handler(new Request(`https://isolated.test/google-tasks?action=get&task_id=${task.id}`, { headers: { Authorization: "Bearer synthetic-user" } }))).json();
+    assert.equal(combined.task.date_reconciliation, undefined);
+    assert.equal(combined.task.due, task.dueDate); assert.equal(combined.task.requested_date, schedule.scheduled_date);
+    assert.equal(combined.task.deadline, metadata.deadline); assert.equal(combined.task.schedule.sync_required, false);
     assert.equal(calls.filter(x => x.method !== "GET" && !x.path.endsWith("/rpc/claim_google_auth_refresh")).length, 0);
     assert.equal(calls.some(x => x.path.includes("calendar") || x.path.includes("task-scheduler")), false);
   } finally { Object.assign(globalThis, previous); }

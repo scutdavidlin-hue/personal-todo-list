@@ -186,6 +186,25 @@ export function applyTaskSchedulePatch(current, changes = {}, taskDue = null, op
   return { touched: true, schedule: normalizeScheduleInput(next, { ...options, ...(clearedExecutionAnchor ? { preserveReminderPolicy: true } : {}) }), timing_changed: timingChanged };
 }
 
+function taskPlannedDateSeparationReason(taskDate, scheduledDate, schedule) {
+  if (schedule?.deadline === taskDate && scheduledDate <= taskDate) return "EXECUTION_BEFORE_TASK_DEADLINE";
+  if (String(schedule?.scheduling_source || "") === "morning_plan") return "MORNING_PLAN_DATE_SEPARATION";
+  return null;
+}
+
+/** Read-only comparison of Task date vs planned date, not deadline projection. */
+export function taskPlannedDateReconciliation(task = {}, schedule = {}) {
+  const taskDate = task?.dueDate || task?.due || task?.date || null;
+  const scheduledDate = schedule?.scheduled_date || null;
+  // Malformed/missing values are not two comparable dates. Preserve the raw
+  // source fields; absence of this warning is not a date-validity certificate.
+  if (!validScheduleDate(taskDate) || !validScheduleDate(scheduledDate) || taskDate === scheduledDate) return null;
+  if (taskPlannedDateSeparationReason(taskDate, scheduledDate, schedule)) return null;
+  return { required: true, comparison: "task_date_vs_scheduled_date",
+    reason: "TASK_SCHEDULE_RECONCILIATION_REQUIRED", task_date: taskDate,
+    scheduled_date: scheduledDate, automatic_repair_allowed: false };
+}
+
 /**
  * Decide whether Task-only reconciliation may safely reuse Schedule timing.
  * Google Task due and execution timing may intentionally differ, so a date
@@ -207,11 +226,8 @@ export function taskScheduleSyncDecision(task = {}, schedule = {}) {
   }
   let reason = null;
   if (taskDue && scheduledDate && taskDue !== scheduledDate) {
-    if (schedule?.deadline === taskDue && scheduledDate <= taskDue) {
-      reason = "EXECUTION_BEFORE_TASK_DEADLINE";
-    } else if (String(schedule?.scheduling_source || "") === "morning_plan") {
-      reason = "MORNING_PLAN_DATE_SEPARATION";
-    } else {
+    reason = taskPlannedDateSeparationReason(taskDue, scheduledDate, schedule);
+    if (!reason) {
       return {
         project: false,
         sync_required: true,
