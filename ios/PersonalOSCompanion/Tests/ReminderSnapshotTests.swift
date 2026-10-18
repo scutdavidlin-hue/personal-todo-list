@@ -155,25 +155,25 @@ private actor SyntheticDeviceTransport: MobileDeviceTransport {
 // center, authorization prompt, ActivityKit request, app-support file or network.
 @MainActor
 private final class SyntheticGate {
-    private var paused = false
     private var used = false
+    private var released = false
+    private let entered = XCTestExpectation(description: "synthetic dependency reached its await gate")
     private var releaseContinuation: CheckedContinuation<Void, Never>?
-    private var observers: [CheckedContinuation<Void, Never>] = []
     func pauseOnce() async {
         guard !used else { return }
         used = true
-        paused = true
+        entered.fulfill()
+        guard !released else { return }
         await withCheckedContinuation { continuation in
             releaseContinuation = continuation
-            observers.forEach { $0.resume() }
-            observers.removeAll()
         }
     }
     func waitUntilPaused() async {
-        if paused { return }
-        await withCheckedContinuation { observers.append($0) }
+        let result = await XCTWaiter.fulfillment(of: [entered], timeout: 5)
+        XCTAssertEqual(result, .completed, "The production method never reached the expected await")
+        if result != .completed { release() }
     }
-    func release() { releaseContinuation?.resume(); releaseContinuation = nil }
+    func release() { released = true; releaseContinuation?.resume(); releaseContinuation = nil }
 }
 
 @MainActor
@@ -563,5 +563,64 @@ extension ReminderSnapshotTests {
         XCTAssertTrue(h.model.projections.isEmpty)
         XCTAssertTrue(h.center.rows.isEmpty)
         XCTAssertNotNil(h.model.preview)
+    }
+
+    @MainActor
+    func testInstalledEligibleWindowsReachOnlyFakeActivityRequestsAndDeduplicate() async {
+        for scheduled in [false, true] {
+            let h = SyntheticLifecycle()
+            let p = h.plan(offset: scheduled ? 7200 : 120)
+            h.seed(p)
+            h.activities.activities = []
+            await h.model.startActivity(p, scheduled: scheduled)
+            await h.model.startActivity(p, scheduled: scheduled)
+            XCTAssertEqual(h.activities.starts.count, 1)
+            XCTAssertEqual(h.activities.starts.first?.0, p)
+            XCTAssertEqual(h.activities.starts.first?.1, scheduled)
+            XCTAssertEqual(h.center.authorizationRequests, 0)
+        }
+    }
+
+    @MainActor
+    func testClosedWindowStaysClosedAfterReimportButDifferentWindowCanStart() async {
+        let h = SyntheticLifecycle()
+        let p = h.plan(offset: 120)
+        h.seed(p)
+        await h.model.closeActivity(p)
+        h.model.preview = h.snapshot([p])
+        await h.model.installPreview()
+        await h.model.startActivity(p)
+        XCTAssertTrue(h.activities.starts.isEmpty)
+        let moved = h.plan(offset: 240)
+        h.model.preview = h.snapshot([moved])
+        await h.model.installPreview()
+        await h.model.startActivity(moved)
+        XCTAssertEqual(h.activities.starts.count, 1)
+        XCTAssertEqual(h.activities.starts.first?.0, moved)
+        XCTAssertEqual(h.closed.rows.map(\.eventAt), [p.eventAt!])
+    }
+
+    @MainActor
+    func testReimportEndAwaitBlocksManualStartAndRemovalPreventsRescheduling() async {
+        let h = SyntheticLifecycle(), gate = SyntheticGate()
+        let p = h.plan(offset: 120)
+        h.seed(p)
+        h.activities.endGate = gate
+        h.model.preview = h.snapshot([p])
+        let installing = Task { await h.model.installPreview() }
+        await gate.waitUntilPaused()
+        // Same exact installed plan, currently in its valid manual window.
+        await h.model.startActivity(p)
+        XCTAssertTrue(h.activities.starts.isEmpty)
+        let began = SyntheticSignal()
+        let removing = Task { began.signal(); await h.model.remove(p) }
+        await began.wait()
+        gate.release()
+        await installing.value
+        await removing.value
+        XCTAssertTrue(h.model.projections.isEmpty)
+        XCTAssertTrue(h.storage.rows.isEmpty)
+        XCTAssertTrue(h.center.rows.isEmpty)
+        XCTAssertEqual(h.center.addCalls, 0)
     }
 }
