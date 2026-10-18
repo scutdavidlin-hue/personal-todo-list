@@ -470,6 +470,19 @@ extension ReminderSnapshotTests {
     }
 
     @MainActor
+    func testUnreadableCloseLedgerStillEndsExpiredActivityOnForeground() async {
+        let h = SyntheticLifecycle()
+        let p = h.plan(offset: 120)
+        h.seed(p)
+        h.closed.failRead = true
+        h.clock.now = p.eventDate!
+        await h.model.foreground()
+        XCTAssertEqual(h.activities.ended, ["synthetic-old"])
+        XCTAssertTrue(h.activities.activities.isEmpty)
+        XCTAssertTrue(h.activities.starts.isEmpty)
+    }
+
+    @MainActor
     func testAddFailureAfterAcceptanceCleansAllPartialOwnedNotifications() async {
         let h = SyntheticLifecycle()
         let p = h.plan(reminders: [h.clock.now.timeIntervalSince1970 + 60, h.clock.now.timeIntervalSince1970 + 120])

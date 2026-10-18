@@ -274,12 +274,12 @@ final class CompanionModel: NSObject, ObservableObject, UNUserNotificationCenter
 
     func foreground() async {
         permissionState = await scheduler.permissionSnapshot()
-        let closed: [ClosedDeviceWindow]
+        var closed: [ClosedDeviceWindow] = []
         do { closed = try closedWindows.pending() }
         catch {
-            // An unreadable dismissal ledger cannot authorize any restart.
+            // Expiry cleanup remains independent of ledger readability.
+            // startActivity still fails closed when this ledger is unreadable.
             status = "本机关闭记录无法读取：\(error.localizedDescription)"
-            return
         }
         for activity in countdowns.activities where activity.eventAt <= clock().timeIntervalSince1970 || closed.contains(where: {
             $0.taskId == activity.taskId && $0.eventAt == activity.eventAt
