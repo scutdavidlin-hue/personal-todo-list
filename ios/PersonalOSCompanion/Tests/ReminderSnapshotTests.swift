@@ -43,18 +43,19 @@ final class ReminderSnapshotTests: XCTestCase {
 
     @MainActor
     func testBothDemosStaySyntheticAndUseTheExistingWindowContract() async throws {
-        let model = CompanionModel()
+        let h = SyntheticLifecycle()
+        let model = h.model
         for scheduled in [false, true] {
-            let before = Date.now
+            let before = h.clock.now
             model.demo(scheduled: scheduled)
             let snapshot = try XCTUnwrap(model.preview)
-            try snapshot.validate()
+            try snapshot.validate(now: h.clock.now)
             let p = try XCTUnwrap(snapshot.plans.first)
             XCTAssertTrue(p.taskId.hasPrefix("synthetic-"))
             XCTAssertTrue(p.title.contains("不是真实任务"))
             XCTAssertEqual(p.eventAt! - p.liveActivityStartAt!, 3600)
-            XCTAssertEqual(p.canSchedule(), scheduled)
-            XCTAssertEqual(p.canStart(), !scheduled)
+            XCTAssertEqual(p.canSchedule(at: h.clock.now), scheduled)
+            XCTAssertEqual(p.canStart(at: h.clock.now), !scheduled)
             if scheduled {
                 XCTAssertEqual(p.reminderAt, [p.liveActivityStartAt!])
                 XCTAssertTrue((29...31).contains(p.liveActivityStartAt! - before.timeIntervalSince1970))
@@ -148,4 +149,419 @@ private actor SyntheticDeviceTransport: MobileDeviceTransport {
     private(set) var lastRequest: URLRequest?
     init(response: Data, code: Int) { self.response = response; self.code = code }
     func send(_ request: URLRequest) async throws -> (Data, Int) { calls += 1; lastRequest = request; return (response, code) }
+}
+
+// All lifecycle tests below use in-memory ports and a fixed clock. No system
+// center, authorization prompt, ActivityKit request, app-support file or network.
+@MainActor
+private final class SyntheticGate {
+    private var paused = false
+    private var used = false
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+    private var observers: [CheckedContinuation<Void, Never>] = []
+    func pauseOnce() async {
+        guard !used else { return }
+        used = true
+        paused = true
+        await withCheckedContinuation { continuation in
+            releaseContinuation = continuation
+            observers.forEach { $0.resume() }
+            observers.removeAll()
+        }
+    }
+    func waitUntilPaused() async {
+        if paused { return }
+        await withCheckedContinuation { observers.append($0) }
+    }
+    func release() { releaseContinuation?.resume(); releaseContinuation = nil }
+}
+
+@MainActor
+private final class SyntheticSignal {
+    private var signalled = false
+    private var observers: [CheckedContinuation<Void, Never>] = []
+    func signal() { signalled = true; observers.forEach { $0.resume() }; observers.removeAll() }
+    func wait() async { if !signalled { await withCheckedContinuation { observers.append($0) } } }
+}
+
+private enum SyntheticFailure: Error { case injected }
+
+@MainActor
+private final class SyntheticClock {
+    var now = Date(timeIntervalSince1970: 1_792_000_000)
+}
+
+@MainActor
+private final class SyntheticNotificationCenter: DeviceNotificationCenter {
+    var rows: [ScheduledDeviceNotification] = []
+    var delivered: [String] = []
+    var permissionGate: SyntheticGate?
+    var addGate: SyntheticGate?
+    var readbackGate: SyntheticGate?
+    var failAddAt: Int?
+    var corruptReadbackAt: Int?
+    var pendingCalls = 0
+    var addCalls = 0
+    var authorizationRequests = 0
+    var permission = DevicePermissions(notificationAuthorization: "authorized", alertsEnabled: true, soundEnabled: true,
+        liveActivitiesEnabled: true, observedAt: 1_792_000_000)
+    func requestPermission() async throws -> Bool { authorizationRequests += 1; return true }
+    func permissions() async -> DevicePermissions { await permissionGate?.pauseOnce(); return permission }
+    func pending() async -> [ScheduledDeviceNotification] {
+        pendingCalls += 1
+        if pendingCalls == 2 { await readbackGate?.pauseOnce() }
+        if pendingCalls == corruptReadbackAt {
+            return rows.map { ScheduledDeviceNotification(identifier: $0.identifier, taskId: $0.taskId,
+                title: $0.title, eventAt: $0.eventAt, fireAt: ($0.fireAt ?? 0) + 10) }
+        }
+        return rows
+    }
+    func deliveredIdentifiers() async -> [String] { delivered }
+    func add(_ notification: ScheduledDeviceNotification) async throws {
+        addCalls += 1
+        await addGate?.pauseOnce()
+        // Simulate a late accepted add even if the caller was superseded.
+        rows.removeAll { $0.identifier == notification.identifier }
+        rows.append(notification)
+        if addCalls == failAddAt { throw SyntheticFailure.injected }
+    }
+    func removePending(_ identifiers: [String]) { rows.removeAll { identifiers.contains($0.identifier) } }
+    func removeDelivered(_ identifiers: [String]) { delivered.removeAll { identifiers.contains($0) } }
+}
+
+@MainActor
+private final class SyntheticCountdownStore: DeviceCountdownStore {
+    var enabled = true
+    var supportsScheduling = true
+    var activities: [DeviceCountdown] = []
+    var starts: [(DeviceReminderPlan, Bool)] = []
+    var ended: [String] = []
+    var endGate: SyntheticGate?
+    func start(_ plan: DeviceReminderPlan, scheduled: Bool) throws -> String {
+        starts.append((plan, scheduled))
+        activities.append(DeviceCountdown(id: UUID().uuidString, taskId: plan.taskId, eventAt: plan.eventAt!, active: true))
+        return "synthetic-accepted"
+    }
+    func end(id: String) async {
+        await endGate?.pauseOnce()
+        ended.append(id)
+        activities.removeAll { $0.id == id }
+    }
+}
+
+@MainActor
+private final class SyntheticProjectionStore: DeviceProjectionStore {
+    var rows: [SavedProjection] = []
+    var failSave = false
+    func load() throws -> [SavedProjection] { rows }
+    func save(_ projections: [SavedProjection]) throws {
+        if failSave { throw SyntheticFailure.injected }
+        rows = projections
+    }
+}
+
+@MainActor
+private final class SyntheticClosedWindowStore: DeviceClosedWindowStore {
+    var rows: [ClosedDeviceWindow] = []
+    var failRead = false
+    func pending() throws -> [ClosedDeviceWindow] { if failRead { throw SyntheticFailure.injected }; return rows }
+    func record(taskId: String, eventAt: Double, now: Date) throws {
+        rows.removeAll { $0.taskId == taskId && $0.eventAt == eventAt }
+        rows.append(ClosedDeviceWindow(taskId: taskId, eventAt: eventAt, closedAt: now.timeIntervalSince1970))
+    }
+}
+
+@MainActor
+private final class SyntheticLifecycle {
+    let clock = SyntheticClock()
+    let center = SyntheticNotificationCenter()
+    let activities = SyntheticCountdownStore()
+    let storage = SyntheticProjectionStore()
+    let closed = SyntheticClosedWindowStore()
+    lazy var scheduler = NotificationScheduler(center: center, clock: { [clock] in clock.now })
+    lazy var model = reopen()
+    func reopen() -> CompanionModel {
+        CompanionModel(scheduler: scheduler, countdowns: activities, storage: storage, closedWindows: closed, clock: { [clock] in clock.now })
+    }
+    func plan(_ id: String = "synthetic-lifecycle", offset: Double = 7200, reminders: [Double]? = nil) -> DeviceReminderPlan {
+        let event = clock.now.timeIntervalSince1970 + offset
+        return DeviceReminderPlan(taskId: id, title: "Synthetic lifecycle", timezone: "Asia/Shanghai", enabled: true,
+            eventAt: event, liveActivityStartAt: event - 3600, reminderAt: reminders ?? [event - 3600])
+    }
+    func notification(_ p: DeviceReminderPlan) -> ScheduledDeviceNotification {
+        ScheduledDeviceNotification(identifier: p.notificationId(at: p.reminderAt[0]), taskId: p.taskId,
+            title: p.title, eventAt: p.eventAt!, fireAt: p.reminderAt[0])
+    }
+    func snapshot(_ plans: [DeviceReminderPlan], stamp: Double? = nil) -> ReminderSnapshot {
+        ReminderSnapshot(version: 1, source: "personal-os", generatedAt: stamp ?? clock.now.timeIntervalSince1970, plans: plans)
+    }
+    func seed(_ p: DeviceReminderPlan) {
+        storage.rows = [SavedProjection(generatedAt: clock.now.timeIntervalSince1970 - 1, plan: p)]
+        center.rows = [notification(p)]
+        center.delivered = [p.notificationId(at: p.reminderAt[0])]
+        activities.activities = [DeviceCountdown(id: "synthetic-old", taskId: p.taskId, eventAt: p.eventAt!, active: true)]
+    }
+}
+
+extension ReminderSnapshotTests {
+    @MainActor
+    func testImportRescheduleReplacesOnlyOwnedNotificationsAndEndsOldActivity() async throws {
+        let h = SyntheticLifecycle(), old = SyntheticLifecycle()
+        let p = h.plan(), other = old.plan("synthetic-other")
+        h.seed(p)
+        h.center.rows.append(h.notification(other))
+        h.center.delivered.append(other.notificationId(at: other.reminderAt[0]))
+        let moved = h.plan(offset: 10800)
+        h.model.preview = h.snapshot([moved])
+        await h.model.installPreview()
+        XCTAssertEqual(h.model.projections.map(\.plan), [moved])
+        XCTAssertEqual(h.storage.rows.map(\.plan), [moved])
+        XCTAssertEqual(Set(h.center.rows.map(\.identifier)), Set([h.notification(moved).identifier, h.notification(other).identifier]))
+        XCTAssertEqual(h.center.delivered, [h.notification(other).identifier])
+        XCTAssertEqual(h.activities.ended, ["synthetic-old"])
+        XCTAssertTrue(h.activities.starts.isEmpty)
+        XCTAssertEqual(h.center.authorizationRequests, 0)
+    }
+
+    @MainActor
+    func testDisabledImportRemovesAlertsAndCountdownWithoutRestart() async {
+        let h = SyntheticLifecycle(), p = SyntheticLifecycle().plan()
+        h.seed(p)
+        let disabled = DeviceReminderPlan(taskId: p.taskId, title: p.title, timezone: p.timezone, enabled: false,
+            eventAt: nil, liveActivityStartAt: nil, reminderAt: [])
+        h.model.preview = h.snapshot([disabled])
+        await h.model.installPreview()
+        XCTAssertEqual(h.model.projections.map(\.plan), [disabled])
+        XCTAssertTrue(h.center.rows.isEmpty)
+        XCTAssertTrue(h.center.delivered.isEmpty)
+        XCTAssertTrue(h.activities.activities.isEmpty)
+        await h.model.startActivity(p)
+        XCTAssertTrue(h.activities.starts.isEmpty)
+    }
+
+    @MainActor
+    func testRemovalDuringImportPermissionAwaitCannotRestoreProjection() async {
+        let h = SyntheticLifecycle(), gate = SyntheticGate()
+        let p = h.plan()
+        h.model.preview = h.snapshot([p])
+        h.center.permissionGate = gate
+        let installing = Task { await h.model.installPreview() }
+        await gate.waitUntilPaused()
+        let began = SyntheticSignal()
+        let removing = Task { began.signal(); await h.model.remove(p) }
+        await began.wait()
+        gate.release()
+        await installing.value
+        await removing.value
+        XCTAssertTrue(h.model.projections.isEmpty)
+        XCTAssertTrue(h.storage.rows.isEmpty)
+        XCTAssertTrue(h.center.rows.isEmpty)
+        XCTAssertEqual(h.center.addCalls, 0)
+    }
+
+    @MainActor
+    func testUninstalledManualWindowCannotStart() async {
+        let h = SyntheticLifecycle(), p = SyntheticLifecycle().plan(offset: 120)
+        await h.model.startActivity(p)
+        XCTAssertTrue(h.activities.starts.isEmpty)
+    }
+
+    @MainActor
+    func testRemovalDuringScheduledPermissionAwaitPreventsStart() async {
+        let h = SyntheticLifecycle(), gate = SyntheticGate()
+        let p = h.plan()
+        h.seed(p)
+        h.activities.activities = []
+        h.center.permissionGate = gate
+        let starting = Task { await h.model.startActivity(p, scheduled: true) }
+        await gate.waitUntilPaused()
+        await h.model.remove(p)
+        gate.release()
+        await starting.value
+        XCTAssertTrue(h.activities.starts.isEmpty)
+        XCTAssertTrue(h.model.projections.isEmpty)
+    }
+
+    @MainActor
+    func testRescheduleDuringScheduledPermissionAwaitPreventsOldStart() async {
+        let h = SyntheticLifecycle(), gate = SyntheticGate()
+        let p = h.plan()
+        h.seed(p)
+        h.activities.activities = []
+        h.center.permissionGate = gate
+        let starting = Task { await h.model.startActivity(p, scheduled: true) }
+        await gate.waitUntilPaused()
+        let moved = h.plan(offset: 10800)
+        h.model.preview = h.snapshot([moved])
+        await h.model.installPreview()
+        gate.release()
+        await starting.value
+        XCTAssertTrue(h.activities.starts.isEmpty)
+        XCTAssertEqual(h.model.projections.map(\.plan), [moved])
+    }
+
+    @MainActor
+    func testIdenticalReimportDuringPermissionAwaitInvalidatesOldStart() async {
+        let h = SyntheticLifecycle(), gate = SyntheticGate()
+        let p = h.plan()
+        h.seed(p)
+        h.activities.activities = []
+        h.center.permissionGate = gate
+        let starting = Task { await h.model.startActivity(p, scheduled: true) }
+        await gate.waitUntilPaused()
+        h.model.preview = h.snapshot([p])
+        await h.model.installPreview()
+        gate.release()
+        await starting.value
+        XCTAssertTrue(h.activities.starts.isEmpty)
+    }
+
+    @MainActor
+    func testPermissionAwaitCrossingStartInstantRejectsAppointment() async {
+        let h = SyntheticLifecycle(), gate = SyntheticGate()
+        let p = h.plan()
+        h.seed(p)
+        h.activities.activities = []
+        h.center.permissionGate = gate
+        let starting = Task { await h.model.startActivity(p, scheduled: true) }
+        await gate.waitUntilPaused()
+        h.clock.now = p.startDate!
+        gate.release()
+        await starting.value
+        XCTAssertTrue(h.activities.starts.isEmpty)
+    }
+
+    @MainActor
+    func testCloseDuringPermissionAwaitAndForegroundNeverRevivesWindow() async {
+        let h = SyntheticLifecycle(), gate = SyntheticGate()
+        let p = h.plan()
+        h.seed(p)
+        h.activities.activities = []
+        h.center.permissionGate = gate
+        let starting = Task { await h.model.startActivity(p, scheduled: true) }
+        await gate.waitUntilPaused()
+        await h.model.closeActivity(p)
+        gate.release()
+        await starting.value
+        let reopened = h.reopen()
+        h.activities.activities = [DeviceCountdown(id: "synthetic-reappeared", taskId: p.taskId, eventAt: p.eventAt!, active: true)]
+        await reopened.foreground()
+        await reopened.startActivity(p, scheduled: true)
+        h.clock.now = p.startDate!
+        await reopened.startActivity(p)
+        XCTAssertTrue(h.activities.starts.isEmpty)
+        XCTAssertTrue(h.activities.activities.isEmpty)
+        XCTAssertEqual(h.closed.rows.map(\.eventAt), [p.eventAt!])
+        XCTAssertFalse(h.center.rows.isEmpty) // Closing countdown preserves alerts.
+    }
+
+    @MainActor
+    func testUnreadableCloseLedgerBlocksStart() async {
+        let h = SyntheticLifecycle(), p = SyntheticLifecycle().plan(offset: 120)
+        h.seed(p)
+        h.activities.activities = []
+        h.closed.failRead = true
+        await h.model.startActivity(p)
+        XCTAssertTrue(h.activities.starts.isEmpty)
+    }
+
+    @MainActor
+    func testAddFailureAfterAcceptanceCleansAllPartialOwnedNotifications() async {
+        let h = SyntheticLifecycle()
+        let p = h.plan(reminders: [h.clock.now.timeIntervalSince1970 + 60, h.clock.now.timeIntervalSince1970 + 120])
+        let other = h.plan("synthetic-other")
+        h.center.rows = [h.notification(other)]
+        h.center.failAddAt = 2
+        do { _ = try await h.scheduler.replace(p); XCTFail("Must fail") } catch { }
+        XCTAssertEqual(h.center.addCalls, 2)
+        XCTAssertEqual(h.center.rows, [h.notification(other)])
+    }
+
+    @MainActor
+    func testReadbackWrongTriggerCleansAcceptedNotifications() async {
+        let h = SyntheticLifecycle(), p = SyntheticLifecycle().plan()
+        h.center.corruptReadbackAt = 2
+        do { _ = try await h.scheduler.replace(p); XCTFail("Must reject wrong trigger") }
+        catch CompanionError.readbackFailed { }
+        catch { XCTFail("Wrong error: \(error)") }
+        XCTAssertTrue(h.center.rows.isEmpty)
+    }
+
+    @MainActor
+    func testRemovalDuringLateAddCleansBeforeCompleting() async {
+        let h = SyntheticLifecycle(), gate = SyntheticGate()
+        let p = h.plan()
+        h.center.addGate = gate
+        let replacing = Task { try await h.scheduler.replace(p) }
+        await gate.waitUntilPaused()
+        let began = SyntheticSignal()
+        let removing = Task { began.signal(); await h.scheduler.remove(p) }
+        await began.wait()
+        gate.release()
+        do { _ = try await replacing.value; XCTFail("Superseded add must not succeed") }
+        catch is CancellationError { } catch { XCTFail("Wrong error: \(error)") }
+        await removing.value
+        XCTAssertTrue(h.center.rows.isEmpty)
+    }
+
+    @MainActor
+    func testNewReplacementWaitsForOldCleanupAndSurvivesIt() async throws {
+        let h = SyntheticLifecycle(), gate = SyntheticGate()
+        let p = h.plan(), moved = h.plan(offset: 10800)
+        h.center.addGate = gate
+        let first = Task { try await h.scheduler.replace(p) }
+        await gate.waitUntilPaused()
+        let began = SyntheticSignal()
+        let second = Task { began.signal(); return try await h.scheduler.replace(moved) }
+        await began.wait()
+        gate.release()
+        do { _ = try await first.value; XCTFail("Old request must not succeed") }
+        catch is CancellationError { } catch { XCTFail("Wrong error: \(error)") }
+        let receipt = try await second.value
+        XCTAssertEqual(receipt.verified, 1)
+        XCTAssertEqual(h.center.rows, [h.notification(moved)])
+    }
+
+    @MainActor
+    func testRemovalDuringReadbackCannotReturnSuccessfulReceipt() async {
+        let h = SyntheticLifecycle(), gate = SyntheticGate()
+        let p = h.plan()
+        h.center.readbackGate = gate
+        let replacing = Task { try await h.scheduler.replace(p) }
+        await gate.waitUntilPaused()
+        let began = SyntheticSignal()
+        let removing = Task { began.signal(); await h.scheduler.remove(p) }
+        await began.wait()
+        gate.release()
+        do { _ = try await replacing.value; XCTFail("Readback was superseded") }
+        catch is CancellationError { } catch { XCTFail("Wrong error: \(error)") }
+        await removing.value
+        XCTAssertTrue(h.center.rows.isEmpty)
+    }
+
+    @MainActor
+    func testPermissionWaitUsesFreshClockBeforeAddingReminder() async throws {
+        let h = SyntheticLifecycle(), gate = SyntheticGate()
+        let p = h.plan()
+        h.center.permissionGate = gate
+        let replacing = Task { try await h.scheduler.replace(p) }
+        await gate.waitUntilPaused()
+        h.clock.now = p.startDate!
+        gate.release()
+        let receipt = try await replacing.value
+        XCTAssertEqual(receipt.expected, 0)
+        XCTAssertEqual(receipt.skippedPast, 1)
+        XCTAssertEqual(h.center.addCalls, 0)
+    }
+
+    @MainActor
+    func testPersistenceFailureCleansScheduledNotificationsWithoutSuccess() async {
+        let h = SyntheticLifecycle(), p = SyntheticLifecycle().plan()
+        h.model.preview = h.snapshot([p])
+        h.storage.failSave = true
+        await h.model.installPreview()
+        XCTAssertTrue(h.model.projections.isEmpty)
+        XCTAssertTrue(h.center.rows.isEmpty)
+        XCTAssertNotNil(h.model.preview)
+    }
 }
