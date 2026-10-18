@@ -304,6 +304,10 @@ private final class SyntheticLifecycle {
 }
 
 extension ReminderSnapshotTests {
+    func testHostedXCTestDisablesNormalSystemLifecycle() {
+        XCTAssertEqual(ProcessInfo.processInfo.environment["PERSONAL_OS_SYNTHETIC_XCTEST"], "1")
+    }
+
     @MainActor
     func testImportRescheduleReplacesOnlyOwnedNotificationsAndEndsOldActivity() async throws {
         let h = SyntheticLifecycle(), old = SyntheticLifecycle()

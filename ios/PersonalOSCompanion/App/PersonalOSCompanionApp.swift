@@ -3,12 +3,25 @@ import UniformTypeIdentifiers
 
 @main
 struct PersonalOSCompanionApp: App {
+    var body: some Scene {
+        WindowGroup {
+            if ProcessInfo.processInfo.environment["PERSONAL_OS_SYNTHETIC_XCTEST"] == "1" {
+                // Hosted XCTest must not construct the normal model, read its
+                // files, inspect system permissions or end system activities.
+                Text("Synthetic XCTest host")
+            } else {
+                CompanionScreen()
+            }
+        }
+    }
+}
+
+private struct CompanionScreen: View {
     @StateObject private var model = CompanionModel()
     @Environment(\.scenePhase) private var scenePhase
     @State private var importing = false
 
-    var body: some Scene {
-        WindowGroup {
+    var body: some View {
             NavigationStack {
                 List {
                     Section("手机提醒") {
@@ -76,6 +89,5 @@ struct PersonalOSCompanionApp: App {
                     if phase == .active { Task { await model.foreground() } }
                 }
             }
-        }
     }
 }
