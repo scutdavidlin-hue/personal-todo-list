@@ -1,0 +1,172 @@
+{
+  "mode": "synthetic-pure-source-reproduction",
+  "reviewedCommit": "611ffd162d9b4bea2750199a0362c9f91df20785",
+  "realProviderCalls": 0,
+  "realWrites": 0,
+  "cases": [
+    {
+      "name": "morning_plan_with_unrelated_deadline",
+      "before": {
+        "task_date": "2099-01-09",
+        "planned_date": "2099-01-08",
+        "deadline": "2099-01-10",
+        "stored_sync_required": false,
+        "read_warning": {
+          "required": true,
+          "reason": "TASK_SCHEDULE_RECONCILIATION_REQUIRED",
+          "task_date": "2099-01-09",
+          "scheduled_date": "2099-01-08",
+          "automatic_repair_allowed": false
+        },
+        "projection_decision": {
+          "project": false,
+          "sync_required": true,
+          "reason": "TASK_SCHEDULE_RECONCILIATION_REQUIRED",
+          "task_due": "2099-01-09",
+          "scheduled_date": null,
+          "deadline": "2099-01-10"
+        }
+      },
+      "after": {
+        "task_date": "2099-01-09",
+        "planned_date": "2099-01-08",
+        "deadline": "2099-01-10",
+        "stored_sync_required": false,
+        "read_warning": null,
+        "projection_decision": {
+          "project": false,
+          "sync_required": true,
+          "reason": "TASK_SCHEDULE_RECONCILIATION_REQUIRED",
+          "task_due": "2099-01-09",
+          "scheduled_date": null,
+          "deadline": "2099-01-10"
+        }
+      }
+    },
+    {
+      "name": "unexplained_plan_with_unrelated_deadline",
+      "before": {
+        "task_date": "2099-01-09",
+        "planned_date": "2099-01-08",
+        "deadline": "2099-01-10",
+        "stored_sync_required": false,
+        "read_warning": {
+          "required": true,
+          "reason": "TASK_SCHEDULE_RECONCILIATION_REQUIRED",
+          "task_date": "2099-01-09",
+          "scheduled_date": "2099-01-08",
+          "automatic_repair_allowed": false
+        },
+        "projection_decision": {
+          "project": false,
+          "sync_required": true,
+          "reason": "TASK_SCHEDULE_RECONCILIATION_REQUIRED",
+          "task_due": "2099-01-09",
+          "scheduled_date": null,
+          "deadline": "2099-01-10"
+        }
+      },
+      "after": {
+        "task_date": "2099-01-09",
+        "planned_date": "2099-01-08",
+        "deadline": "2099-01-10",
+        "stored_sync_required": false,
+        "read_warning": {
+          "required": true,
+          "comparison": "task_date_vs_scheduled_date",
+          "reason": "TASK_SCHEDULE_RECONCILIATION_REQUIRED",
+          "task_date": "2099-01-09",
+          "scheduled_date": "2099-01-08",
+          "automatic_repair_allowed": false
+        },
+        "projection_decision": {
+          "project": false,
+          "sync_required": true,
+          "reason": "TASK_SCHEDULE_RECONCILIATION_REQUIRED",
+          "task_due": "2099-01-09",
+          "scheduled_date": null,
+          "deadline": "2099-01-10"
+        }
+      }
+    },
+    {
+      "name": "malformed_task_date",
+      "before": {
+        "task_date": "2099-02-29",
+        "planned_date": "2099-01-08",
+        "deadline": null,
+        "stored_sync_required": false,
+        "read_warning": {
+          "required": true,
+          "reason": "TASK_SCHEDULE_RECONCILIATION_REQUIRED",
+          "task_date": "2099-02-29",
+          "scheduled_date": "2099-01-08",
+          "automatic_repair_allowed": false
+        },
+        "projection_decision": {
+          "project": false,
+          "sync_required": true,
+          "reason": "TASK_SCHEDULE_RECONCILIATION_REQUIRED",
+          "task_due": "2099-02-29",
+          "scheduled_date": "2099-01-08"
+        }
+      },
+      "after": {
+        "task_date": "2099-02-29",
+        "planned_date": "2099-01-08",
+        "deadline": null,
+        "stored_sync_required": false,
+        "read_warning": null,
+        "projection_decision": {
+          "project": false,
+          "sync_required": true,
+          "reason": "TASK_SCHEDULE_RECONCILIATION_REQUIRED",
+          "task_due": "2099-02-29",
+          "scheduled_date": "2099-01-08"
+        }
+      }
+    },
+    {
+      "name": "malformed_planned_date",
+      "before": {
+        "task_date": "2099-01-09",
+        "planned_date": "not-a-date",
+        "deadline": null,
+        "stored_sync_required": false,
+        "read_warning": {
+          "required": true,
+          "reason": "TASK_SCHEDULE_RECONCILIATION_REQUIRED",
+          "task_date": "2099-01-09",
+          "scheduled_date": "not-a-date",
+          "automatic_repair_allowed": false
+        },
+        "projection_decision": {
+          "project": false,
+          "sync_required": true,
+          "reason": "TASK_SCHEDULE_RECONCILIATION_REQUIRED",
+          "task_due": "2099-01-09",
+          "scheduled_date": "not-a-date"
+        }
+      },
+      "after": {
+        "task_date": "2099-01-09",
+        "planned_date": "not-a-date",
+        "deadline": null,
+        "stored_sync_required": false,
+        "read_warning": null,
+        "projection_decision": {
+          "project": false,
+          "sync_required": true,
+          "reason": "TASK_SCHEDULE_RECONCILIATION_REQUIRED",
+          "task_due": "2099-01-09",
+          "scheduled_date": "not-a-date"
+        }
+      }
+    }
+  ],
+  "limits": [
+    "No read warning does not certify malformed source dates as valid.",
+    "Projection guards retain their existing independent deadline-axis decision.",
+    "No real event provenance or user date intent is established."
+  ]
+}

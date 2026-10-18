@@ -160,7 +160,7 @@ function inferTransportation(input, text) {
   if (/(?:开车|驾车|自驾)/.test(text)) return "drive";
   if (/(?:骑车|骑行|自行车)/.test(text)) return "bike";
   if (/(?:步行|走路)/.test(text)) return "walk";
-  if (/(?:高铁|动车|火车)/.test(text)) return "train";
+  if (/(?:高铁|动车|火车|列车)/.test(text)) return "train";
   if (/(?:飞机|航班|机场|起飞|登机)/.test(text)) return "airport";
   if (/(?:出门|出发|前往|过去|去(?:公司|机场|车站|医院|学校|现场)|到(?:公司|机场|车站|现场))/.test(text)) return "transit";
   return "none";
@@ -194,8 +194,11 @@ function roundUp(value, step = 5) {
 
 function taskKind(text, anchorKind) {
   if (anchorKind === "deadline") return "deadline";
-  if (/(?:飞机|航班|机场|起飞|登机|值机|安检)/.test(text)) return "flight";
-  if (/(?:高铁|动车|火车|火车站|高铁站)/.test(text)) return "train";
+  if (/(?:飞机|航班|机场|起飞|登机|值机)/.test(text)) return "flight";
+  // Security screening is shared by rail and air travel. Explicit rail cues
+  // must win over that generic word; airport/flight-specific cues stay above.
+  if (/(?:高铁|动车|火车|火车站|高铁站|列车)/.test(text)) return "train";
+  if (/安检/.test(text)) return "flight";
   if (/(?:会议|开会|见面|会面|面谈|拜访|聊天|约见|到公司)/.test(text)) return "meeting";
   if (/(?:跟进|回访|回复|联系)/.test(text)) return "follow_up";
   return "todo";

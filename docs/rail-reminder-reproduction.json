@@ -1,0 +1,57 @@
+{
+  "mode": "pure-functions-and-synthetic-data",
+  "baseline": "bb240517727a81ca89059985295b7c9da144403b",
+  "realAuthOrProviderCalls": 0,
+  "realTaskOrCalendarWrites": 0,
+  "rail": {
+    "input": "乘坐某列车，从某高铁车站出发，提前安检进站",
+    "before": {
+      "kind": "flight",
+      "transportation": "train",
+      "cue": "预留机场值机、安检和行李时间",
+      "summary": "☐ 某列车出行｜预留机场值机、安检和行李时间",
+      "description": "Personal OS Google Task 的时间投影。任务内容与完成状态以 Google Tasks 为准。\n行动提示：2099-01-08 19:00 某列车出行。预留前往机场、值机、安检和行李时间。\n提醒依据：需要提前准备、前往车站、120分钟缓冲"
+    },
+    "after": {
+      "kind": "train",
+      "transportation": "train",
+      "cue": "预留前往车站和进站时间",
+      "summary": "☐ 某列车出行｜预留前往车站和进站时间",
+      "description": "Personal OS Google Task 的时间投影。任务内容与完成状态以 Google Tasks 为准。\n行动提示：2099-01-08 19:00 某列车出行。预留前往车站、取票和进站时间。\n提醒依据：需要提前准备、前往车站、45分钟缓冲"
+    }
+  },
+  "dates": {
+    "before": {
+      "task_date": "2099-01-09",
+      "scheduled_date": "2099-01-08",
+      "deadline": null,
+      "stored_sync_required": false,
+      "derived": null
+    },
+    "after": {
+      "task_date": "2099-01-09",
+      "scheduled_date": "2099-01-08",
+      "deadline": null,
+      "stored_sync_required": false,
+      "derived": {
+        "required": true,
+        "reason": "TASK_SCHEDULE_RECONCILIATION_REQUIRED",
+        "task_date": "2099-01-09",
+        "scheduled_date": "2099-01-08",
+        "automatic_repair_allowed": false
+      }
+    },
+    "existingProjectionGuard": {
+      "project": false,
+      "sync_required": true,
+      "reason": "TASK_SCHEDULE_RECONCILIATION_REQUIRED",
+      "task_due": "2099-01-09",
+      "scheduled_date": "2099-01-08"
+    }
+  },
+  "limits": [
+    "Synthetic reproduction does not establish which input produced an existing real event.",
+    "Different dates and a newer Google update timestamp do not prove which date is intended.",
+    "No date, stored sync flag, event or provider data is changed by reading the warning."
+  ]
+}
