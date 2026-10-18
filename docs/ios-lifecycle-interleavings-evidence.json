@@ -1,0 +1,124 @@
+{
+  "base": "afb3034e6117fd5d6014e3152712ace698c60bf7",
+  "candidate": "1781be96bdb99d7c94d69e0f324a5629f00114fe",
+  "swiftMethodsExpected": 35,
+  "newMethods": [
+    "testAddFailureAfterAcceptanceCleansAllPartialOwnedNotifications",
+    "testCloseDuringPermissionAwaitAndForegroundNeverRevivesWindow",
+    "testClosedWindowStaysClosedAfterReimportButDifferentWindowCanStart",
+    "testDisabledImportRemovesAlertsAndCountdownWithoutRestart",
+    "testHostedXCTestDisablesNormalSystemLifecycle",
+    "testIdenticalReimportDuringPermissionAwaitInvalidatesOldStart",
+    "testImportRescheduleReplacesOnlyOwnedNotificationsAndEndsOldActivity",
+    "testInstalledEligibleWindowsReachOnlyFakeActivityRequestsAndDeduplicate",
+    "testNewReplacementWaitsForOldCleanupAndSurvivesIt",
+    "testPermissionAwaitCrossingStartInstantRejectsAppointment",
+    "testPermissionWaitUsesFreshClockBeforeAddingReminder",
+    "testPersistenceFailureCleansScheduledNotificationsWithoutSuccess",
+    "testReadbackWrongTriggerCleansAcceptedNotifications",
+    "testReimportEndAwaitBlocksManualStartAndRemovalPreventsRescheduling",
+    "testRemovalDuringImportPermissionAwaitCannotRestoreProjection",
+    "testRemovalDuringLateAddCleansBeforeCompleting",
+    "testRemovalDuringReadbackCannotReturnSuccessfulReceipt",
+    "testRemovalDuringScheduledPermissionAwaitPreventsStart",
+    "testRescheduleDuringScheduledPermissionAwaitPreventsOldStart",
+    "testUninstalledManualWindowCannotStart",
+    "testUnreadableCloseLedgerBlocksStart",
+    "testUnreadableCloseLedgerStillEndsExpiredActivityOnForeground"
+  ],
+  "nativeExecution": "passed",
+  "production": false,
+  "phone": false,
+  "tree": "b9c7a90811d907fba3b599f692b1649970598dc5",
+  "sourceFiles": [
+    {
+      "path": "ios/PersonalOSCompanion.xcodeproj/xcshareddata/xcschemes/PersonalOSCompanion.xcscheme",
+      "sha256": "46809704423ae82b5d82670da17a83568e69e1f31513e16007d05b6361bc5eaa"
+    },
+    {
+      "path": "ios/PersonalOSCompanion/App/CompanionModel.swift",
+      "sha256": "d39beba5cbbc25a15163774165640843cfd24a5017b555f5b8aa5112368c069d"
+    },
+    {
+      "path": "ios/PersonalOSCompanion/App/NotificationScheduler.swift",
+      "sha256": "ccf7c3eb1dd9b9a93cc49ccaaf7f9cd1f341ac24349c6b3ef26f6c8907f6ed14"
+    },
+    {
+      "path": "ios/PersonalOSCompanion/App/PersonalOSCompanionApp.swift",
+      "sha256": "04653b3304b61fa1f0a936af59830f69730c7196ece7596d290a83306bdf4d7f"
+    },
+    {
+      "path": "ios/PersonalOSCompanion/Tests/ReminderSnapshotTests.swift",
+      "sha256": "becc115515c8b6c7cc483b61d596705ec451ca1e3067518382329b6ea072dd66"
+    },
+    {
+      "path": "ios/generate-project.py",
+      "sha256": "cc57cea43e4fe67f9de7c8877d8e3f6a271f607cbcf4a2e802a113fe1ded234c"
+    }
+  ],
+  "newSwiftMethods": 22,
+  "nodeRegression": {
+    "tests": 546,
+    "passed": 544,
+    "skipped": 2,
+    "failed": 0
+  },
+  "runId": 39109364105,
+  "runUrl": "https://github.com/scutdavidlin-hue/personal-todo-list/actions/runs/39109364105",
+  "signing": false,
+  "physicalDeviceInstall": false,
+  "notificationDeliveryObserved": false,
+  "dynamicIslandObserved": false,
+  "systemNotificationOrActivityRequestsFromTests": false,
+  "testHostIsolation": "TestAction sets PERSONAL_OS_SYNTHETIC_XCTEST=1; app renders a bare test host instead of constructing normal CompanionScreen/model",
+  "previous13MethodRun": 39021234814,
+  "failedIsolationRun": {
+    "id": 39108634280,
+    "commit": "9ffb9ab460518b3389e304cfe0cac7b043996ca4",
+    "iphoneosBuild": "passed",
+    "simulatorBuild": "passed",
+    "executed": 35,
+    "passed": 34,
+    "failed": 1,
+    "failedMethod": "testHostedXCTestDisablesNormalSystemLifecycle",
+    "reason": "TestAction inherited RunAction environment; isolation marker absent",
+    "systemAPIIsolationVerified": false,
+    "rawLogSha256": "f09717f3e5448f45c0db1073089e712a31a2ee985ba392e6e4d5f9fd92a2c4b5"
+  },
+  "jobId": 117622002315,
+  "xcode": "26.3",
+  "xcodeBuild": "17C529",
+  "iphoneosSDK": [
+    "26.2"
+  ],
+  "iphonesimulatorSDK": [
+    "26.2"
+  ],
+  "swiftMethodsExecuted": 35,
+  "swiftMethodsPassed": 35,
+  "swiftMethodsFailed": 0,
+  "receipt": {
+    "commit": "1781be96bdb99d7c94d69e0f324a5629f00114fe",
+    "mode": "build",
+    "overall": "passed",
+    "exit_code": 0,
+    "last_phase": "completed",
+    "iphoneos_build": "passed",
+    "iphonesimulator_build": "passed",
+    "swift_xctest": "passed",
+    "signing": false,
+    "physical_device_install": false,
+    "phone_notification_delivery": false,
+    "dynamic_island_observed": false,
+    "developer_dir": "/Applications/Xcode_26.3.app/Contents/Developer"
+  },
+  "testHostIsolationVerified": true,
+  "privacyInspection": {
+    "emailLikeMatches": 0,
+    "privateKeyBlocks": false,
+    "jwtValues": false,
+    "githubTokenValues": false
+  },
+  "decodedLogCharacters": 570071,
+  "decodedLogSha256": "802f3614439a7d1592d04c00230afd2c0580b2844e242612d7b9b9bc0fcc73d2"
+}

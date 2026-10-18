@@ -1,0 +1,17 @@
+# Native lifecycle interleaving checks
+
+Source candidate: `1781be96bdb99d7c94d69e0f324a5629f00114fe`, based on `afb3034e6117fd5d6014e3152712ace698c60bf7`. This follow-up changes only the companion, its tests and generated XCTest scheme. It does not deploy or edit Tasks.
+
+The previous 13 Swift methods verified contracts and demos, without exercising model install/removal/start and notification replacement across suspended dependencies. The follow-up injects notification center, countdown storage, projection/closed-window storage and clock ports into the actual model/scheduler. The default app still uses the system adapters. Hosted XCTest renders a separate bare root and asserts the scheme flag, so normal app foreground work cannot run alongside fake lifecycle tests.
+
+Per-task scheduler generations invalidate old replacements immediately; a per-task queue completes late add/cleanup before newer operations reuse notification IDs. Model generations prevent removal/reimport from resurrecting a projection, and start requires a current installed plan outside an in-progress mutation. Permission awaits revalidate the exact generation and clock. Expiry cleanup remains independent of close-ledger readability.
+
+The 22 new methods cover reschedule/disable import, permission/end/add/readback interleavings, partial-add/wrong-trigger cleanup, installed-plan requirements, valid manual/scheduled startup and duplicate protection, persistent exact-window closure through reimport/relaunch/foreground, different future windows, corrupt closure storage and persistence failure. Notification and activity ports are in-memory; gates expose the await boundaries with bounded waits.
+
+The first complete run 39108634280 compiled both native targets and executed all 35 methods: 34 passed, one failed. The failed isolation assertion exposed that TestAction inherited RunAction environment and ignored its own test-only flag. The corrected scheme disables that inheritance while keeping the normal ProfileAction unchanged. The original failed log is retained and is not counted as a green native run.
+
+Actual unsigned native run [39109364105](https://github.com/scutdavidlin-hue/personal-todo-list/actions/runs/39109364105) passed. The decoded job log and phase receipt were read back: Xcode 26.3 (17C529), iPhoneOS/simulator SDK 26.2; both targets compiled and all 35 named Swift methods passed with zero failures, including the hosted-isolation assertion. The unchanged verifier independently requires every current method. Twenty-two methods are new relative to afb3034e. Source hashes, exact receipt and the retained failure are recorded in ios-lifecycle-interleavings-evidence.json.
+
+`npm run verify`: 546 tests, 544 passed, two preexisting browser skips, zero failures. The old run 39021234814 remains historical evidence for 13 tests; it does not validate the new lifecycle methods. The Linux workspace has neither swift nor xcodebuild; its failed preflight is separate from the cloud native result.
+
+No signing/team/device configuration, authorization prompt, ActivityKit request, APNs binding, real notification delivery, physical iPhone install, Dynamic Island observation, production Task mutation or deployment occurred. These tests establish model behavior under synthetic dependencies. Physical scheduled appearance, notification delivery, closure/relaunch and real device permissions still require the separately approved installed companion and iPhone acceptance.
