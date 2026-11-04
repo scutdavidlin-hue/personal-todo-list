@@ -135,7 +135,7 @@ function renderTaskItem(task) {
       <div class="task-copy">
         <button class="conversation-open" data-edit-task="${escapeHtml(task.id)}">${escapeHtml(task.title)}</button>
         <small>
-          ${task.carriedFromDate ? `<span class="carry-chip">↪ ${escapeHtml(task.carriedFromDate)} 延续</span>` : ""}
+          ${!task.done && (task.date || task.dueDate) && (task.date || task.dueDate) < localDateISO() ? `<span class="carry-chip">↪ 昨日延续</span>` : (task.carriedFromDate ? `<span class="carry-chip">↪ ${escapeHtml(task.carriedFromDate)} 延续</span>` : "")}
           ${schedule?.scheduled_start ? `<span class="carry-chip">${schedule.scheduling_status === "rescheduled" ? "↪" : "◷"} ${escapeHtml(schedule.scheduled_date)} ${escapeHtml(schedule.scheduled_start.slice(0, 5))}</span>` : ""}
           ${linkedGoal ? `<span class="goal-link-chip">目标 · ${escapeHtml(linkedGoal.title)}</span>` : ""}
           <button type="button" class="task-date-chip" aria-label="修改安排日期" title="点击改到明天、后天或其他日期" data-edit-task="${escapeHtml(task.id)}">${escapeHtml(formatDate(task.date || task.dueDate))}</button>
@@ -159,7 +159,7 @@ function renderAllTasks() {
     .filter((task) => task.title.toLowerCase().includes(query) || task.notes.toLowerCase().includes(query));
   const today=localDateISO();
   const groups = [
-    ["之前未完成",list.filter(t=>!t.done && (t.date||t.dueDate) && (t.date||t.dueDate)<today)],
+    ["↪ 昨日延续",list.filter(t=>!t.done && (t.date||t.dueDate) && (t.date||t.dueDate)<today)],
     ["今天",list.filter(t=>!t.done && (t.date||t.dueDate)===today)],
     ["接下来",list.filter(t=>!t.done && (t.date||t.dueDate)>today)],
     ["未定日期",list.filter(t=>!t.done && !(t.date||t.dueDate))],
