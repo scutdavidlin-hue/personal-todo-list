@@ -699,6 +699,8 @@ async function removeCalendarProjection(google: { accessToken: string; taskListI
   try { existing = await googleRequest(google.accessToken, CALENDAR_BASE, path); }
   catch (error) { if (error instanceof ApiError && error.status === 404) return true; throw error; }
   if (existing.extendedProperties?.private?.googleTaskId !== taskId || existing.extendedProperties?.private?.personalOsProjection !== "v1") throw new ApiError("Calendar object is not this Task projection", 409, "CALENDAR_EVENT_IDENTITY_CHANGED");
+  // A canceled Calendar event is already inactive; Google may still return it via events.get.
+  if (existing.status === "cancelled") return true;
   if (typeof existing.etag !== "string" || !existing.etag) throw new ApiError("Calendar projection has no concurrency token", 409, "CALENDAR_ETAG_REQUIRED");
   try {
     await googleRequest(
@@ -710,8 +712,11 @@ async function removeCalendarProjection(google: { accessToken: string; taskListI
   } catch (error) {
     if (!(error instanceof ApiError) || error.status !== 404) throw error;
   }
-  try { await googleRequest(google.accessToken, CALENDAR_BASE, path); }
-  catch (error) { if (error instanceof ApiError && error.status === 404) return true; throw error; }
+  try {
+    const after = await googleRequest(google.accessToken, CALENDAR_BASE, path);
+    if (after?.status === "cancelled" && after.extendedProperties?.private?.googleTaskId === taskId
+      && after.extendedProperties?.private?.personalOsProjection === "v1") return true;
+  } catch (error) { if (error instanceof ApiError && error.status === 404) return true; throw error; }
   throw new ApiError("Calendar projection removal is not verified", 503, "CALENDAR_WRITE_UNVERIFIED");
 }
 
