@@ -151,6 +151,22 @@ function canonicalizeMonthWords(value) {
     .replace(/(1[0-2]|0?[1-9])月份/g, (_, month) => `${Number(month)}月`);
 }
 
+// Only remove a leading calendar qualifier when it agrees with the structured
+// date. Keep the rest of the title exact; product/action changes are identities.
+function datedActionTitle(title, date) {
+  const text = canonicalizeMonthWords(title);
+  const parsed = /^(\d{4})-(\d{2})-(\d{2})$/.exec(cleanString(date));
+  if (!parsed) return normalizeResolutionText(text);
+  const prefix = /^(?:(\d{4})年)?(1[0-2]|0?[1-9])月(?:(上旬|中旬|下旬)|(\d{1,2})[日号])?(?:左右)?[\s：:、，,-]*/.exec(text);
+  if (!prefix) return normalizeResolutionText(text);
+  const day = Number(parsed[3]);
+  const agrees = (!prefix[1] || prefix[1] === parsed[1])
+    && Number(prefix[2]) === Number(parsed[2])
+    && (!prefix[4] || Number(prefix[4]) === day)
+    && (!prefix[3] || (prefix[3] === "上旬" ? day <= 10 : prefix[3] === "中旬" ? day >= 11 && day <= 20 : day >= 21));
+  return normalizeResolutionText(agrees ? text.slice(prefix[0].length) : text);
+}
+
 export function extractMonths(value) {
   const text = canonicalizeMonthWords(value);
   const months = [];
@@ -368,8 +384,41 @@ function contextId(input, snake, camel) {
   return cleanString(input?.[snake] || input?.[camel], 1024) || null;
 }
 
+// This is a conservative command gate, not a general natural-language negation parser.
+// Strong sentence boundaries may start a new instruction; commas cannot reset negation.
+function operationAuthority(input) {
+  const current = cleanString(input.raw_text || input.input) || cleanString(input.title);
+  const quoted = current.replace(/```[\s\S]*?```|`[^`]*`|“[^”]*”|‘[^’]*’|「[^」]*」|『[^』]*』|"[^"\n]*"|'[^'\n]*'/g, "");
+  const operationCue = text => EXPLICIT_UPDATE_CUE.test(text) || EXPLICIT_MERGE_CUE.test(text) || ADDITIVE_CUE.test(text);
+  const hasChangeCue = text => EXPLICIT_UPDATE_CUE.test(text) || EXPLICIT_MERGE_CUE.test(text);
+  const metaOnly = /(?:(?:只(?:是|需|要)?|仅)(?:记录|说明|引用|讨论)|(?:不要|不|勿|禁止)(?:.{0,8})(?:执行|操作|写入))/.test(current);
+  const unmatchedQuote = /[`“”‘’「」『』"']/.test(quoted);
+  const clauses = quoted.split(/[。；;\n]/);
+  const affirmative = clauses.filter(clause => !/(?:不|别|勿|无需|不要|不能|禁止|不得|不用|没有|未)/.test(clause));
+  // Commas may separate a positive creation request from a constraint on old
+  // tasks. They still never reset negation for mutation commands.
+  const createCue = /(?:新建|新增|另建|创建|做个提醒|提醒(?:我|一下)|记得)/;
+  const deniedCreation = clauses.some(part => /(?:不|别|勿|无需|不要|不能|禁止|不得|不用|没有|未).*?(?:新建|新增|另建|创建|做个提醒|提醒(?:我|一下)|记得)/.test(part));
+  const createParts = quoted.split(/[。；;\n，,]/).filter(part =>
+    !/(?:不|别|勿|无需|不要|不能|禁止|不得|不用|没有|未)/.test(part)
+    && createCue.test(part) && !hasChangeCue(part));
+  const text = metaOnly || unmatchedQuote ? "" : [...affirmative, ...createParts].join(" ");
+  const createCommand = /(?:新建|新增|另建|创建|做个提醒|提醒(?:我|一下)|记得)/.test(text)
+    || /^(?:请)?(?:新建|新增|另建|创建)/.test(quoted.trim());
+  const deniedMutation = clauses.some(clause => /(?:不|别|勿|无需|不要|不能|禁止|不得|不用|没有|未)/.test(clause)
+    && /(?:改|更新|提前|推迟|调整|合并|补充|扩展|挪|移|操作|执行|写入)/.test(clause));
+  const unclearMutation = !hasChangeCue(text) && /(?:^(?:请)?(?:把|将).*(?:挪|移|改|调整)|^(?:请)?(?:修改|更改|补充|调整|延期))/m.test(text.trim());
+  const independentCreate = createCommand && !hasChangeCue(text)
+    && (deniedMutation || /(?:独立(?:的)?.{0,12}(?:任务|事项|提醒)|(?:新建|新增|另建).{0,8}(?:任务|待办|提醒))/.test(quoted));
+  return { text, creation_command: createCommand, independent_create: independentCreate, requires_clarification: metaOnly || unmatchedQuote || unclearMutation || deniedCreation
+    || (deniedMutation && !hasChangeCue(text) && !createCommand)
+    || (hasChangeCue(current) && !hasChangeCue(text) && !createCommand), has_operation: operationCue(text) };
+}
+
 export function extractIntentProfile(input = {}) {
   const text = semanticCorpus(input);
+  const authority = operationAuthority(input);
+  const operationText = authority.text;
   const resources = resourcesFor(text, input);
   const topics = topicsFor(text);
   const normalizedText = normalizeResolutionText(text);
@@ -390,9 +439,13 @@ export function extractIntentProfile(input = {}) {
     read_resources: resources.reads,
     write_resources: resources.writes,
     resource_fields: fieldsFor(input),
-    additive: ADDITIVE_CUE.test(text),
-    explicit_merge: EXPLICIT_MERGE_CUE.test(text),
-    explicit_update: EXPLICIT_UPDATE_CUE.test(text),
+    additive: ADDITIVE_CUE.test(operationText),
+    explicit_merge: EXPLICIT_MERGE_CUE.test(operationText),
+    explicit_update: EXPLICIT_UPDATE_CUE.test(operationText),
+    operation_requires_clarification: authority.requires_clarification,
+    independent_create: authority.independent_create,
+    creation_command: authority.creation_command,
+    scope_extension: /(?:也|加上|纳入|补充|扩展|顺便|一起|一并).{0,12}(?:分析|计算|核算|汇总|整理|核对|报告)/.test(operationText),
     dependency_cue: DEPENDENCY_CUE.test(text),
     parent_child_cue: PARENT_CHILD_CUE.test(text),
   };
@@ -706,18 +759,22 @@ function duplicateConfidence(profile, top) {
 }
 
 function additiveUpdateCandidate(profile, ranked) {
-  if (!profile.additive && !profile.explicit_update) return null;
+  if (!profile.scope_extension && !profile.explicit_update) return null;
   const compatible = ranked.filter((item) => {
     if (CLOSED_STATUSES.has(item.status)) return false;
+    if (profile.creation_command && !profile.explicit_update && profile.due && item.profile.due && profile.due !== item.profile.due) return false;
     const sameAction = item.profile.action === profile.action || profile.action === "update" || profile.action === "act";
     const sharedContext = contextSimilarity(profile, item.profile) > 0;
     const sharedTopic = setOverlap(profile.topics, item.profile.topics) > 0;
     const sharedEntity = setOverlap(profile.entities, item.profile.entities) > 0;
     const sharedResource = setOverlap(profile.resources, item.profile.resources) > 0;
     const incomingNamesDomain = profile.topics.length > 0 || profile.entities.length > 0 || profile.resources.length > 0;
-    const monthExtension = profile.months.length > 0 && item.profile.months.length > 0
-      && (!incomingNamesDomain || sharedContext || sharedTopic || sharedEntity || sharedResource);
-    const explicitUpdate = profile.explicit_update && item.score >= 0.38;
+    // Month shape alone never establishes the target subject.
+    const domainIdentity = sharedTopic && overlapCoefficient(profile.topics, item.profile.topics) >= 0.75 && item.score >= 0.45;
+    const ellipticalIdentity = !incomingNamesDomain && profile.action === item.profile.action && !["act", "update"].includes(profile.action);
+    const monthExtension = profile.scope_extension && profile.months.some(month => !item.profile.months.includes(month)) && item.profile.months.length > 0
+      && (sharedContext || (sharedEntity && sharedTopic) || domainIdentity || ellipticalIdentity);
+    const explicitUpdate = profile.explicit_update && item.score >= 0.78 && (sharedEntity || sharedContext || domainIdentity);
     const strongSemanticMatch = item.score >= 0.58;
     const entityBackedMatch = sharedEntity && sharedTopic && item.score >= 0.45;
     return sameAction && (monthExtension || sharedContext || explicitUpdate || strongSemanticMatch || entityBackedMatch);
@@ -802,7 +859,30 @@ export function resolveTaskIntent(incoming, context = {}) {
       ...scored,
     });
   }
+  const explicitTargetWithoutCommand = cleanString(incoming?.existing_task_id, 1024)
+    && (!cleanString(incoming?.raw_text || incoming?.input) || !profile.explicit_update);
+  if (profile.operation_requires_clarification || explicitTargetWithoutCommand) {
+    return baseResult(profile, ranked, "NEW", 0, "Quoted, negated or uncertain modification wording does not authorize a write; clarify the intended action.", {
+      automatic_action: "CLARIFY", should_create: false, requires_clarification: true,
+      existing_task_id: null, canonical_task_id: null, relationships: [], shared_resources: [],
+    });
+  }
   const top = ranked[0] || null;
+  // Explicitly separate work still participates in same-action/date dedupe.
+  // Creation control words and constraints must not turn a repeated exact
+  // provider title into a spurious build/dependency classification.
+  if (profile.independent_create && profile.due) {
+    const identical = candidatePool.filter(candidate => !CLOSED_STATUSES.has(semanticStatus(candidate))
+      && dueDate(candidate) === profile.due
+      && datedActionTitle(candidate.title, dueDate(candidate)) === datedActionTitle(incoming.title, profile.due));
+    if (identical.length > 1) return baseResult(profile, ranked, "CONFLICT", 1, "Multiple identical open tasks share the requested date; clarify the canonical task.", {
+      automatic_action: "ASK", should_create: false, requires_clarification: true,
+    });
+    if (identical.length === 1) return attachExplicitDependencies(baseResult(profile, ranked, "DUPLICATE", 1, "An independent creation request repeats the exact open task title and date.", {
+      automatic_action: "REUSE_CANONICAL", should_create: false,
+      existing_task_id: taskId(identical[0]), canonical_task_id: taskId(identical[0]),
+    }), profile, dependencyCandidates, explicitDependencyIds);
+  }
   const goal = findGoalAssociation(profile, context.goals || []);
   const parentChild = profile.parent_child_cue ? splitParentChildren(incoming) : null;
   const dependency = inferredDependencyCandidate(profile, dependencyCandidates);
@@ -859,6 +939,20 @@ export function resolveTaskIntent(incoming, context = {}) {
     }), profile, dependencyCandidates, explicitDependencyIds);
   }
 
+  // The supported existing_task_id parameter identifies a specific provider Task.
+  // A write instruction still has to come from current user wording.
+  const explicitTargetId = cleanString(incoming?.existing_task_id, 1024);
+  if (explicitTargetId && profile.explicit_update) {
+    const target = candidatePool.find(candidate => taskId(candidate) === explicitTargetId);
+    if (!target || CLOSED_STATUSES.has(semanticStatus(target))) throw new Error("Explicit update target is missing or closed; no semantic fallback allowed");
+    return baseResult(profile, ranked, "UPDATE", 1, "Current user update instruction names one exact existing Task id.", {
+      automatic_action: "UPDATE_CANONICAL", should_create: false,
+      existing_task_id: explicitTargetId, canonical_task_id: explicitTargetId,
+      update: { title: target.title, notes: mergeNotes(target, incoming), ...(profile.due ? { due: profile.due } : {}) },
+      relationships: [], shared_resources: [],
+    });
+  }
+
   const duplicate = duplicateConfidence(profile, top);
   const addsOrChangesDue = Boolean(top && profile.due && profile.due !== top.profile.due);
   const incomingNotes = materialIncomingNotes(incoming);
@@ -878,27 +972,29 @@ export function resolveTaskIntent(incoming, context = {}) {
     }), profile, dependencyCandidates, explicitDependencyIds);
   }
 
-  const additive = additiveUpdateCandidate(profile, ranked);
+  const additive = profile.independent_create ? null : additiveUpdateCandidate(profile, ranked);
   const identityMatches = ranked.filter((item) => (
     !CLOSED_STATUSES.has(item.status)
+      && !(profile.creation_command && !profile.explicit_update && profile.due && item.profile.due && profile.due !== item.profile.due)
       && duplicateConfidence({ ...profile, due: item.profile.due }, item) >= RESOLUTION_THRESHOLDS.automatic
   ));
   const uniqueIdentity = identityMatches.length === 1 ? identityMatches[0] : null;
   const sameIdentityNewDate = uniqueIdentity && profile.due && profile.due !== uniqueIdentity.profile.due;
   const sameIdentityNewNotes = uniqueIdentity && duplicate >= 0.9 && addsExplicitNotes;
-  if (additive || sameIdentityNewDate || sameIdentityNewNotes) {
+  if (!profile.independent_create && (additive || sameIdentityNewDate || sameIdentityNewNotes)) {
     const match = additive || uniqueIdentity;
     const update = {
       title: mergeTaskTitle(match.task, incoming),
       notes: mergeNotes(match.task, incoming),
       ...(profile.due && profile.due !== match.profile.due ? { due: profile.due } : {}),
     };
-    const confidence = profile.explicit_update || sameIdentityNewDate ? 0.97 : 0.94;
+    const confidence = sameIdentityNewDate || sameIdentityNewNotes ? 0.97 : Math.min(0.94, match.score);
     const reason = sameIdentityNewDate || sameIdentityNewNotes
       ? "The same canonical action received additional date or note information, so the existing task is patched."
       : "The new wording is an additive scope change to one unambiguous existing atomic task.";
     return attachExplicitDependencies(baseResult(profile, ranked, "UPDATE", confidence, reason, {
-      automatic_action: "UPDATE_CANONICAL",
+      automatic_action: confidence >= RESOLUTION_THRESHOLDS.automatic ? "UPDATE_CANONICAL" : "CLARIFY",
+      ...(confidence < RESOLUTION_THRESHOLDS.automatic ? { requires_clarification: true } : {}),
       should_create: false,
       existing_task_id: match.task_id,
       canonical_task_id: match.task.canonical_task_id || match.task_id,
