@@ -256,7 +256,9 @@ async function createSeries(ownerId: string, taskId: string, input: Record<strin
   if (!schedule || task.status !== "open" || task.dueDate !== schedule.scheduled_date || schedule.sync_required !== false) {
     throw new ApiError("First occurrence must be an open, verified Task with matching Schedule", 409, "SERIES_FIRST_OCCURRENCE_UNVERIFIED");
   }
-  if (calendarProjectionWindow(schedule) && (!schedule.calendar_event_id || !schedule.last_synced_at || schedule.notification_status !== "projected")) {
+  const expectedProjectionState = schedule.reminder_policy === "none" ? "not_required" : "projected";
+  if (calendarProjectionWindow(schedule) && (!schedule.calendar_event_id || !schedule.last_synced_at
+    || schedule.notification_status !== expectedProjectionState)) {
     throw new ApiError("The first timed occurrence must have a verified Calendar projection", 409, "SERIES_FIRST_OCCURRENCE_UNVERIFIED");
   }
   if (schedule.deadline || schedule.deadline_time) {
@@ -400,7 +402,8 @@ async function updateSeries(ownerId: string, input: Record<string, unknown>) {
     const sameAnchor = recurrence.kind === series.recurrence_kind
       && recurrence.weekday === (series.by_weekday ?? recurrence.weekday)
       && recurrence.month_day === (series.by_month_day ?? recurrence.month_day)
-      && recurrence.month === (series.by_month ?? recurrence.month);
+      && recurrence.month === (series.by_month ?? recurrence.month)
+      && recurrence.rrule === series.rrule;
     if (!sameAnchor) throw new ApiError("A changed weekday or calendar date needs a future effective_date", 400, "SERIES_EFFECTIVE_DATE_REQUIRED");
   }
   const rows = await rest(`task_schedule_series?${new URLSearchParams({ owner_id: `eq.${ownerId}`, id: `eq.${series.id}`, select: "*" })}`, {
