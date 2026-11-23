@@ -1,0 +1,24 @@
+name: Personal OS reminder regression
+on:
+  pull_request:
+    paths:
+      - 'supabase/functions/**'
+      - '.github/workflows/personal-os-reminder-regression.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/functions/**'
+      - '.github/workflows/personal-os-reminder-regression.yml'
+permissions:
+  contents: read
+jobs:
+  recurrence-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Multi-day recurrence and legacy rules
+        run: node --test supabase/functions/tests/multi-weekday-recurrence.test.mjs

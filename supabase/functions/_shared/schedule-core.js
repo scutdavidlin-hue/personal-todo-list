@@ -130,6 +130,7 @@ export function applyTaskSchedulePatch(current, changes = {}, taskDue = null, op
   if (owns(changes, "requested_time")) {
     next.scheduled_start = changes.requested_time;
     next.scheduled_end = null;
+    if (changes.requested_time === null) for (const alias of ["scheduledStart", "scheduledEnd", "requested_time", "requestedTime"]) delete next[alias];
     if (changes.requested_time === null && !owns(changes, "fixed_time")) next.fixed_time = false;
     touched = true;
     timingChanged = true;
@@ -165,6 +166,14 @@ export function applyTaskSchedulePatch(current, changes = {}, taskDue = null, op
   } else if (next.scheduled_start && !next.scheduled_end) {
     next.scheduled_end = addMinutes(String(next.scheduled_start).slice(0, 5), Number(next.duration_minutes || 30));
   }
+  const clearedExecutionAnchor = owns(changes, "requested_time") && changes.requested_time === null
+    && !(next.deadline && next.deadline_time);
+  if (clearedExecutionAnchor) {
+    Object.assign(next, { reminder_policy: "none", reminder_policy_source: "system_default",
+      reminder_reason: "执行时刻已清除，无可用提醒锚点", reminder_at: null, reminder_offset_minutes: null, reminder_type: null, reminders: [] });
+    delete next.explicit_reminder_at; delete next.explicitReminderAt;
+    delete next.explicit_reminder_offset_minutes; delete next.explicitReminderOffsetMinutes;
+  }
   if (timingChanged) {
     if (!options.preserveReminderPolicy && (next.reminder_policy_source === "ai_inferred" || next.reminder_policy_source === "system_default")) {
       next.reminders = [];
@@ -174,7 +183,7 @@ export function applyTaskSchedulePatch(current, changes = {}, taskDue = null, op
     next.scheduling_status = next.scheduled_start ? (hasCurrent ? "rescheduled" : "scheduled") : next.scheduled_date ? "unscheduled" : "backlog";
     next.scheduling_source = hasCurrent ? "rescheduled" : "explicit_user";
   }
-  return { touched: true, schedule: normalizeScheduleInput(next, options), timing_changed: timingChanged };
+  return { touched: true, schedule: normalizeScheduleInput(next, { ...options, ...(clearedExecutionAnchor ? { preserveReminderPolicy: true } : {}) }), timing_changed: timingChanged };
 }
 
 /**
