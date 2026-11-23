@@ -69,7 +69,7 @@ function validDate(value) {
 function recurrenceFrom(input, rawText) {
   if (input.recurrence && typeof input.recurrence === "object" && !Array.isArray(input.recurrence)) {
     const kind = String(input.recurrence.kind || input.recurrence.frequency || "").toLowerCase();
-    const interval = Number(input.recurrence.interval ?? 1);
+    const interval = Number(input.recurrence.interval ?? (input.recurrence.rrule ? parseRRule(input.recurrence.rrule).interval : 1));
     if (!["daily", "weekly", "monthly", "yearly"].includes(kind) || !Number.isInteger(interval) || interval < 1 || interval > 365) throw new Error("Unsupported recurrence");
     if (kind === "daily") return { kind, interval };
     if (kind === "weekly") {
